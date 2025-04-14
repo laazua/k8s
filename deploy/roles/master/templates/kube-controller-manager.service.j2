@@ -1,0 +1,32 @@
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+After=network.target
+
+[Service]
+ExecStart={{ k8s_bin_path }}/kube-controller-manager \
+  --v=2 \
+  --bind-address=0.0.0.0 \
+  --root-ca-file={{ k8s_cert_path }}/ca.pem \
+  --cluster-signing-cert-file={{ k8s_cert_path }}/ca.pem \
+  --cluster-signing-key-file={{ k8s_cert_path }}/ca-key.pem \
+  --service-account-private-key-file={{ k8s_cert_path }}/sa.key \
+  --kubeconfig={{ k8s_conf_path }}/controller-manager.kubeconfig \
+  --leader-elect=true \
+  --use-service-account-credentials=true \
+  --node-monitor-grace-period=40s \
+  --node-monitor-period=5s \
+  --controllers=*,bootstrapsigner,tokencleaner \
+  --allocate-node-cidrs=true \
+  --service-cluster-ip-range={{ k8s_cluster_ip_range }} \
+  --cluster-cidr={{ k8s_cluster_cidr }} \
+  --node-cidr-mask-size-ipv4=24 \
+  --node-cidr-mask-size-ipv6=120 \
+  --requestheader-client-ca-file={{ k8s_cert_path }}/front-proxy-ca.pem \
+  --cluster-signing-duration={{ expired_time }}
+
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

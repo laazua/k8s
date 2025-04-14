@@ -1,0 +1,20 @@
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+ExecStart={{ k8s_bin_path }}/kubelet \
+    --bootstrap-kubeconfig={{ k8s_conf_path }}/bootstrap.kubeconfig  \
+    --kubeconfig={{ k8s_conf_path }}/kubelet.kubeconfig \
+    --config={{ k8s_conf_path }}/kubelet-conf.yaml \
+    --container-runtime-endpoint=unix:///run/containerd/containerd.sock  \
+    --node-labels=node.kubernetes.io/node= \
+    --cert-dir={{ k8s_cert_path }} \
+    --rotate-certificates=true \
+    --authentication-token-webhook=true \
+    --authorization-mode=Webhook
+
+[Install]
+WantedBy=multi-user.target

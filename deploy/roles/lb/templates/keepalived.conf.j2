@@ -1,0 +1,23 @@
+vrrp_script chk_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2        # 每2秒检测一次
+    weight 2          # 检测通过后加权2分
+}
+
+vrrp_instance VI_1 {
+    state {{ keepalived_state }}
+    interface ens192              # 请确保此处填写实际网卡名称
+    virtual_router_id 51        # 虚拟路由ID，两个节点保持一致
+    priority {{ keepalived_priority }}                # 主节点优先级较高
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 123456        # 双方需保持一致的密码
+    }
+    virtual_ipaddress {
+        {{ virtual_ipaddress }}         # 虚拟IP（VIP），必须与HAProxy配置中一致
+    }
+    track_script {
+        chk_haproxy
+    }
+}

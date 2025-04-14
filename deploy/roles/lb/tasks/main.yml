@@ -1,0 +1,41 @@
+---
+- name: 配置lb的hosts文件
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
+    mode: 0644
+    # backup: true
+
+- name: 安装 haproxy 服务
+  ansible.builtin.apt:
+    name: haproxy
+    state: present
+
+- name: 配置 haproxy 服务
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: 0644
+    # backup: true
+  notify:
+    - restart haproxy
+
+- name: 安装 keepalived 服务
+  ansible.builtin.apt:
+    name: keepalived
+    state: present
+
+- name: 配置 keepalived 服务
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: 0644
+    # backup: true
+  notify:
+    - restart keepalived
+
+- name: 配置健康检测脚本
+  ansible.builtin.template:
+    src: check_haproxy.sh.j2
+    dest: /etc/keepalived/check_haproxy.sh
+    mode: 0755

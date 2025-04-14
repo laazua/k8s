@@ -1,0 +1,75 @@
+---
+# 组件安装包
+k8s_version: 1.32.2
+k8s_master_tar_url: "https://dl.k8s.io/v{{ k8s_version }}/kubernetes-server-linux-amd64.tar.gz"
+k8s_worker_tar_url: "https://dl.k8s.io/v1{{ k8s_version }}/kubernetes-node-linux-amd64.tar.gz"
+containerd_version: 2.0.0
+containerd_tar_url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+runc_version: 1.2.6
+runc_bin_url: "https://github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+etcd_version: 3.5.20
+etcd_tar_url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+
+# 证书有效期时间: 100年
+expired_time: 876000h
+
+# etcd hosts
+etcd_hosts:
+- 192.168.165.80
+- 192.168.165.81
+- 192.168.165.82
+
+etcd_bin_path: "/usr/local/bin"
+etcd_data_path: "/var/lib/etcd"
+etcd_cert_path: "/etc/etcd/ssl"
+etcd_conf_path: "/etc/etcd"
+etcd_logs_path: "/var/log/etcd"
+
+# 负载均衡配置
+# 虚拟ip地址, 与lb主机在一个网端
+virtual_ipaddress: 192.168.165.87
+# k8s相关配置
+k8s_bin_path: "/usr/local/bin"
+k8s_cert_path: "/etc/kubernetes/pki"
+k8s_conf_path: "/etc/kubernetes"
+k8s_manifests_path: "/etc/kubernetes/manifests"
+
+k8s_cluster_cidr: 10.244.0.0/16
+k8s_cluster_ip_range: 10.0.0.0/24
+k8s_cluster_port_range: 30000-32767
+k8s_cluster_dns: 10.0.0.10
+apiserver_secure_port: 6443
+# 集群api入口
+k8s_cluster_entry_port: 7443
+k8s_cluster_entry_dns: haproxy.oiox.cn
+k8s_cluster_entry_address: "{{ k8s_cluster_entry_dns }}:{{ k8s_cluster_entry_port }}"
+# apiserver hosts
+api_hosts:
+- 10.0.0.1
+- 127.0.0.1
+- kubernetes
+- '*.kubernetes.master'
+- kubernetes.default
+- kubernetes.default.svc
+- kubernetes.default.svc.cluster
+- kubernetes.default.svc.cluster.local
+- x.oiox.cn
+- k.oiox.cn
+- l.oiox.cn
+- o.oiox.cn
+- 192.168.165.80
+- 192.168.165.81
+- 192.168.165.82
+- 192.168.165.83
+- 192.168.165.84
+- node-00
+- node-01
+- node-02
+- node-03
+- node-04
+- 192.168.165.87
+- haproxy.oiox.cn
+
+# 创建：echo "$(head -c 6 /dev/urandom | md5sum | head -c 6)"."$(head -c 16 /dev/urandom | md5sum | head -c 16)"
+bootstrap_token_id: bff0d9
+bootstrap_token_secret: 1693ffe44f512aa0

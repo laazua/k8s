@@ -1,0 +1,15 @@
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart={{ k8s_bin_path }}/kube-scheduler \
+  --bind-address=0.0.0.0 \
+  --kubeconfig={{ k8s_conf_path }}/scheduler.kubeconfig \
+  --leader-elect=true \
+  --v=2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

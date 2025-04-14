@@ -1,0 +1,14 @@
+---
+# 组件安装包
+k8s_version: 1.32.2
+k8s_master_tar_url: "https://dl.k8s.io/v{{ k8s_version }}/kubernetes-server-linux-amd64.tar.gz"
+k8s_worker_tar_url: "https://dl.k8s.io/v1{{ k8s_version }}/kubernetes-node-linux-amd64.tar.gz"
+containerd_version: 2.0.0
+containerd_tar_url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+runc_version: 1.2.6
+runc_bin_url: "https://github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+etcd_version: 3.5.20
+etcd_tar_url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+
+# 证书有效期时间: 100年
+expired_time: 876000h

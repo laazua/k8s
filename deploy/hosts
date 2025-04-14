@@ -1,0 +1,21 @@
+[master]
+192.168.165.80 node_name=node-00
+192.168.165.81 node_name=node-01
+192.168.165.82 node_name=node-02
+
+[worker]
+192.168.165.83 node_name=node-03
+192.168.165.84 node_name=node-04
+
+[k8s:children]
+master
+worker
+
+[etcd]
+192.168.165.80 node_name=node-00
+192.168.165.81 node_name=node-01
+192.168.165.82 node_name=node-02
+
+[lb]
+192.168.165.85 node_name=node-05 keepalived_state=MASTER keepalived_priority=150
+192.168.165.86 node_name=node-06 keepalived_state=BACKUP keepalived_priority=100

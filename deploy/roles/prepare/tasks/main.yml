@@ -1,0 +1,117 @@
+---
+- name: 下载组件安装包
+  ansible.builtin.command:
+    cmd: wget {{ item }} -P ../tgzfile
+  with_items:
+    - "{{ etcd_tar_url }}"
+    - "{{ k8s_master_tar_url }}"
+    - "{{ k8s_worker_tar_url }}"
+    - "{{ runc_bin_url }}"
+    - "{{ containerd_tar_url }}"
+  tags: download
+
+- name: 解压组件安装包
+  ansible.builtin.unarchive:
+    src: "{{ ansible_env.PWD }}/tgzfile/{{ item }}"
+    dest: "{{ ansible_env.PWD }}/tgzfile/"
+    remote_src: true
+  with_items:
+    - etcd-v{{ etcd_version }}-linux-amd64.tar.gz
+    - kubernetes-server-linux-amd64.tar.gz
+    - kubernetes-node-linux-amd64.tar.gz
+  tags: tarxz
+
+- name: 分发组件到各个角色
+  ansible.builtin.shell:
+    cmd: |
+      cp kubernetes/server/bin/kubectl /usr/local/bin
+      cp kubernetes/server/bin/kube-apiserver {{ ansible_env.PWD }}/roles/master/files
+      cp kubernetes/server/bin/kube-controller-manager {{ ansible_env.PWD }}/roles/master/files
+      cp kubernetes/server/bin/kube-scheduler {{ ansible_env.PWD }}/roles/master/files
+      cp kubernetes/node/bin/kubectl {{ ansible_env.PWD }}/roles/master/files
+
+      cp kubernetes/node/bin/kubelet {{ ansible_env.PWD }}/roles/worker/files
+      cp kubernetes/node/bin/kube-proxy {{ ansible_env.PWD }}/roles/worker/files
+
+      cp etcd-v{{ etcd_version }}-linux-amd64/etcd {{ ansible_env.PWD }}/roles/etcd/files
+      cp etcd-v{{ etcd_version }}-linux-amd64/etcdctl {{ ansible_env.PWD }}/roles/etcd/files
+      cp etcd-v{{ etcd_version }}-linux-amd64/etcdctl {{ ansible_env.PWD }}/roles/etcd/files
+
+      cp containerd-{{ containerd_version }}-linux-amd64.tar.gz {{ ansible_env.PWD }}/roles/containerd/files
+      cp runc.amd64 {{ ansible_env.PWD }}/roles/containerd/files
+    chdir: "{{ ansible_env.PWD }}/tgzfile/"
+
+- name: 生成证书配置和证书请求文件
+  ansible.builtin.template:
+    src: "{{ item }}.json.j2"
+    dest: "{{ role_path }}/files/{{ item }}.json"
+  with_items:
+    - admin-csr
+    - apiserver-csr
+    - ca-config
+    - ca-csr
+    - controller-manager-csr
+    - etcd-ca-csr
+    - etcd-csr
+    - front-proxy-ca-csr
+    - front-proxy-client-csr
+    - kube-proxy-csr
+    - scheduler-csr
+
+- name: 生成证书和密钥
+  ansible.builtin.shell:
+    cmd: |
+      cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+      cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes apiserver-csr.json | cfssljson -bare apiserver
+      cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes controller-manager-csr.json | cfssljson -bare controller-manager
+      cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes scheduler-csr.json | cfssljson -bare scheduler
+      cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kube-proxy-csr.json | cfssljson -bare kube-proxy
+      cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes admin-csr.json | cfssljson -bare admin
+
+      cfssl gencert -initca front-proxy-ca-csr.json | cfssljson -bare front-proxy-ca
+      cfssl gencert -ca=front-proxy-ca.pem -ca-key=front-proxy-ca-key.pem -config=ca-config.json -profile=kubernetes front-proxy-client-csr.json | cfssljson -bare front-proxy-client
+
+      cfssl gencert -initca etcd-ca-csr.json | cfssljson -bare etcd-ca
+      cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json -profile=kubernetes etcd-csr.json | cfssljson -bare etcd
+
+      openssl genrsa -out sa.key 2048
+      openssl rsa -in sa.key -pubout -out sa.pub
+
+      cp ca.pem ca-key.pem apiserver.pem apiserver-key.pem etcd.pem etcd-key.pem etcd-ca.pem  front-proxy-ca.pem front-proxy-ca-key.pem front-proxy-client.pem front-proxy-client-key.pem sa.key sa.pub ../../master/files
+      cp ca.pem ca-key.pem ../../worker/files
+      cp etcd.pem etcd-key.pem etcd-ca.pem etcd-ca-key.pem ../../etcd/files
+
+    chdir: "{{ role_path }}/files"
+    
+- name: 生成kubeconfig文件
+  ansible.builtin.shell:
+    cmd: |
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server=https://{{ k8s_cluster_entry_address }} --kubeconfig=controller-manager.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-context system:kube-controller-manager@kubernetes --cluster=kubernetes --user=system:kube-controller-manager --kubeconfig=controller-manager.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-credentials system:kube-controller-manager --client-certificate=controller-manager.pem --client-key=controller-manager-key.pem --embed-certs=true --kubeconfig=controller-manager.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config use-context system:kube-controller-manager@kubernetes --kubeconfig=controller-manager.kubeconfig
+
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server=https://{{ k8s_cluster_entry_address }} --kubeconfig=scheduler.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-credentials system:kube-scheduler --client-certificate=scheduler.pem --client-key=scheduler-key.pem --embed-certs=true --kubeconfig=scheduler.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-context system:kube-scheduler@kubernetes --cluster=kubernetes --user=system:kube-scheduler --kubeconfig=scheduler.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config use-context system:kube-scheduler@kubernetes --kubeconfig=scheduler.kubeconfig
+
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server=https://{{ k8s_cluster_entry_address }} --kubeconfig=admin.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-credentials kubernetes-admin --client-certificate=admin.pem --client-key=admin-key.pem --embed-certs=true --kubeconfig=admin.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-context kubernetes-admin@kubernetes --cluster=kubernetes --user=kubernetes-admin --kubeconfig=admin.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config use-context kubernetes-admin@kubernetes --kubeconfig=admin.kubeconfig
+
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server=https://{{ k8s_cluster_entry_address }} --kubeconfig=kube-proxy.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-credentials kube-proxy --client-certificate=kube-proxy.pem --client-key=kube-proxy-key.pem --embed-certs=true --kubeconfig=kube-proxy.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-context kube-proxy@kubernetes --cluster=kubernetes --user=kube-proxy --kubeconfig=kube-proxy.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config use-context kube-proxy@kubernetes --kubeconfig=kube-proxy.kubeconfig
+
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server=https://{{ k8s_cluster_entry_address }} --kubeconfig=bootstrap.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-credentials tls-bootstrap-token-user  --token={{ bootstrap_token_id }}.{{ bootstrap_token_secret }} --kubeconfig=bootstrap.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config set-context tls-bootstrap-token-user@kubernetes --cluster=kubernetes --user=tls-bootstrap-token-user --kubeconfig=bootstrap.kubeconfig
+      {{ ansible_env.PWD }}/tgzfile/kubernetes/server/bin/kubectl config use-context tls-bootstrap-token-user@kubernetes --kubeconfig=bootstrap.kubeconfig
+
+      cp controller-manager.kubeconfig scheduler.kubeconfig kube-proxy.kubeconfig admin.kubeconfig bootstrap.kubeconfig ../../master/files
+      cp kube-proxy.kubeconfig bootstrap.kubeconfig ../../worker/files
+
+    chdir: "{{ role_path }}/files"

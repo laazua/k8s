@@ -1,0 +1,39 @@
+---
+
+- name: 设置etcd组件服务路径
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  with_items:
+    - "{{ etcd_cert_path }}"
+    - "{{ etcd_conf_path }}"
+    - "{{ etcd_logs_path }}"
+
+- name: 上传etcd组件相关文件
+  ansible.builtin.copy:
+    src:  "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: 0755
+  with_items:
+    - { src: "etcd", dest: "{{ etcd_bin_path }}/etcd" }
+    - { src: "etcdctl", dest: "{{ etcd_bin_path }}/etcdctl" }
+    - { src: "etcd.pem" , dest: "{{ etcd_cert_path }}/etcd.pem" }
+    - { src: "etcd-key.pem", dest: "{{ etcd_cert_path }}/etcd-key.pem" }
+    - { src: "etcd-ca.pem", dest: "{{ etcd_cert_path }}/etcd-ca.pem" }
+
+- name: 上传etcd systemd服务配置文件
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.desc }}"
+    mode: 0644
+  with_items:
+    - { src: "etcd.service.j2", desc: "/usr/lib/systemd/system/etcd.service" }
+    - { src: "etcd.conf.yml.j2", desc: "{{ etcd_conf_path }}/etcd.conf.yml" }
+
+- name: 启动etcd服务
+  ansible.builtin.systemd:
+    name: etcd
+    state: restarted
+    enabled: true
+    daemon_reload: true

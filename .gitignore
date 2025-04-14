@@ -1,0 +1,14 @@
+**/*.pem
+**/*.json
+**/*.csr
+
+**/*.tgz
+**/*.tar.gz
+**/*.tar
+**/*.zip
+
+**/files/
+**/files/*
+
+**/tgzfile/
+**/ansible.log

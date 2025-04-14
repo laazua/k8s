@@ -1,0 +1,70 @@
+---
+
+- name: 设置k8s集群节点主机名
+  ansible.builtin.hostname:
+    name: "{{ node_name }}"
+    use: debian
+
+- name: k8s集群节点安装ntpdate服务
+  ansible.builtin.apt:
+    name: ntpdate
+    state: present
+    update_cache: true
+
+- name: 设置k8s集群节点时区
+  ansible.builtin.timezone:
+    name: Asia/Shanghai
+
+- name: k8s集群节点添加时间同步定时任务
+  ansible.builtin.cron:
+    name: "ntpdate"
+    minute: "*"
+    job: "ntpdate ntp1.aliyun.com"
+    state: present
+
+- name: k8s集群节点命令行关闭交换分区
+  ansible.builtin.command: swapoff -a
+
+- name: k8s集群节点注释掉/etc/fstab中swap分区的配置
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "swap"
+    state: absent
+
+- name: k8s集群节点安装ipvsadm ipset sysstat conntrack libseccomp2
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: true
+  with_items:
+    - ipvsadm
+    - ipset
+    - sysstat
+    - conntrack
+    - libseccomp2
+
+- name: 更新ipvs.conf
+  ansible.builtin.template:
+    src: ipvs.conf.j2
+    dest: /etc/modules-load.d/ipvs.conf
+  notify:
+    - restart systemd-modules-load
+
+- name: 更新k8s集群节点内核参数
+  ansible.builtin.template:
+    src: k8s.conf.j2
+    dest: /etc/sysctl.d/k8s.conf
+  notify:
+    - update kernel-parameters
+
+- name: 更新k8s集群节点security limits
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.conf
+    # backup: yes
+
+- name: k8s集群节点hosts文件更新
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
+    # backup: yes

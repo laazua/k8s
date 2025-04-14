@@ -1,0 +1,45 @@
+---
+
+- name: 创建k8s worker组件目录
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  with_items:
+    - "{{ k8s_cert_path }}"
+    - "{{ k8s_conf_path }}"
+    - "{{ k8s_manifests_path }}"
+
+- name: 上传k8s worker组件相关文件
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest  }}"
+    mode: "{{ item.mode }}"
+  with_items:
+    - { src: kubelet, dest: "{{ k8s_bin_path}}/kubelet", mode: "0755" }
+    - { src: kube-proxy, dest: "{{ k8s_bin_path}}/kube-proxy", mode: "0755" }
+    - { src: ca.pem, dest: "{{ k8s_cert_path }}/ca.pem", mode: "0644"  }
+    - { src: kube-proxy.kubeconfig, dest: "{{ k8s_conf_path }}/kube-proxy.kubeconfig", mode: "0644" }
+    - { src: bootstrap.kubeconfig, dest: "{{ k8s_conf_path }}/bootstrap.kubeconfig", mode: "0644" }
+
+- name: 上传k8s worker组件相关模板文件
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: 0644
+  with_items:
+    - { src: kubelet-conf.yaml.j2, dest: "{{ k8s_conf_path }}/kubelet-conf.yaml" }
+    - { src: kube-proxy.yaml.j2, dest: "{{ k8s_conf_path }}/kube-proxy.yaml" }
+    - { src: resolv.conf.j2, dest: "{{ k8s_conf_path }}/resolv.conf" }
+    - { src: kubelet.service.j2, dest: /usr/lib/systemd/system/kubelet.service }
+    - { src: kube-proxy.service.j2, dest: /usr/lib/systemd/system/kube-proxy.service }
+
+- name: 启动k8s worker组件
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    daemon_reload: yes
+    state: restarted
+    enabled: yes
+  with_items:
+    - kubelet
+    - kube-proxy

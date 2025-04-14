@@ -1,0 +1,65 @@
+---
+
+- name: prepare-role
+  hosts: 127.0.0.1
+  gather_facts: true
+  roles:
+    - prepare
+  tags:
+    - prepare
+
+- name: init-role
+  hosts: k8s
+  gather_facts: true
+  roles:
+    - init
+  tags:
+    - init
+  become: true
+
+- name: containerd-role
+  hosts: k8s
+  gather_facts: true
+  roles:
+    - containerd
+  tags:
+    - containerd
+  become: true
+
+- name: etcd-role
+  hosts: etcd
+  gather_facts: true
+  roles:
+    - etcd
+  tags:
+    - etcd
+  become: true
+
+- name: lb-role
+  hosts: lb
+  gather_facts: true
+  roles:
+    - lb
+  tags:
+    - lb
+  become: true
+
+- name: master-role
+  hosts: master
+  gather_facts: true
+  roles:
+    - master
+  tags:
+    - master
+  become: true
+
+- name: worker-role
+  hosts:
+    - master 
+    - worker
+  gather_facts: true
+  roles:
+    - worker
+  tags:
+    - worker
+  become: true

@@ -1,0 +1,11 @@
+- name: restart systemd-modules-load
+  ansible.builtin.systemd:
+    name: systemd-modules-load
+    state: restarted
+    daemon_reload: yes
+  become: true
+
+- name: update kernel-parameters
+  ansible.builtin.command:
+    cmd: sysctl -p --system
+  become: true

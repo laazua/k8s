@@ -1,0 +1,61 @@
+name: {{ node_name }}
+data-dir: {{ etcd_data_path }}
+wal-dir: {{ etcd_data_path }}/wal
+snapshot-count: 5000
+heartbeat-interval: 100
+election-timeout: 1000
+quota-backend-bytes: 0
+listen-peer-urls: 'https://{{ ansible_host }}:2380'
+listen-client-urls: 'https://{{ ansible_host }}:2379,https://127.0.0.1:2379'
+max-snapshots: 3
+max-wals: 5
+cors:
+initial-advertise-peer-urls: 'https://{{ ansible_host }}:2380'
+advertise-client-urls: 'https://{{ ansible_host }}:2379'
+discovery:
+discovery-fallback: 'proxy'
+discovery-proxy:
+discovery-srv:
+{% set hostnames = [] %}
+{% for host in groups['etcd'] -%}
+  {% set _ = hostnames.append(hostvars[host]['node_name'] + '=' + 'https://' + hostvars[host].inventory_hostname + ':2380') %}
+{% endfor %}
+initial-cluster: {{hostnames | join(',') }}
+initial-cluster-token: 'k8s-cluster'
+initial-cluster-state: 'new'
+strict-reconfig-check: false
+enable-pprof: true
+proxy: 'off'
+proxy-failure-wait: 5000
+proxy-refresh-interval: 30000
+proxy-dial-timeout: 1000
+proxy-write-timeout: 5000
+proxy-read-timeout: 0
+client-transport-security:
+  cert-file: {{ etcd_cert_path }}/etcd.pem
+  key-file: {{ etcd_cert_path }}/etcd-key.pem
+  client-cert-auth: true
+  trusted-ca-file: {{ etcd_cert_path }}/etcd-ca.pem
+  auto-tls: true
+peer-transport-security:
+  cert-file: {{ etcd_cert_path }}/etcd.pem
+  key-file: {{ etcd_cert_path }}/etcd-key.pem
+  client-cert-auth: true
+  trusted-ca-file: {{ etcd_cert_path }}/etcd-ca.pem
+  auto-tls: true
+  allowed-cn:
+  allowed-hostname:
+self-signed-cert-validity: 1
+log-level: debug
+logger: zap
+log-outputs: 
+  - stdout
+  - {{ etcd_logs_path }}/etcd.log
+force-new-cluster: false
+auto-compaction-retention: "1"
+cipher-suites: [
+  TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+  TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+]
+tls-min-version: 'TLS1.2'
+tls-max-version: 'TLS1.3'

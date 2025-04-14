@@ -1,0 +1,7 @@
+---
+
+- name: restart systemd-modules-load
+  ansible.builtin.systemd:
+    name: systemd-modules-load
+    state: restarted
+    daemon_reload: yes

@@ -1,0 +1,51 @@
+---
+
+- name: 上传containerd二进制包
+  ansible.builtin.copy:
+    src: containerd-{{ containerd_version }}-linux-amd64.tar.gz
+    dest: /tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz
+
+- name: 解压containerd二进制包
+  ansible.builtin.unarchive:
+    src: /tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz
+    dest: /usr/local
+    remote_src: true
+
+- name: 上传runc二进制包
+  ansible.builtin.copy:
+    src: runc.amd64
+    dest: /tmp/runc.amd64
+
+- name: 安装runc工具
+  ansible.builtin.command:
+    cmd: install -m 755 /tmp/runc.amd64 /usr/local/sbin/runc
+
+- name: 上传containerd systemd服务配置文件
+  ansible.builtin.template:
+    src: containerd.service.j2
+    dest: /usr/lib/systemd/system/containerd.service
+
+- name: 创建containerd配置目录
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+
+- name: 配置containred所需内核模块
+  ansible.builtin.template:
+    src: "containerd.conf.j2"
+    dest: "/etc/modules-load.d/containerd.conf"
+    mode: 0755
+  notify:
+    - restart systemd-modules-load
+
+- name: 上传containerd配置文件
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/containerd/config.toml
+
+- name: 启动containerd服务
+  ansible.builtin.systemd:
+    name: containerd
+    daemon_reload: true
+    enabled: true
+    state: restarted
