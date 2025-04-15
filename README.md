@@ -14,6 +14,3 @@
 - **etcd集群状态查看**
 1. sudo etcdctl --endpoints=https://192.168.165.80:2379,https://192.168.165.81:2379,https://192.168.165.82:2379 --cert=/etc/kubernetes/pki/etcd/etcd.pem --key=/etc/kubernetes/pki/etcd/etcd-key.pem --cacert=/etc/kubernetes/pki/etcd/etcd-ca.pem endpoint health
 2. sudo etcdctl --endpoints=https://192.168.165.80:2379,https://192.168.165.81:2379,https://192.168.165.82:2379 --cert=/etc/kubernetes/pki/etcd/etcd.pem --key=/etc/kubernetes/pki/etcd/etcd-key.pem --cacert=/etc/kubernetes/pki/etcd/etcd-ca.pem endpoint status --write-out=table
-
-- **kubelet节点加入**
-1. kubelet启动时,加入集群认证失败(还未解决)
