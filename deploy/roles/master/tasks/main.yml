@@ -47,7 +47,7 @@
     - { src: kube-controller-manager.service.j2, dest: /usr/lib/systemd/system/kube-controller-manager.service }
     - { src: kube-scheduler.service.j2, dest: /usr/lib/systemd/system/kube-scheduler.service }
     - { src: bootstrap.secret.yml.j2, dest: "{{ k8s_conf_path }}/bootstrap.secret.yml" }
-    - { src: token.csv.j2, dest: "{{ k8s_conf_path }}/token.csv" }
+    # - { src: token.csv.j2, dest: "{{ k8s_conf_path }}/token.csv" } # 未用
 
 - name: 启动k8s master组件
   ansible.builtin.systemd:

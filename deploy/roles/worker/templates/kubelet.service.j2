@@ -12,9 +12,9 @@ ExecStart={{ k8s_bin_path }}/kubelet \
     --container-runtime-endpoint=unix:///run/containerd/containerd.sock  \
     --node-labels=node.kubernetes.io/node= \
     --cert-dir={{ k8s_cert_path }} \
-    --rotate-certificates=true \
-    --authentication-token-webhook=true \
-    --authorization-mode=Webhook
+    --rotate-certificates=true 
+   # --authentication-token-webhook=true \
+   # --authorization-mode=Webhook
 
 [Install]
 WantedBy=multi-user.target

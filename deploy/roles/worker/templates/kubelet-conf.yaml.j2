@@ -20,7 +20,7 @@ cgroupDriver: systemd
 cgroupsPerQOS: true
 clusterDNS:
 - {{ k8s_cluster_dns }}
-clusterDomain: {{ k8s_cluster_entry_dns }}
+clusterDomain: {{ k8s_cluster_dns }}
 containerLogMaxFiles: 5
 containerLogMaxSize: 10Mi
 contentType: application/vnd.kubernetes.protobuf

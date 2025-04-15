@@ -7,6 +7,8 @@ containerd_version: 2.0.0
 containerd_tar_url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
 runc_version: 1.2.6
 runc_bin_url: "https://github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+cni_version: 1.6.2
+cni_bin_url: https://github.com/containernetworking/plugins/releases/download/v{{ cni_version }}/cni-plugins-linux-amd64-v{{ cni_version }}.tgz
 etcd_version: 3.5.20
 etcd_tar_url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
 
@@ -15,9 +17,13 @@ expired_time: 876000h
 
 # etcd hosts
 etcd_hosts:
+- 127.0.0.1
 - 192.168.165.80
 - 192.168.165.81
 - 192.168.165.82
+- node-00
+- node-01
+- node-02
 
 etcd_bin_path: "/usr/local/bin"
 etcd_data_path: "/var/lib/etcd"
@@ -60,13 +66,9 @@ api_hosts:
 - 192.168.165.80
 - 192.168.165.81
 - 192.168.165.82
-- 192.168.165.83
-- 192.168.165.84
 - node-00
 - node-01
 - node-02
-- node-03
-- node-04
 - 192.168.165.87
 - haproxy.oiox.cn
 

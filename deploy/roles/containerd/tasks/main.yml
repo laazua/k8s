@@ -1,24 +1,22 @@
 ---
+# contaierd服务部署
 
-- name: 上传containerd二进制包
+- name: 上传containerd服务需要的二进制包
   ansible.builtin.copy:
-    src: containerd-{{ containerd_version }}-linux-amd64.tar.gz
-    dest: /tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+  with_items:
+    - { src: "containerd-{{ containerd_version }}-linux-amd64.tar.gz", dest: "/tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz" }
+    - { src: runc.amd64, dest: "/tmp/runc.amd64" }
+    - { src: "cni-plugins-linux-amd64-v{{ cni_version }}.tgz", dest: "/tmp/cni-plugins-linux-amd64-v{{ cni_version }}.tgz" } 
 
-- name: 解压containerd二进制包
-  ansible.builtin.unarchive:
-    src: /tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz
-    dest: /usr/local
-    remote_src: true
-
-- name: 上传runc二进制包
-  ansible.builtin.copy:
-    src: runc.amd64
-    dest: /tmp/runc.amd64
-
-- name: 安装runc工具
-  ansible.builtin.command:
-    cmd: install -m 755 /tmp/runc.amd64 /usr/local/sbin/runc
+- name: 安装containerd相关包
+  ansible.builtin.shell:
+    cmd: |
+      tar -xf /tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz -C /usr/local
+      install -m 755 /tmp/runc.amd64 /usr/local/sbin/runc
+      mkdir -p /opt/cni/bin
+      tar -xf /tmp/cni-plugins-linux-amd64-v{{ cni_version }}.tgz -C /opt/cni/bin
 
 - name: 上传containerd systemd服务配置文件
   ansible.builtin.template:
