@@ -27,6 +27,6 @@
 1. calico
 2. flannel
 3. cilium(推荐)  
-   > a. helm repo add cilium https://helm.cilium.io
-   > b. helm pull cilium/cilium 
-   > c. helm install cilium cilium/cilium -n kube-system
+   > a. helm repo add cilium https://helm.cilium.io  
+   > b. helm pull cilium/cilium  
+   > c. helm install cilium cilium/cilium -n kube-system  
