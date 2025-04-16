@@ -14,3 +14,19 @@
 - **etcd集群状态查看**
 1. sudo etcdctl --endpoints=https://192.168.165.80:2379,https://192.168.165.81:2379,https://192.168.165.82:2379 --cert=/etc/kubernetes/pki/etcd/etcd.pem --key=/etc/kubernetes/pki/etcd/etcd-key.pem --cacert=/etc/kubernetes/pki/etcd/etcd-ca.pem endpoint health
 2. sudo etcdctl --endpoints=https://192.168.165.80:2379,https://192.168.165.81:2379,https://192.168.165.82:2379 --cert=/etc/kubernetes/pki/etcd/etcd.pem --key=/etc/kubernetes/pki/etcd/etcd-key.pem --cacert=/etc/kubernetes/pki/etcd/etcd-ca.pem endpoint status --write-out=table
+
+
+- **设置集群节点角色**
+1. kubectl label nodes node-00 node-role.kubernetes.io/master=""
+2. kubectl label nodes node-01 node-role.kubernetes.io/master=""
+3. kubectl label nodes node-02 node-role.kubernetes.io/master=""
+4. kubectl label nodes node-03 node-role.kubernetes.io/worker=""
+5. kubectl label nodes node-04 node-role.kubernetes.io/worker=""
+
+- **安装网络插件**
+1. calico
+2. flannel
+3. cilium(推荐)
+   a. helm repo add cilium https://helm.cilium.io
+   b. helm pull cilium/cilium 
+   c. helm install cilium cilium/cilium -n kube-system
