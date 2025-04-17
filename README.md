@@ -5,7 +5,7 @@
 2. k8s相关技术栈知识
 
 - **部署**
-1. ansible主控节点与k8s集群节点做好ssh免密登录(ansible主控免密:cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys)
+1. ansible主控节点与k8s集群节点做好ssh免密登录且免密用户有提权执行命令的权限(ansible主控免密:cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys)
 2. 使用deploy下的ansible脚本部署: ansible-playbook k8s.yml
 3. 也可使用ansible-playbook的--tags或者--skip-tags参数指定部署的模块或者要跳过的模块
 4. 在安装前，需要修改ansible配置文件中的hosts文件，添加k8s集群节点信息，以及group_vars文件中k8s集群的相关配置信息
