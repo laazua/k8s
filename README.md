@@ -32,3 +32,4 @@
    > a. helm repo add cilium https://helm.cilium.io  
    > b. helm pull cilium/cilium  
    > c. helm install cilium cilium/cilium -n kube-system  
+   > [具体参考](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/#gs-gateway-api)

@@ -1,0 +1,26 @@
+# 镜像配置
+image:
+  repository: web-harbor.xxxxx.com/path/imux@sha256  
+  tag: ef8fc26a38672b4e4dd4ca1d777650307f7e649201b21dd5ad6d466c7fc1566d
+  pullPolicy: IfNotPresent
+
+# 部署配置
+replicaCount: 2
+
+# 服务配置
+service:
+  type: NodePort
+  port: 9990
+  targetPort: 9990
+
+# 网关配置
+gateway:
+  name: imux-gateway
+  namespace: default
+  gatewayClassName: "cilium"  
+  hostname: "api.imux.com"
+
+# HTTP路由配置
+route:
+  path: /api/*
+  pathType: PathPrefix
