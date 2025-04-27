@@ -12,6 +12,7 @@ service:
   type: NodePort
   port: 9990
   targetPort: 9990
+  nodePort: 30001
 
 # 网关配置
 gateway:
