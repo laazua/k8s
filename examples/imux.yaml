@@ -1,4 +1,39 @@
 ---
+# Source: imux/templates/rbac.yaml
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: imux
+---
+# Source: imux/templates/rbac.yaml
+# Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: imux
+rules:
+- apiGroups: [""] # 核心API组
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "create"]
+---
+# Source: imux/templates/rbac.yaml
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: imux
+subjects:
+- kind: ServiceAccount
+  name: imux
+roleRef:
+  kind: Role
+  name: imux
+  apiGroup: rbac.authorization.k8s.io
+---
 # Source: imux/templates/service.yaml
 apiVersion: v1
 kind: Service
@@ -14,7 +49,7 @@ spec:
   ports:
     - port: 9990
       targetPort: 9990
-      nodePort: 30002
+      nodePort: 30001
   selector:
     app.kubernetes.io/name: imux
     app.kubernetes.io/instance: imux
@@ -30,7 +65,7 @@ metadata:
     app.kubernetes.io/version: "1.0.0"
     app.kubernetes.io/managed-by: Helm
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: imux
@@ -41,10 +76,10 @@ spec:
         app.kubernetes.io/name: imux
         app.kubernetes.io/instance: imux
     spec:
-      serviceAccountName: imux-sa
+      serviceAccountName: imux
       containers:
         - name: imux
-          image: "web-harbor.xxxxx.com/hh/imux@sha256:ff8fc26a38672b4e4dd4ca1d777650307f7e649201b21dd5ad6d466c7fc15661"
+          image: "web-harbor.xxxxx.com/hh/imux@sha256:ff8fc26a38672b4e4dd4ca1d777650307f7e649201b21dd5ad6d466c7fc1566a"
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9990
@@ -79,46 +114,8 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /
+            value: /api/*
       backendRefs:
         - name: imux
           port: 9990
 
---- 
-# ServiceAccount
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: imux-sa
-  namespace: default
-
----
-# Role
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: default
-  name: imux-role
-rules:
-- apiGroups: [""] # 核心API组
-  resources: ["pods", "services"]
-  verbs: ["get", "list", "watch", "create", "update", "patch"]
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "create"]
-
----
-# RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: imux-rolebinding
-  namespace: default
-subjects:
-- kind: ServiceAccount
-  name: imux-sa
-  namespace: default
-roleRef:
-  kind: Role
-  name: imux-role
-  apiGroup: rbac.authorization.k8s.io

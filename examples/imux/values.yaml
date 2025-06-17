@@ -1,11 +1,11 @@
 # 镜像配置
 image:
-  repository: web-harbor.xxxxx.com/path/imux@sha256  
-  tag: ef8fc26a38672b4e4dd4ca1d777650307f7e649201b21dd5ad6d466c7fc1566d
+  repository: web-harbor.xxxxx.com/hh/imux@sha256
+  tag: ff8fc26a38672b4e4dd4ca1d777650307f7e649201b21dd5ad6d466c7fc1566a
   pullPolicy: IfNotPresent
 
 # 部署配置
-replicaCount: 2
+replicaCount: 3
 
 # 服务配置
 service:
@@ -25,3 +25,9 @@ gateway:
 route:
   path: /api/*
   pathType: PathPrefix
+
+# rbac权限配置
+rbac:
+  serviceAccountName: imux
+  roleName: imux
+  roleBindingName: imux

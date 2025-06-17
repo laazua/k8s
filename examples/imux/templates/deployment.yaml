@@ -14,6 +14,8 @@ spec:
       labels:
         {{- include "imux.selectorLabels" . | nindent 8 }}
     spec:
+      # 关联serviceAccountName
+      serviceAccountName: {{ .Values.rbac.serviceAccountName }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
