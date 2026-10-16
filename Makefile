@@ -13,25 +13,33 @@ endif
 
 INVENTORY ?= inventory/hosts.example
 SITE      ?= playbooks/site.yml
+PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint lint test clean
+.PHONY: help syntax yamllint smoke lint test clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-syntax: ## 校验 playbook 语法 (ansible-playbook --syntax-check)
-	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) --syntax-check $(SITE)
+syntax: ## 校验全部 playbook 语法 (ansible-playbook --syntax-check)
+	@set -e; for p in $(PLAYBOOKS); do \
+		echo "  syntax-check $$p"; \
+		$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) --syntax-check $$p >/dev/null; \
+	done
+	@echo "  all playbooks OK"
 
 yamllint: ## YAML 风格检查
 	$(YAMLLINT) -c .yamllint .
 
+smoke: ## 真实执行冒烟（localhost，验证配置可加载且可运行）
+	$(ANSIBLE_PLAYBOOK) -i localhost, -c local $(SITE)
+
 lint: yamllint syntax ## 静态检查 (yamllint + syntax-check)
 
-test: lint ## 运行测试套件
+test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/skeleton/test_skeleton.sh
 
 clean: ## 清理运行产物

@@ -5,6 +5,45 @@
 
 ---
 
+## [2026-10-16] Generator · T001 修复 r1（响应评估 r1）
+
+- 时间：2026-10-16
+- 角色：Generator（harness-generator 会话）
+- 当前任务：`T001`
+- 本次做了什么（逐条响应 `reports/T001-r1.md`）：
+  - **D1（BLOCKER）**：`ansible.cfg` 删除 `stdout_callback = yaml`（`community.general` 已移除该 callback）。
+  - **D3（MAJOR，假绿根因）**：新增真实执行冒烟 —— `Makefile` 的 `smoke` 目标 + 测试脚本内检查，`test: lint smoke`。
+    牙齿验证：`ANSIBLE_STDOUT_CALLBACK=yaml` 模拟旧配置时冒烟 exit 1。
+  - **D2（MINOR）**：`.gitignore` 断言改为行为断言 `git check-ignore -q --no-index <探针>`。
+  - **D4（MINOR）**：`make syntax` 遍历 `playbooks/*.yml` 全量校验。
+  - **D5（MINOR）**：`ansible.cfg` 的 inventory 增加回退 `inventory/hosts.ini, inventory/hosts.example`。
+- 改了哪些文件：`ansible.cfg`、`Makefile`、`tests/skeleton/test_skeleton.sh`、`contracts/T001.md`（§10）、`state.yaml`、本文件。**未改 spec/reports**。
+- 怎么验证：
+  ```
+  make test                                                       # PASS=27 FAIL=0, exit 0
+  ansible-playbook -i inventory/hosts.example playbooks/site.yml  # exit 0（原为 exit 1）
+  ```
+- 测试/幂等结果：`make test` 连续两次 `PASS=27 FAIL=0`；真实运行 exit 0。
+- 遗留问题 / 风险：`spec.md` C10 的 `ansible-lint` 口径仍待 Planner 归档（不影响本轮）；`host_key_checking=False`、`deprecation_warnings=False` 为已知权衡（评估 §5 非阻塞）。
+- 下一步：`eval T001 (r2)`（交 Evaluator 复查）。
+
+---
+
+## [2026-10-16] Evaluator · T001 评估第 1 轮 → FAIL（eval）
+
+- 时间：2026-10-16
+- 角色：Evaluator（harness-evaluator 子会话，独立复现）
+- 当前任务：`T001`（被测提交 `1c33f93`）
+- 结论：**FAIL**（报告 `reports/T001-r1.md`）
+- 复现摘要：A1–A6 静态验收**全部 PASS**（`./tests/skeleton/test_skeleton.sh` PASS=25/FAIL=0；`--syntax-check` exit 0；`yamllint -c .yamllint .` exit 0；`make help` 列出目标；无密钥入库；inventory 三分组齐全）；`make lint`/`make test` 连跑两次均 PASS=25/exit 0。
+- **阻塞缺陷 D1（`ansible.cfg:12`）**：`stdout_callback = yaml` 在本环境（ansible-core 2.20.5 / community.general 12.6.0）使**任何真实 `ansible-playbook` 运行 exit 1**（`ERROR: ...community.general.yaml callback plugin has been removed`）。`--syntax-check` 不加载 callback → 门禁假绿（D3）。
+- 修复方向：删该行，或改 `callback_result_format = yaml`（本地已验两种均可 exit 0）；并补真实执行 smoke（对 localhost 跑一次占位 playbook）。
+- 其余改进项：D2 测试 `.gitignore` 断言为弱子串匹配（注释掉 `*.key` 仍 PASS）；D4 `make syntax` 只查 `site.yml`；D5 默认 inventory 缺失静默降级。
+- 改了哪些文件：`docs/harness/state/reports/T001-r1.md`（新增）、`state.yaml`、本文件。
+- 下一步：`build T001 (fix r1)`。
+
+---
+
 ## [2026-10-16] Generator · T001 实现完成（build）
 
 - 时间：2026-10-16

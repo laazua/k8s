@@ -18,6 +18,7 @@ if [[ "$ANSIBLE_PLAYBOOK" == */ansible/bin/ansible-playbook ]]; then
   export PYTHONPATH="$(dirname "$(dirname "$ANSIBLE_PLAYBOOK")"):${PYTHONPATH:-}"
 fi
 YAMLLINT="${YAMLLINT:-yamllint}"
+have_ansible() { command -v "$ANSIBLE_PLAYBOOK" >/dev/null 2>&1 || [[ -x "$ANSIBLE_PLAYBOOK" ]]; }
 
 echo "== T001 骨架验收 =="
 
@@ -37,16 +38,28 @@ check "ansible.cfg 设置 roles_path" "grep -q '^roles_path' ansible.cfg"
 check "inventory 含 k8s_master 分组" "grep -q '^\[k8s_master\]' inventory/hosts.example"
 check "inventory 含 etcd 分组" "grep -q '^\[etcd\]' inventory/hosts.example"
 check "inventory 含 k8s_node 分组" "grep -q '^\[k8s_node\]' inventory/hosts.example"
-check ".gitignore 忽略 *.key" "grep -q '\*\.key' .gitignore"
-check ".gitignore 忽略 kubeconfig" "grep -q 'kubeconfig' .gitignore"
+check "site.yml 通过 import_playbook 引入 control-plane" "grep -q 'control-plane.yml' playbooks/site.yml"
+check "site.yml 通过 import_playbook 引入 node" "grep -q 'node.yml' playbooks/site.yml"
 
 echo "-- 语法检查"
-if command -v "$ANSIBLE_PLAYBOOK" >/dev/null 2>&1 || [[ -x "$ANSIBLE_PLAYBOOK" ]]; then
+if have_ansible; then
   if "$ANSIBLE_PLAYBOOK" -i inventory/hosts.example --syntax-check playbooks/site.yml \
     >/tmp/opencode/t001_syntax.log 2>&1; then
     ok "ansible-playbook --syntax-check 通过"
   else
     bad "ansible-playbook --syntax-check 失败（见 /tmp/opencode/t001_syntax.log）"
+  fi
+else
+  bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
+fi
+
+echo "-- 真实执行冒烟（防止「配置无效但静态检查假绿」）"
+if have_ansible; then
+  if "$ANSIBLE_PLAYBOOK" -i localhost, -c local playbooks/site.yml \
+    >/tmp/opencode/t001_smoke.log 2>&1; then
+    ok "真实执行冒烟通过（配置可加载、playbook 可运行）"
+  else
+    bad "真实执行冒烟失败（见 /tmp/opencode/t001_smoke.log）"
   fi
 else
   bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
@@ -73,15 +86,23 @@ else
   bad "make help 未列出 lint/syntax/test"
 fi
 
-echo "-- 密钥未入库"
+echo "-- 密钥未入库（行为断言，非子串匹配）"
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  if git ls-files | grep -qiE '(\.key$|kubeconfig|vault[-_]?pass)'; then
+  ignore_ok=1
+  for probe in secret.key secret.pem kubeconfig vault-password.txt inventory/hosts.ini; do
+    if ! git check-ignore -q --no-index "$probe"; then
+      bad "未被 .gitignore 忽略: $probe"
+      ignore_ok=0
+    fi
+  done
+  [[ $ignore_ok -eq 1 ]] && ok "密钥类探针均被 .gitignore 忽略"
+  if git ls-files | grep -qiE '(\.key$|\.pem$|kubeconfig|vault[-_]?pass)'; then
     bad "git 跟踪了密钥类文件"
   else
     ok "git 未跟踪密钥类文件"
   fi
 else
-  ok "非 git 仓库，跳过 git 跟踪检查（.gitignore 已覆盖）"
+  bad "非 git 仓库：无法做忽略行为断言（请先 git init）"
 fi
 
 echo

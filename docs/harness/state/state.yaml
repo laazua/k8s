@@ -5,8 +5,8 @@
 phase: EVALUATING      # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T001      # 例如 T001
 contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 0          # 当前任务已评估轮数
-next_action: "eval T001"   # 人类可读的下一步（驱动语或具体指令）
+eval_round: 1          # 当前任务已评估轮数
+next_action: "eval T001 (r2)"   # 人类可读的下一步（驱动语或具体指令）
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -28,5 +28,5 @@ defaults:
   upgrade_policy: "相邻 minor 升级 + 手工回滚（升级前自动备份 etcd/证书）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []           # 阻塞项，每条一句话
-updated: "2026-10-16T12:00:00Z"   # ISO8601
+blockers: []           # 阻塞项，每条一句话（D1 已修复，见 contracts/T001.md §10）
+updated: "2026-10-16T14:00:00Z"   # ISO8601
