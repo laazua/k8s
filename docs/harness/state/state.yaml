@@ -2,15 +2,15 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING      # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T001      # 例如 T001
-contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # 当前任务已评估轮数
-next_action: "eval T001 (r2)"   # 人类可读的下一步（驱动语或具体指令）
+phase: BUILDING        # INIT | PLANNING | BUILDING | EVALUATING | DONE
+active_task: T002      # 例如 T001
+contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 2          # 当前任务已评估轮数
+next_action: "build T002"   # 人类可读的下一步（驱动语或具体指令）
 
 # 计划摘要（planner 写）
 planned_tasks: 16
-done_tasks: 0
+done_tasks: 1
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -28,5 +28,5 @@ defaults:
   upgrade_policy: "相邻 minor 升级 + 手工回滚（升级前自动备份 etcd/证书）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []           # 阻塞项，每条一句话（D1 已修复，见 contracts/T001.md §10）
-updated: "2026-10-16T14:00:00Z"   # ISO8601
+blockers: []           # 阻塞项，每条一句话（T001-r2 PASS，无阻塞）
+updated: "2026-10-16T16:00:00Z"   # ISO8601

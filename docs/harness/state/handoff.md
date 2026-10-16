@@ -5,6 +5,27 @@
 
 ---
 
+## [2026-10-16] Evaluator · T001 评估第 2 轮 → PASS（eval）
+
+- 时间：2026-10-16
+- 角色：Evaluator（harness-evaluator 子会话，独立复现，未改任何代码/测试/契约）
+- 当前任务：`T001`（被测提交 `0e59f8b`，上一轮 `1c33f93` FAIL）
+- 结论：**PASS**（报告 `reports/T001-r2.md`）；阻塞项 0，缺陷 1 MINOR + 2 NIT（均非阻塞）
+- r1 五条缺陷**全部真实复现确认修复**：
+  - D1（BLOCKER）：`ansible-playbook -i inventory/hosts.example playbooks/site.yml` → **exit 0**（原 exit 1）。
+  - D3（MAJOR）：`Makefile:42` `test: lint smoke`；牙齿实验 `ANSIBLE_STDOUT_CALLBACK=yaml make test` → **exit 2**，脚本内 `FAIL 真实执行冒烟失败`。
+  - D2（MINOR）：临时副本注释 `*.key` → 脚本 `FAIL 未被 .gitignore 忽略: secret.key`、exit 1（行为断言生效）。
+  - D4（MINOR）：临时副本破坏 `add-node.yml`（不在 site.yml 内）→ `make syntax` exit 2；`make lint` 逐个校验 5 个 playbook。
+  - D5（MINOR）：不显式 `-i` 时 warning 由 3 条降至 2 条，`Could not match supplied host pattern` 消失（回退 `hosts.example` 生效）。
+- 打分：功能正确性 5 / 幂等 5 / 可配置 4 / 测试质量 4 / 代码结构 4 / 安全 4；产品完整度 4（加权）。
+- 新增非阻塞项：**N1（MINOR）** `smoke` 实际执行 0 个 task（`grep -cE '^TASK \[' = 0`，两个 play 均 `skipping: no hosts matched`）→ 注入模块参数错误后 `make test` 仍 exit 0/PASS=27，但真实执行 exit 2；**T002 起须让冒烟真的落到主机**。N2 `make syntax PLAYBOOKS=` 空 glob 假绿；N3 提交把 Evaluator 的 `reports/T001-r1.md` 一并纳入（可审计性建议）。
+- 门禁/幂等：`make lint` 与 `make test` 各连跑两次均 exit 0、`PASS=27 FAIL=0`、输出完全一致；干净环境（`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK`）复现 `PASS=27`。
+- 回归/隔离：`spec.md`/`roadmap.md`/`standards/` 自 `90a32de` 未被 Generator 改动；全部破坏性探针在 `git worktree` 临时副本完成，主工作区 `git status --porcelain` 为空、HEAD=`0e59f8b`。
+- 改了哪些文件：`docs/harness/state/reports/T001-r2.md`（新增）、`state.yaml`、`roadmap.md`（T001 → done）、本文件。
+- 下一步：`build T002`（主机准备 role base）；T002 须落实 N1 的"真实执行"升级与 spec C10 门禁口径归档（Planner）。
+
+---
+
 ## [2026-10-16] Generator · T001 修复 r1（响应评估 r1）
 
 - 时间：2026-10-16
