@@ -1,0 +1,32 @@
+# k8s 二进制部署 harness · 状态（唯一事实来源）
+# 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
+# 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
+
+phase: EVALUATING      # INIT | PLANNING | BUILDING | EVALUATING | DONE
+active_task: T001      # 例如 T001
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 0          # 当前任务已评估轮数
+next_action: "eval T001"   # 人类可读的下一步（驱动语或具体指令）
+
+# 计划摘要（planner 写）
+planned_tasks: 16
+done_tasks: 0
+critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
+
+# 冻结的默认决策（planner 写，供下游一致引用）
+defaults:
+  cri: containerd
+  cni: cilium
+  ha_mechanism: "keepalived+haproxy (可配置为 kube-vip)"
+  etcd_nodes: 3
+  workloads_on_master: false   # 业务只调度到 node
+  k8s_min_version: "1.24"
+  kube_proxy: "保留（Cilium kubeProxyReplacement 可配置，默认关闭）"
+  cilium_mode: "VXLAN"
+  supported_os: "RedHat 家族 + Debian 家族（一级）；其余尽力而为"
+  artifact_source: "官方二进制 + 强制 sha256 校验；可配代理或本地制品目录"
+  upgrade_policy: "相邻 minor 升级 + 手工回滚（升级前自动备份 etcd/证书）"
+  harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
+
+blockers: []           # 阻塞项，每条一句话
+updated: "2026-10-16T12:00:00Z"   # ISO8601
