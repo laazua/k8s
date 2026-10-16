@@ -1,0 +1,11 @@
+---
+# 控制面部署入口（骨架占位：实际 roles 由 T004–T007 加入）
+- name: Deploy Kubernetes control plane
+  hosts: k8s_master
+  become: true
+  gather_facts: true
+  tags: [control-plane]
+  tasks:
+    - name: Placeholder - roles pending (T004 PKI / T005 etcd / T006 HA / T007 控制平面)
+      ansible.builtin.debug:
+        msg: "control-plane skeleton: roles pending (T004-T007)"

@@ -1,0 +1,26 @@
+# --- 密钥 / 凭据：绝不入库 ---
+*.key
+*.pem
+*.crt
+!roles/**/files/**/*.crt
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+vault-password*
+vault_pass*
+*_vault_pass*
+
+# --- 本地 inventory / 覆盖变量 ---
+inventory/hosts.ini
+group_vars/all/local.yml
+host_vars/*/local.yml
+
+# --- 运行时产物 ---
+*.retry
+*.log
+.ansible/
+facts_cache/
+
+# --- 下载缓存 / 制品 ---
+artifacts/
+downloads/

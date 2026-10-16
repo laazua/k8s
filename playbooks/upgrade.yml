@@ -1,0 +1,13 @@
+---
+# 版本升级入口（骨架占位：由 T015 实现）
+# 用法: ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml -e k8s_version=<new>
+- name: Upgrade Kubernetes cluster
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+  serial: 1
+  tags: [upgrade]
+  tasks:
+    - name: Placeholder - upgrade flow pending (T015)
+      ansible.builtin.debug:
+        msg: "upgrade skeleton: rolling upgrade pending (T015)"

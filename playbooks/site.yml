@@ -1,0 +1,5 @@
+---
+# 全量部署入口：控制面 + 工作节点
+# 用法: ansible-playbook -i inventory/hosts.ini playbooks/site.yml
+- import_playbook: control-plane.yml
+- import_playbook: node.yml

@@ -1,0 +1,11 @@
+---
+# 工作节点部署入口（骨架占位：实际 roles 由 T008–T010 加入）
+- name: Deploy Kubernetes worker nodes
+  hosts: k8s_node
+  become: true
+  gather_facts: true
+  tags: [node]
+  tasks:
+    - name: Placeholder - roles pending (T008 运行时/kubelet / T009 kube-proxy / T010 Cilium)
+      ansible.builtin.debug:
+        msg: "node skeleton: roles pending (T008-T010)"

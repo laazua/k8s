@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# 全局变量（所有主机）
+# 骨架与必要占位；具体取值由后续任务细化，禁止在 role/task 中硬编码。
+# =============================================================================
+
+# --- Kubernetes 版本（任意版本：只改这里） ---
+k8s_version: "1.31.0"
+k8s_min_supported: "1.24"
+
+# --- 端口 ---
+k8s_apiserver_port: 6443
+
+# --- 网络 ---
+k8s_service_cidr: "10.96.0.0/12"
+k8s_pod_cidr: "10.244.0.0/16"
+k8s_dns_domain: "cluster.local"
+
+# --- 高可用（D1：keepalived+haproxy，可切 kube-vip） ---
+k8s_ha_mode: "keepalived"
+k8s_vip: "10.0.0.100"
+k8s_vip_interface: "eth0"
+
+# --- 制品与代理 ---
+k8s_artifact_dir: "/opt/k8s/artifacts"
+k8s_bin_dir: "/usr/local/bin"
+k8s_config_dir: "/etc/kubernetes"
+proxy_env: {}
+
+# --- 容器运行时 ---
+containerd_version: "2.0.0"
+container_runtime_cgroup_driver: "systemd"
+
+# --- CNI ---
+cilium_version: "1.16.0"

@@ -1,0 +1,27 @@
+---
+# yamllint 配置 · 宽松风格，只拦真正的问题
+extends: default
+
+ignore: |
+  .git/
+  .venv/
+  artifacts/
+  downloads/
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  truthy:
+    allowed-values: ['true', 'false']
+    level: warning
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1

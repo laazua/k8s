@@ -1,0 +1,12 @@
+---
+# 新增节点入口（骨架占位：由 T014 实现）
+# 用法: ansible-playbook -i inventory/hosts.ini playbooks/add-node.yml -l <new-node>
+- name: Add new worker node
+  hosts: k8s_node
+  become: true
+  gather_facts: true
+  tags: [add-node]
+  tasks:
+    - name: Placeholder - join flow pending (T014)
+      ansible.builtin.debug:
+        msg: "add-node skeleton: join flow pending (T014)"

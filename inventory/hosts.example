@@ -1,0 +1,30 @@
+# =============================================================================
+#  示例 inventory（复制为 hosts.ini 后按需修改）
+#  cp inventory/hosts.example inventory/hosts.ini
+# =============================================================================
+
+# --- Kubernetes 控制面（高可用，≥3 台） ---
+[k8s_master]
+# k8s-master-01 ansible_host=10.0.0.11
+# k8s-master-02 ansible_host=10.0.0.12
+# k8s-master-03 ansible_host=10.0.0.13
+
+# --- etcd 集群（奇数成员，默认与控制面同机） ---
+[etcd]
+# k8s-master-01 ansible_host=10.0.0.11
+# k8s-master-02 ansible_host=10.0.0.12
+# k8s-master-03 ansible_host=10.0.0.13
+
+# --- 工作节点（业务工作负载只调度到这里） ---
+[k8s_node]
+# k8s-node-01 ansible_host=10.0.0.21
+# k8s-node-02 ansible_host=10.0.0.22
+
+# --- 分组关系 ---
+[k8s_cluster:children]
+k8s_master
+k8s_node
+
+[k8s_cluster:vars]
+# ansible_user=root
+# ansible_ssh_private_key_file=~/.ssh/id_rsa
