@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# roles/base/files.yml — 纯落盘任务
+# 说明：全部目标路径由 base_root_prefix 派生，故可整体重定向到沙箱做真实验证。
+# =============================================================================
+
+- name: 确保 sysctl / 内核模块配置目录存在
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ base_file_owner }}"
+    group: "{{ base_file_group }}"
+    mode: "0755"
+  loop:
+    - "{{ base_sysctl_dir }}"
+    - "{{ base_modules_dir }}"
+  tags: ["base:files:dirs"]
+
+- name: 下发 sysctl 配置（99-kubernetes.conf）
+  ansible.builtin.template:
+    src: sysctl.conf.j2
+    dest: "{{ base_sysctl_file }}"
+    owner: "{{ base_file_owner }}"
+    group: "{{ base_file_group }}"
+    mode: "0644"
+  tags: ["base:files:sysctl"]
+
+- name: 下发内核模块配置（99-kubernetes.conf）
+  ansible.builtin.template:
+    src: modules-load.conf.j2
+    dest: "{{ base_modules_file }}"
+    owner: "{{ base_file_owner }}"
+    group: "{{ base_file_group }}"
+    mode: "0644"
+  tags: ["base:files:modules"]
+
+- name: 管理 hosts 受管块
+  ansible.builtin.blockinfile:
+    path: "{{ base_hosts_file }}"
+    create: true
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (kubernetes)"
+    block: |
+      # 集群节点解析（由 role base 管理，请勿手工修改本块）
+      {% for h in base_hosts_entries %}
+      {{ h.ip }} {{ h.names }}
+      {% endfor %}
+  tags: ["base:files:hosts"]
+
+- name: 检查 fstab 是否存在
+  ansible.builtin.stat:
+    path: "{{ base_fstab_file }}"
+  register: base_fstab_stat
+  tags: ["base:files:fstab"]
+
+- name: 注释 fstab 中的 swap 行（关闭 swap）
+  ansible.builtin.replace:
+    path: "{{ base_fstab_file }}"
+    regexp: '^([^#\s][^\n]*[ \t]+swap[ \t]+[^\n]*)$'
+    replace: '# \1'
+  when:
+    - base_disable_swap | bool
+    - base_fstab_stat.stat.exists
+  tags: ["base:files:fstab"]

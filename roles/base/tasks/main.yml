@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/base — 入口
+#   base:files    → 纯落盘（可沙箱验证：真实渲染/内容/权限/幂等）
+#   base:system   → 主机级副作用（需真实主机/特权，测试中仅断言接线）
+# =============================================================================
+
+- name: 落盘类任务（sysctl / 内核模块 / hosts / fstab）
+  ansible.builtin.import_tasks: files.yml
+  tags: [base, "base:files"]
+
+- name: 主机级生效任务（加载模块 / 应用 sysctl / 关闭 swap / 时间 / 安全）
+  ansible.builtin.import_tasks: system.yml
+  tags: [base, "base:system"]

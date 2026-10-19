@@ -41,6 +41,7 @@ lint: yamllint syntax ## 静态检查 (yamllint + syntax-check)
 
 test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/skeleton/test_skeleton.sh
+	tests/base/test_base_role.sh
 
 clean: ## 清理运行产物
 	@rm -f *.retry

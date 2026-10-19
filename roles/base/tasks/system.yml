@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# roles/base/system.yml — 主机级生效任务
+# 注意：这些任务会真实改变主机（加载模块 / 应用 sysctl / swapoff / 改主机名 / 装包），
+#       沙箱测试通过 --skip-tags base:system 跳过，仅在真实主机上运行。
+# =============================================================================
+
+- name: 加载内核模块
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ base_kernel_modules }}"
+  tags: ["base:system:modules"]
+
+- name: 应用 sysctl（sysctl --system）
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+  tags: ["base:system:sysctl"]
+
+- name: 读取 swap 使用情况
+  ansible.builtin.command: swapon --show --noheadings
+  register: base_swapon
+  changed_when: false
+  failed_when: false
+  when: base_disable_swap | bool
+  tags: ["base:system:swap"]
+
+- name: 关闭 swap
+  ansible.builtin.command: swapoff -a
+  changed_when: true
+  when:
+    - base_disable_swap | bool
+    - (base_swapon.stdout | default('') | trim | length) > 0
+  tags: ["base:system:swap"]
+
+- name: 设置主机名
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+    use: "{{ 'systemd' if ansible_service_mgr | default('') == 'systemd' else 'generic' }}"
+  when: base_manage_hostname | bool
+  tags: ["base:system:hostname"]
+
+- name: 安装时间同步组件
+  ansible.builtin.package:
+    name: "{{ base_ntp_package }}"
+    state: present
+  when: base_ntp_enabled | bool
+  tags: ["base:system:ntp"]
+
+- name: 启用并启动时间同步服务
+  ansible.builtin.service:
+    name: "{{ base_ntp_service }}"
+    state: started
+    enabled: true
+  when:
+    - base_ntp_enabled | bool
+    - ansible_service_mgr | default('') == 'systemd'
+  tags: ["base:system:ntp"]
+
+- name: 设置时区
+  community.general.timezone:
+    name: "{{ base_timezone }}"
+  when:
+    - base_timezone | length > 0
+    - ansible_service_mgr | default('') == 'systemd'
+  tags: ["base:system:timezone"]
+
+- name: 关闭 firewalld（可选，按需）
+  ansible.builtin.service:
+    name: firewalld
+    state: stopped
+    enabled: false
+  when:
+    - base_manage_firewall | bool
+    - ansible_os_family == 'RedHat'
+  failed_when: false
+  tags: ["base:system:firewall"]
+
+- name: 设置 SELinux 状态（可选，仅 RedHat 系）
+  ansible.posix.selinux:
+    state: "{{ base_selinux_state }}"
+  when:
+    - base_selinux_state | length > 0
+    - ansible_os_family == 'RedHat'
+  tags: ["base:system:selinux"]

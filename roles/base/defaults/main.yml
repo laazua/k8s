@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# roles/base — Kubernetes 主机准备（默认变量）
+# 约定：所有可变项在此给出保守默认值，生产环境通过 group_vars / inventory 覆盖。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用）----------------------------------------------------
+# 空串 = 使用真实系统路径（生产语义）。测试时置为临时目录，把落盘重定向到沙箱，
+# 从而在不污染宿主的前提下真实验证「渲染 / 落盘 / 权限 / 幂等」。
+base_root_prefix: ""
+
+# --- 内核模块 ---------------------------------------------------------------
+base_kernel_modules:
+  - overlay
+  - br_netfilter
+
+# --- sysctl -----------------------------------------------------------------
+base_sysctl:
+  net.ipv4.ip_forward: 1
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+
+# --- 落盘路径（由前缀派生）--------------------------------------------------
+base_sysctl_dir: "{{ base_root_prefix }}/etc/sysctl.d"
+base_modules_dir: "{{ base_root_prefix }}/etc/modules-load.d"
+base_sysctl_file: "{{ base_sysctl_dir }}/99-kubernetes.conf"
+base_modules_file: "{{ base_modules_dir }}/99-kubernetes.conf"
+base_hosts_file: "{{ base_root_prefix }}/etc/hosts"
+base_fstab_file: "{{ base_root_prefix }}/etc/fstab"
+
+# --- 落盘属主（沙箱测试时置为 {{ omit }}，以非 root 身份也能验证）------------
+base_file_owner: root
+base_file_group: root
+
+# --- 主机名与 hosts ---------------------------------------------------------
+base_manage_hostname: true
+# 集群节点解析条目: [{ ip: "10.0.0.11", names: "k8s-master1" }, ...]
+base_hosts_entries: []
+
+# --- swap -------------------------------------------------------------------
+base_disable_swap: true
+
+# --- 时间同步 ---------------------------------------------------------------
+base_ntp_enabled: true
+base_ntp_package: chrony
+base_ntp_service: chronyd
+base_timezone: "Asia/Shanghai"
+
+# --- 安全基线 ---------------------------------------------------------------
+# 是否关闭 firewalld（k8s 场景常用；如需保留防火墙请置 false 并自行放行端口）
+base_manage_firewall: false
+# SELinux 目标状态: "" (不管理) | permissive | enforcing
+base_selinux_state: ""

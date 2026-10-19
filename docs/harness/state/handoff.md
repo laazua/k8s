@@ -5,6 +5,45 @@
 
 ---
 
+## [2026-10-19] Generator · T002 实现完成（build）→ ready_for_eval
+
+- 时间：2026-10-19
+- 角色：Generator（harness-generator 会话）
+- 当前任务：`T002`（主机准备 role `base`）
+- 本次做了什么：
+  1. 写契约 `contracts/T002.md`（A1–A10 可判定验收项 + **受限声明**）。
+  2. **TDD**：先写 `tests/base/test_base_role.sh` + `tests/base/sandbox.yml` → 红灯 `PASS=4 FAIL=23`
+     （失败原因确认为 `the role 'base' was not found`）。
+  3. 实现 `roles/base`：`defaults`/`tasks/{main,files,system}`/`handlers`/`templates/*.j2`/`meta`/`README.md`。
+  4. 绿灯：`make test` → T001 `PASS=27`、T002 `PASS=31`、`FAIL=0`、exit 0。
+- **验证策略变更（需 Planner 归档，见下）**：roadmap 原写「molecule(docker driver) + testinfra」，
+  但本环境 `molecule`/`testinfra` 装不上、dockerd 虽可手动启动却**拉不到镜像**（Docker Hub DNS 抖动 + 下载中断）、
+  且**无 systemd**，主机级效果无法真实验证。经用户确认（选项 A），改为：
+  **沙箱前缀 `base_root_prefix` + 真实执行文件类任务**（真实渲染 / 落盘 / 权限 / 幂等复跑）
+  + `--list-tasks --tags base:system` 接线断言 + `--check --diff` 干跑。
+- 怎么验证：
+  ```
+  make test                                                      # T001 PASS=27 + T002 PASS=31, exit 0
+  tests/base/test_base_role.sh                                   # 单跑 T002 套件
+  ```
+- 测试/幂等结果：`make test` 连跑两次均 exit 0、`PASS=27/31 FAIL=0`；
+  T002 用例内**第二次执行 `changed=0`**（真实幂等）；宿主 `/etc/sysctl.d/99-kubernetes.conf` 前后状态一致（沙箱隔离）。
+- 关键设计决策：
+  - 落盘路径全部由 `base_root_prefix` 派生（默认空 = 真实系统路径），故可整体重定向到沙箱做真实验证。
+  - **不使用 notify/handler**：曾出现 handler 未被 `--skip-tags` 过滤、在控制机跑 `sysctl --system` 而失败的问题；
+    改为 `tasks/system.yml` 中的幂等命令任务（`sysctl --system` 用 `changed_when: false`，`modprobe` 自身幂等）。
+- 遗留问题 / 风险：
+  - **受限声明（对应 spec R1）**：模块真实加载、sysctl 真实生效、`swapoff` 真实执行、主机名/时区真实变更、
+    chrony 服务启用、firewalld/SELinux 真实状态 —— 本环境**无法真实验证**，仅接线 + 干跑断言，需真机/VM 复验。
+  - **角色未接入 playbook**：`playbooks/{control-plane,node}.yml` 仍为占位，**故意不接入**——
+    否则 `make smoke`（localhost）会对开发机做主机准备。接入应在 T003/T004 的真实编排中进行。
+  - **待 Planner 归档**：① `roadmap.md` T002「测试方式」列仍写 molecule+testinfra；
+    ② `spec.md` C10 仍写 `ansible-lint`（T001 遗留）。
+  - 环境副作用：探查期手动启动过 `dockerd`（无镜像、可 `sudo pkill dockerd` 回收）。
+- 下一步：`eval T002`（交 Evaluator 独立复现与打分）。
+
+---
+
 ## [2026-10-16] Evaluator · T001 评估第 2 轮 → PASS（eval）
 
 - 时间：2026-10-16

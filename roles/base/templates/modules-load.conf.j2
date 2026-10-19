@@ -1,0 +1,5 @@
+# {{ ansible_managed | default('Ansible managed') }}
+# Kubernetes 必需的内核模块（由 role base 下发，请勿手工修改）
+{% for module in base_kernel_modules %}
+{{ module }}
+{% endfor %}

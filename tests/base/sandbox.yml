@@ -1,0 +1,21 @@
+---
+# T002 沙箱验证 playbook：
+#   把 base role 的落盘目标重定向到临时前缀（sandbox_root），真实执行“文件类”任务。
+#   系统级任务（modprobe/sysctl/swapoff/hostname/timezone）用 --skip-tags base:system 跳过，
+#   其接线由 tests/base/test_base_role.sh 以 --list-tasks 断言。
+- name: base role sandbox verification
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: true
+  vars:
+    base_root_prefix: "{{ sandbox_root }}"
+    # 沙箱以普通用户运行，属主参数置 omit（生产默认为 root）
+    base_file_owner: "{{ omit }}"
+    base_file_group: "{{ omit }}"
+    base_manage_hostname: false
+    base_hosts_entries:
+      - { ip: "10.0.0.11", names: "k8s-master1" }
+      - { ip: "10.0.0.21", names: "k8s-node1" }
+  roles:
+    - role: base
