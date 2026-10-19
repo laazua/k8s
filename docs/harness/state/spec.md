@@ -1,8 +1,15 @@
 # 规格（spec.md）· k8s 二进制 Ansible 部署
 
-> 状态：**已定稿（v1，Planner）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
+> 状态：**已定稿（v1.1，Planner，2026-10-19）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
 > 上游：根 `README.md`。下游：`roadmap.md`、`contracts/T00N.md`。
 > 覆盖标记：每条 README 要求后标注其落点任务（`→ T0NN`）。
+>
+> **变更记录**
+> - v1.2（2026-10-19）：按评估报告 `T002-r1` 的 D4 更正 R1 环境事实——**PID1 是 systemd、免密 sudo 可用**，
+>   限制改为「禁止在共享开发机做破坏性主机级变更」+「registry 不可达导致无容器/VM」。
+> - v1.1（2026-10-19）：① 归档 C10/A1 静态门禁（`ansible-lint` 环境不可得 → `--syntax-check` + `yamllint`）；
+>   ② 新增 C13「验收可执行性 / 受限声明」；③ 细化 R1。
+> - v1（2026-10-16）：初版定稿，覆盖 README 全部要求。
 
 ---
 
@@ -51,9 +58,11 @@
 7. **TDD 强制**：每个任务先提交失败的测试，再提交实现；无测试不得标记完成。
 8. **幂等**：任意剧本可重复执行；第二次 `changed=0`（例外须在契约中声明并说明理由）。
 9. **可复现**：从干净环境按文档可重跑得到相同结果。
-10. **静态质量**：`ansible-lint` 0 error；`--syntax-check` 全通过；使用 FQCN。
+10. **静态质量**：`ansible-playbook --syntax-check` 全通过、`yamllint` 无 error、全部使用 FQCN。
+    （**v1.1 归档**：本环境 `ansible-lint` 不可获取，见 `repo-conventions.md` §8；若日后环境可安装，**必须恢复为硬门禁**。）
 11. **安全**：密钥/证书/kubeconfig 不入库；证书由 role 生成；apiserver 安全默认（如 `--anonymous-auth=false`、最小授权模式）。
 12. **Token 经济**：一个任务一个会话；跨会话只依赖 `state.yaml` + `handoff.md`（harness 铁律）。
+13. **验收可执行性（v1.1 新增）**：每条验收必须在**当前环境可执行**。若某项只能真机/VM 验证，契约必须显式标注「受限」并给出真机复验步骤；评估报告不得把「接线断言 / 干跑」表述为「已验证生效」（对应 R1）。
 
 ## 4. 组件清单（Component Inventory）
 
@@ -85,7 +94,7 @@
 
 | A# | 验收项 | 判定方式（概要） |
 | --- | --- | --- |
-| A1 | 骨架与静态质量 | `ansible-lint` 0 error + `--syntax-check` 通过 |
+| A1 | 骨架与静态质量 | `ansible-playbook --syntax-check` 通过 + `yamllint` 无 error（`ansible-lint` 环境不可得，v1.1 归档；恢复条件见 C10） |
 | A2 | 主机准备幂等 | 连跑两次 `changed=0`；内核/sysctl/swap 断言通过 |
 | A3 | 制品获取与代理 | 给定 url+sha256 下载校验成功；设代理时请求走代理；重复执行跳过下载 |
 | A4 | PKI 正确性 | 各证书 SAN 覆盖 VIP/所有 master/节点名；私钥权限 600；重跑不覆盖有效证书 |
@@ -105,7 +114,13 @@
 ## 7. 风险与开放问题（Risks & Open Questions）
 
 **风险**
-- **R1 环境风险（高）**：真实多节点 VM 稀缺，HA 漂移、加节点、升级难以完整验证。缓解：molecule/libvirt 优先，容器近似方案需在契约中声明局限，不得声称已验证。
+- **R1 环境与验证风险（高；v1.2 勘定，取代 v1.1 的「无 systemd」表述）**：2026-10-19 实测——
+  **PID1 = systemd**（`systemctl is-system-running` → `running`）、**免密 sudo 可用**、docker daemon 由 systemd 托管且 `active`，
+  但 **registry 不可达**（`docker pull` → `i/o timeout`，`docker images` 为空）；`molecule`/`testinfra`/`ansible-lint` 仍无法安装。后果：
+  - ①**主机级效果**（内核模块真实加载、sysctl 生效、`swapoff`、主机名/时区、chrony 服务、firewalld/SELinux）：
+    技术上具备 root 能力，但本机是**共享开发机，禁止执行破坏性主机变更** → 仍视为「未验证」，只做接线/`--check` 干跑断言；
+  - ② **HA VIP 漂移、多节点 etcd、加节点、升级**：无可用容器/VM（无镜像），无法验证。
+  - 缓解（已生效）：把 role 的可测面做成**可重定向的落盘面**——以沙箱前缀真实执行渲染/落盘，断言内容、权限、**幂等复跑 `changed=0`**；系统级动作以**接线断言（`--list-tasks`）+ `--check` 干跑**覆盖；契约与评估报告**逐项声明受限**，并给出真机/VM 复验步骤。**不得**把上述替代验证表述为「已验证生效」。
 - **R2 发行版碎片化（中高）**：cgroup v1/v2、SELinux、firewalld vs nftables、systemd 版本差异会引发非幂等失败。缓解：一级支持两个家族，差异集中收敛到 base role。
 - **R3 版本矩阵（中）**：二进制 URL/校验和随版本变化，且组件兼容矩阵随版本演进。缓解：制品清单集中可配置 + 校验和必填。
 - **R4 网络/Kernel 对 Cilium 的要求（中）**：内核版本不足导致数据面能力降级。缓解：前置检查 + 文档声明最低内核。

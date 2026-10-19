@@ -1,6 +1,9 @@
 # 任务清单（Roadmap）· k8s 二进制 Ansible 部署
 
-> 状态：**已复核定稿（v1，Planner）**，取代此前 draft。上游：`spec.md`（G1–G12 / A1–A16 / D1–D3）。
+> 状态：**已复核定稿（v1.2，Planner，2026-10-19）**，取代 v1.1。上游：`spec.md`（G1–G13 / A1–A16 / C1–C13 / D1–D3）。
+> v1.2 变更：按评估报告 `T002-r1` 的 D4 更正「验证环境」事实（PID1=systemd、免密 sudo 可用、registry 不可达）。
+> v1.1 变更：① T002「测试方式」由 molecule+testinfra 改为**沙箱前缀真实执行 + 接线/干跑断言**（验收摘要不变，受限项见契约）；
+> ② 新增「验证环境」说明——容器/VM 类测试方式在当前环境不可执行，须按 R1 降级并显式声明。
 > 每行格式：`ID | 状态 | 标题 | 交付物 | 验收摘要（可判定） | 依赖 | 测试方式 | QAgate`
 > 状态：`todo | in-progress | done | blocked`。QAgate：`normal`（逐任务独立评估）| `light`（阶段末统一评估）。
 > **TDD 硬门禁**：任何任务在契约中必须先有会失败的测试；无测试不得置 `ready_for_eval`。
@@ -11,7 +14,7 @@
 | ID | 状态 | 标题 | 交付物 | 验收摘要（可判定） | 依赖 | 测试方式 | QAgate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T001 | done | 项目骨架与工具链 | `ansible.cfg`、`inventory/` 示例（k8s_master/etcd/k8s_node 分组）、`group_vars/`、`roles/` 空壳与命名约定、`playbooks/` 入口占位、`Makefile`（lint/syntax/test）、`.gitignore`（密钥/kubeconfig） | `--syntax-check` 全通过、`yamllint` 无 error、`make help` 列出 lint/syntax/test 目标、`git status` 不含任何密钥类文件 [A1]（`ansible-lint` 环境不可得，见 `repo-conventions.md` §8） | — | 静态：lint + syntax | normal |
-| T002 | in-progress | 主机准备 role（base） | `roles/base`（内核模块/sysctl/swapoff/时区-chrony/hosts/hostname/防火墙策略，按 os_family 分支，支持 RedHat+Debian） | 断言：swap off、目标内核模块已加载、关键 sysctl 值生效、NTP 同步、主机名与 hosts 正确；**同一 playbook 连跑两次第二次 `changed=0`**（例外需在契约声明）[A2] | T001 | molecule（docker driver）+ testinfra 断言 + 幂等复跑 | normal |
+| T002 | in-progress | 主机准备 role（base） | `roles/base`（内核模块/sysctl/swapoff/时区-chrony/hosts/hostname/防火墙策略，按 os_family 分支，支持 RedHat+Debian） | 断言：swap off、目标内核模块已加载、关键 sysctl 值生效、NTP 同步、主机名与 hosts 正确；**同一 playbook 连跑两次第二次 `changed=0`**（例外需在契约声明）[A2]。**系统级项为本环境受限项**（须真机复验，契约 §5 已声明） | T001 | 沙箱前缀真实执行（内容/权限/**幂等复跑 `changed=0`**）+ `--list-tasks` 接线断言 + `--check` 干跑；不依赖容器/网络 | normal |
 | T003 | todo | 下载与代理 role | `roles/download`（URL+sha256 校验、代理环境变量、本地缓存/制品目录、已存在跳过） | 给定 url+sha256 能下载并校验成功；sha256 不符时任务**失败**；已存在则跳过（不改动）；设 `http_proxy` 时请求经代理（可用本地 mock 代理断言）；重复执行 `changed=0` [A3, C6] | T001 | 本地 HTTP mock + 断言脚本 + 幂等复跑 | normal |
 | T004 | todo | PKI / 证书 role | `roles/pki`（自建 CA、apiserver/kubelet/etcd/front-proxy/SA/admin 证书） | 每个证书 `openssl x509 -text` 的 SAN 覆盖 VIP 与全部 master/节点名；私钥权限 600；**重跑不覆盖仍有效的既有证书**（内容哈希不变）[A4] | T003 | 断言脚本（openssl 校验 SAN/有效期/权限）+ 幂等复跑 | normal |
 | T005 | todo | etcd 集群 role | `roles/etcd`（二进制 + systemd，奇数成员） | 3 成员 etcd `endpoint health` 全部 healthy、`member list` 为 3；重启任一成员后集群恢复 healthy [A5] | T004 | 集群断言脚本 + 重启演练 | normal |
@@ -66,6 +69,11 @@ T001 ─┬─ T002 ─┐
 
 ## 备注与已知限制
 
+- **验证环境（v1.2 勘定，影响 T005/T006/T008/T014/T015/T016）**：PID1 = systemd（`is-system-running` = running）、**免密 sudo 可用**；但 docker **registry 不可达**（`docker pull` i/o timeout，无镜像）、`molecule`/`testinfra`/`ansible-lint` 不可安装。
+  因此表中「molecule / docker / libvirt」类**测试方式当前不可执行**：这类任务一律改为「**可执行部分真实跑 + 不可执行部分显式受限 + 给出真机复验步骤**」；
+  **验收摘要不因此弱化**，只是把验证拆成「已验 / 受限未验」两栏如实标注（对应 spec C13 / R1）。
+- **主机级变更禁令**：虽然具备 root（免密 sudo）与 systemd，但本机是共享开发机，**禁止**执行 `swapoff`/`sysctl --system`/改主机名/装包等破坏性变更；
+  这类效果一律按受限项处理，需在真机/VM 复验。
 - 若环境无 libvirt/多 VM：T005/T006 的「故障漂移」、T014/T015 的端到端需以容器近似完成，**必须在契约与评估报告中显式声明局限**（对应 spec R1），不得声称等价于真实 HA。
 - 容器近似无法验证内核相关的 Cilium 数据面能力（spec R4），需在文档的已知限制中列出。
 - QAgate 一律 `normal`：每条验收都是可判定命令，无需降级为阶段末统一评估。

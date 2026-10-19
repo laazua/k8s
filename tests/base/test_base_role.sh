@@ -23,6 +23,20 @@ have_ansible() { command -v "$ANSIBLE_PLAYBOOK" >/dev/null 2>&1 || [[ -x "$ANSIB
 
 echo "== T002 base role 验收 =="
 
+# 记录文件/路径状态（存在则取内容哈希，缺失则标记），用于宿主隔离断言
+snapshot_path() {
+  local p="$1"
+  if [[ -e "$p" ]]; then
+    if [[ -f "$p" ]]; then
+      sha256sum "$p" | awk '{print $1}'
+    else
+      stat -c '%F %a' "$p"
+    fi
+  else
+    printf '__MISSING__'
+  fi
+}
+
 echo "-- A1 role 结构完整性"
 for f in roles/base/defaults/main.yml roles/base/tasks/main.yml roles/base/tasks/files.yml \
   roles/base/tasks/system.yml roles/base/handlers/main.yml roles/base/meta/main.yml \
@@ -30,6 +44,27 @@ for f in roles/base/defaults/main.yml roles/base/tasks/main.yml roles/base/tasks
   roles/base/README.md; do
   check "存在 $f" "[[ -f '$f' ]]"
 done
+
+echo "-- A11 跨发行版 NTP 服务名解析（vars_files 载入 defaults + extra vars 模拟 os_family）"
+if ! have_ansible; then
+  bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
+else
+  run_ntp_case() {
+    local slug="$1" desc="$2" family="$3" expected="$4"
+    shift 4
+    if "$ANSIBLE_PLAYBOOK" -i localhost, -c local tests/base/assert_ntp_service.yml \
+      -e "ansible_os_family=$family" -e "expected_ntp_service=$expected" "$@" \
+      >"/tmp/opencode/t002_ntp_${slug}.log" 2>&1; then
+      ok "NTP 服务名解析：$desc"
+    else
+      bad "NTP 服务名解析：$desc（见 /tmp/opencode/t002_ntp_${slug}.log）"
+    fi
+  }
+  run_ntp_case debian "Debian → chrony" Debian chrony
+  run_ntp_case redhat "RedHat → chronyd" RedHat chronyd
+  run_ntp_case override "用户覆盖保留（Debian + -e base_ntp_service=custom-chrony）" \
+    Debian custom-chrony -e base_ntp_service=custom-chrony
+fi
 
 echo "-- 真实执行（沙箱前缀 + 跳过系统级 tag）"
 if ! have_ansible; then
@@ -43,8 +78,17 @@ else
   printf 'UUID=aaaa-bbbb-cccc / ext4 defaults 0 0\n/dev/vdb1 none swap defaults 0 0\n' > "$SB/etc/fstab"
   printf '127.0.0.1 localhost localhost.localdomain\n' > "$SB/etc/hosts"
 
-  # 记录真实系统路径的执行前状态，用于验证“沙箱隔离”（不污染宿主）
-  pre_real_state="$(cat /etc/sysctl.d/99-kubernetes.conf 2>/dev/null || echo '__MISSING__')"
+  # 记录全部真实宿主路径的执行前状态，用于验证“沙箱隔离”（不污染宿主）
+  REAL_PATHS=(
+    /etc/sysctl.d/99-kubernetes.conf
+    /etc/modules-load.d/99-kubernetes.conf
+    /etc/hosts
+    /etc/fstab
+  )
+  declare -A pre_real_state=()
+  for p in "${REAL_PATHS[@]}"; do
+    pre_real_state["$p"]="$(snapshot_path "$p")"
+  done
 
   AP_ARGS=(-i localhost, -c local tests/base/sandbox.yml -e "sandbox_root=$SB" --skip-tags base:system)
 
@@ -73,6 +117,8 @@ else
 
   echo "-- A5 hosts 管理"
   check "hosts 含受管块" "grep -q 'BEGIN ANSIBLE MANAGED BLOCK' '$SB/etc/hosts'"
+  check "hosts 含 10.0.0.11 k8s-master1（精确行）" "grep -qx '10.0.0.11 k8s-master1' '$SB/etc/hosts'"
+  check "hosts 含 10.0.0.21 k8s-node1（精确行）" "grep -qx '10.0.0.21 k8s-node1' '$SB/etc/hosts'"
   check "hosts 保留原有行" "grep -q '^127.0.0.1 localhost localhost.localdomain$' '$SB/etc/hosts'"
 
   echo "-- A6 幂等（真实复跑，第二次 changed=0）"
@@ -112,13 +158,15 @@ else
     bad "sandbox.yml --syntax-check 失败（见 /tmp/opencode/t002_syntax.log）"
   fi
 
-  echo "-- 隔离性：宿主真实系统路径未被改动"
-  post_real_state="$(cat /etc/sysctl.d/99-kubernetes.conf 2>/dev/null || echo '__MISSING__')"
-  if [[ "$pre_real_state" == "$post_real_state" ]]; then
-    ok "宿主 /etc/sysctl.d/99-kubernetes.conf 状态未变化（沙箱隔离生效）"
-  else
-    bad "宿主真实系统路径被污染！"
-  fi
+  echo "-- A10 隔离性：宿主真实系统路径未被改动（四个真实路径）"
+  for p in "${REAL_PATHS[@]}"; do
+    post="$(snapshot_path "$p")"
+    if [[ "${pre_real_state[$p]}" == "$post" ]]; then
+      ok "宿主 $p 状态未变化（沙箱隔离生效）"
+    else
+      bad "宿主 $p 被污染！（执行前 ${pre_real_state[$p]}，执行后 $post）"
+    fi
+  done
 fi
 
 echo

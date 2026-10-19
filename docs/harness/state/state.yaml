@@ -5,8 +5,8 @@
 phase: EVALUATING      # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T002      # 例如 T001
 contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 0          # 当前任务已评估轮数
-next_action: "eval T002"   # 人类可读的下一步（驱动语或具体指令）
+eval_round: 1          # 当前任务已评估轮数（r2 由 Evaluator 置 2）
+next_action: "eval T002 (r2)"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -26,7 +26,9 @@ defaults:
   supported_os: "RedHat 家族 + Debian 家族（一级）；其余尽力而为"
   artifact_source: "官方二进制 + 强制 sha256 校验；可配代理或本地制品目录"
   upgrade_policy: "相邻 minor 升级 + 手工回滚（升级前自动备份 etcd/证书）"
+  verification_policy: "主机级破坏性变更禁止在共享开发机执行（虽 PID1=systemd、免密 sudo 可用）：受限项须在契约声明并给真机复验步骤；可测部分用沙箱前缀真实执行 + 幂等复跑，不得谎称已验证"
+  static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []           # 阻塞项，每条一句话（T001-r2 PASS，无阻塞）
-updated: "2026-10-19T11:10:00Z"   # ISO8601
+blockers: []          # 阻塞项，每条一句话（T002-r1 的 D1 已修复，待 r2 评估）
+updated: "2026-10-19T12:40:00Z"   # ISO8601

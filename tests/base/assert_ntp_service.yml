@@ -1,0 +1,25 @@
+---
+# T002 跨发行版变量求值断言（无容器/无 registry 可用时的替代方案）
+#  用法：
+#    ansible-playbook -i localhost, -c local tests/base/assert_ntp_service.yml \
+#      -e ansible_os_family=Debian -e expected_ntp_service=chrony
+#  说明：extra vars 优先级最高，可覆盖 gather_facts 得到的 ansible_os_family；
+#        vars_files 载入 role defaults，验证 base_ntp_service 的按发行版求值逻辑。
+- name: 断言 base_ntp_service 按 ansible_os_family 正确解析
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../roles/base/defaults/main.yml
+  tasks:
+    - name: 检查 base_ntp_service
+      ansible.builtin.assert:
+        that:
+          - base_ntp_service == expected_ntp_service
+        fail_msg: >-
+          ansible_os_family={{ ansible_os_family }} 时
+          base_ntp_service={{ base_ntp_service }}，期望 {{ expected_ntp_service }}
+        success_msg: >-
+          ansible_os_family={{ ansible_os_family }} →
+          base_ntp_service={{ base_ntp_service }}（符合预期）
+        quiet: true

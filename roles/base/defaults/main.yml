@@ -43,7 +43,9 @@ base_disable_swap: true
 # --- 时间同步 ---------------------------------------------------------------
 base_ntp_enabled: true
 base_ntp_package: chrony
-base_ntp_service: chronyd
+# 服务名随发行版：RedHat 系为 chronyd；Debian/Ubuntu 的 chrony 包为 chrony。
+# 仍可在 group_vars / host_vars / -e 中覆盖（如使用自定义 unit 名）。
+base_ntp_service: "{{ 'chronyd' if ansible_os_family == 'RedHat' else 'chrony' }}"
 base_timezone: "Asia/Shanghai"
 
 # --- 安全基线 ---------------------------------------------------------------

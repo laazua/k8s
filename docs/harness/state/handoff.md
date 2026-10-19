@@ -5,6 +5,94 @@
 
 ---
 
+## [2026-10-19] Generator · T002 修复 r1 → ready_for_eval（build）
+
+- 时间：2026-10-19
+- 角色：Generator（harness-generator 子会话；只做 `active_task: T002`，未自判 PASS）
+- 当前任务：`T002`（主机准备 role `base`，修复 `reports/T002-r1.md` 的 D1/D2/D3/D6 + D4 README 部分）
+- 本轮修了什么：
+  1. **D1（MAJOR）**：`roles/base/defaults/main.yml` 的 `base_ntp_service` 改为按发行版求值
+     `{{ 'chronyd' if ansible_os_family == 'RedHat' else 'chrony' }}`；仍是 role default，
+     `group_vars`/`host_vars`/`-e` 可覆盖。`roles/base/README.md`「关键变量」补上 `base_ntp_service`。
+  2. **D2（MINOR）**：A5 新增 hosts 精确行断言 `grep -qx '10.0.0.11 k8s-master1'` /
+     `grep -qx '10.0.0.21 k8s-node1'`（补 E4 未捕获的缺口）。
+  3. **D3（MINOR）**：A10 隔离断言扩展到四个真实宿主路径
+     `/etc/sysctl.d/99-kubernetes.conf`、`/etc/modules-load.d/99-kubernetes.conf`、`/etc/hosts`、`/etc/fstab`
+     （前后内容 sha256 对比，缺失记 `__MISSING__`）。
+  4. **D6（NIT）**：README「仅落盘」示例改为直接运行 `tests/base/sandbox.yml`
+     （`SB=$(mktemp -d)` + `-e sandbox_root=$SB --skip-tags base:system`），不再依赖先接入 playbook。
+  5. **D4（README 部分）**：README 与契约 §5 的「无 systemd」更正为「PID1=systemd、免密 sudo 可用；
+     但为共享开发机，禁止 swapoff/sysctl/改主机名等破坏性主机级变更；无可用容器、registry 不可达」。
+     `spec.md` 由 Planner 维护（v1.2），本轮未改。
+- **红 → 绿证据**：
+  - 先加 `tests/base/assert_ntp_service.yml` + 新断言，修复前跑：Debian 分支
+    `FAIL NTP 服务名解析：Debian → chrony`，`PASS=38 FAIL=1`，exit 1（`/tmp/opencode/t002_red.log`）。
+  - D2 牙齿实验（临时副本删 hosts 条目循环）：两条精确行断言 FAIL，`PASS=36 FAIL=3`
+    （`/tmp/opencode/t002_d2_teeth.log`）。
+  - D3 牙齿实验（临时副本清空 `base_root_prefix`，`unshare -rm` 私有 mount namespace 内 bind `/etc`）：
+    四个路径全部报「被污染」，`PASS=22 FAIL=17`（`/tmp/opencode/t002_d3_teeth2.log`）；
+    namespace 退出后宿主四路径复核干净。
+  - 修复后单跑：`tests/base/test_base_role.sh` → **`PASS=39 FAIL=0`**，exit 0（`/tmp/opencode/t002_green.log`）。
+- **两次完整回归**（按报告 §9）：
+  ```
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test   # 第一次：T001 PASS=27 FAIL=0；T002 PASS=39 FAIL=0；exit 0
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test   # 第二次：同上；去 ANSI 后两次日志 diff 无差异
+  ```
+  `/tmp/opencode/t002_make_test_r1_{1,2}.log`、`/tmp/opencode/r1_diff.txt`。
+  文档定稿后又复跑一次，结果与上面完全一致（`/tmp/opencode/t002_make_test_final.log`）。
+- 改了哪些文件：`roles/base/defaults/main.yml`、`roles/base/README.md`、
+  `tests/base/test_base_role.sh`、`tests/base/assert_ntp_service.yml`（新增）、
+  `docs/harness/state/contracts/T002.md`（§5/§6/§7/§8 + §9/§10）、`state.yaml`、本文件。
+  **未改** `tests/skeleton/`、`playbooks/`、`roles/base/tasks/*`；未把 `base` 接入 `site.yml`。
+- 提交范围：上述代码/测试/契约/状态 + 此前工作区中 Planner 的 `spec.md`/`roadmap.md` v1.2
+  与 Evaluator 的 `reports/T002-r1.md`（一并纳入以保证状态可审计；Generator 未改其内容）。
+- 遗留项：**D5**（`make smoke` 仍 0 task）属 T001 已验收门禁，本轮按要求不修，留待后续任务；
+  报告 §7 的 NTP tag 拆分、fstab 行首空白正则等非阻塞改进项未做。
+- 下一步：`eval T002 (r2)`（Evaluator 独立复现；`eval_round` 由 Evaluator 置 2）。
+
+---
+
+## [2026-10-19] Evaluator · T002 评估第 1 轮 → FAIL（eval）
+
+- 时间：2026-10-19
+- 角色：Evaluator（harness-evaluator 子会话，独立复现；未改任何代码/测试/契约）
+- 当前任务：`T002`（被测提交 `fd9d4ec`）
+- 结论：**FAIL**（报告 `reports/T002-r1.md`）；A1–A10 全部 PASS，但可配置与可移植 3/5（<4）触发 FAIL
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 连跑两次均 exit 0、T001 `PASS=27`、T002 `PASS=31`、`FAIL=0`，两次日志（去色）完全一致；独立沙箱验证内容/权限/幂等，第二次 `changed=0`；宿主 `/etc/{sysctl.d,modules-load.d}/99-kubernetes.conf`、`/etc/hosts`、`/etc/fstab` 均未被污染。
+- 牙齿实验（临时 worktree，已删除）：删除 role → `PASS=4 FAIL=24`；删除 fstab replace → A4 FAIL；`ip_forward=0` → A3 FAIL；`changed_when: true` → A6 FAIL；`unshare -rm` 私有 namespace 中破坏前缀 → A10 FAIL「宿主真实系统路径被污染！」。**E4 未被捕获**：删除 hosts 条目渲染循环后仍 `PASS=31`，暴露 A5 只断言受管块标记、不断言条目内容。
+- 阻塞缺陷（D1，MAJOR）：`roles/base/defaults/main.yml:46` 默认 `base_ntp_service: chronyd`，Debian/Ubuntu 的 chrony 包实际是 `chrony.service`；`tasks/system.yml:50-58` 未按 os_family 分支。Debian 12 filelist 实测只有 `chrony.service`/`chrony-wait.service`；错误服务名 check 探针 exit 2。README/meta 宣称支持 Debian/Ubuntu，默认配置会失败。
+- 其余：D2 A5 测试缺口（MINOR）；D3 A10 只查 sysctl（MINOR）；D4 文档「无 systemd」与实测 PID1=systemd 不符（MINOR，需 Planner 更正）；D5 `make smoke` 仍 0 task（T001 N1 遗留，NIT）；D6 README「仅落盘」示例在未接入 playbook 时无效（NIT）。
+- 设计取舍：`base_root_prefix` 沙箱接缝、不用 notify/handler、role 不接入 playbooks 均判定合理（后者代价是 smoke 仍为空转，建议后续独立 smoke playbook）。
+- 改了哪些文件：`docs/harness/state/reports/T002-r1.md`（新增）、`state.yaml`、本文件；`roadmap.md` 保持 T002 `in-progress`（FAIL 不勾选）。
+- 下一步：`build T002 (fix r1)` —— 修 D1、补 D2 断言、建议增强 D3/D4，重跑 `make test` 两次后交 r2。
+
+---
+
+## [2026-10-19] Planner · 规格维护 v1.1（plan）
+
+- 时间：2026-10-19
+- 角色：Planner（主会话，只写规格，未改任何代码/测试/契约/报告）
+- 当前任务：`T002`（保持 `in-progress` + `ready_for_eval`，**未回退进度**）
+- 本次做了什么（归档两笔欠账 + 固化环境事实）：
+  1. **spec C10 / A1**：静态门禁由 `ansible-lint 0 error` **正式改为** `ansible-playbook --syntax-check` + `yamllint`
+     （本环境 `ansible-lint` 不可获取；注明「若可安装须恢复为硬门禁」）。
+  2. **spec 新增 C13「验收可执行性」**：验收不可执行时必须在契约标注「受限」并给真机复验步骤；
+     评估报告不得把「接线断言/干跑」表述为「已验证生效」。
+  3. **spec R1 细化**为已勘明事实：无 systemd（PID1）、容器镜像不可获取（dockerd 可起、registry 不通）、
+     molecule/testinfra/ansible-lint 均装不上；并写明缓解=可重定向落盘面 + 幂等复跑 + 受限声明。
+  4. **roadmap v1.1**：T002「测试方式」改为**沙箱前缀真实执行 + `--list-tasks` 接线 + `--check` 干跑**（验收摘要不变）；
+     新增「验证环境」备注，规定后续 T005/T006/T008/T014/T015/T016 的同类降级规则。
+  5. `state.yaml`：新增冻结项 `defaults.verification_policy`、`defaults.static_gate`。
+- 未做的事（有意）：**没有**把 `phase` 改回 `BUILDING`、**没有**把 `active_task` 指向 T001 ——
+  T001 已 done、T002 已实现待评估，回退会丢失真实进度；`next_action` 保持 `eval T002`。
+- 改了哪些文件：`spec.md`、`roadmap.md`、`state.yaml`、本文件。**未改** README / standards / 代码。
+- 待办（需要用户或有权限的角色处理，Planner 无权改）：
+  - `repo-conventions.md` §8 末条「docker 可用（29.9.1）」**已过时**（daemon 默认未运行、镜像拉不到），建议改为「docker CLI 存在；daemon 需手动启动且 registry 不可达」。
+  - README「一个任务的生命周期」第 3 步仍写 `ansible-lint`，与 spec C10 新口径不一致（README 属需求原文，建议仅加注）。
+- 下一步：`eval T002`（`/h-eval`）。
+
+---
+
 ## [2026-10-19] Generator · T002 实现完成（build）→ ready_for_eval
 
 - 时间：2026-10-19
