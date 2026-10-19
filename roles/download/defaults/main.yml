@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# roles/download — 制品下载与代理（默认变量）
+# 约定：所有可变项在此给出保守默认值；生产通过 group_vars / inventory 覆盖。
+#      禁止在 tasks 中硬编码 URL / 版本 / 路径。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用）----------------------------------------------------
+# 空串 = 使用真实系统路径（生产语义）。测试时置为临时目录，把制品落盘整体重定向，
+# 从而在不污染宿主的前提下真实验证「下载 / 校验 / 落盘 / 权限 / 幂等 / 代理」。
+download_root_prefix: ""
+
+# --- 本地缓存 / 制品目录 -----------------------------------------------------
+# 复用全局制品目录（group_vars/all: k8s_artifact_dir），未定义时回退保守默认；
+# 由 download_root_prefix 派生，故可整体重定向到沙箱。
+download_cache_dir: "{{ download_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+download_cache_dir_mode: "0755"
+
+# --- 下载项（本 role 的核心输入）---------------------------------------------
+# 每项字段：
+#   name   : 可读名称；缺省取 url 的文件名（用于日志与默认 dest）
+#   url    : 必填，下载地址
+#   sha256 : 必填，64 位 hex；**强校验**，不符即任务失败（不允许省略/降级为 warning）
+#   dest   : 可选，缺省 {{ download_cache_dir }}/<name>
+#   mode / owner / group : 可选，缺省取 download_file_*
+# 版本必须变量化（示例，禁止硬编码）：
+#   download_items:
+#     - name: kube-apiserver
+#       url: "{{ k8s_download_url_base }}/v{{ k8s_version }}/bin/linux/{{ k8s_arch }}/kube-apiserver"
+#       sha256: "{{ k8s_artifact_sha256['kube-apiserver'] }}"
+#       mode: "0755"
+download_items: []
+
+# --- 网络行为（全部可覆盖）---------------------------------------------------
+download_timeout: 120
+download_retries: 3
+download_retry_delay: 2
+download_validate_certs: true
+# 制品已存在且 sha256 相符 → 跳过（不改动）；置 true 则强制重新下载
+download_force: false
+# 落盘后再独立复验一次 sha256（纵深防御；与 get_url 的 checksum 互不替代）
+download_verify_after: true
+
+# --- 代理（集中引用 group_vars 的 proxy_env，下载任务统一使用）----------------
+# proxy_env 形如 { http_proxy: "...", https_proxy: "...", no_proxy: "..." }；默认空 = 不走代理。
+download_proxy_env: "{{ proxy_env | default({}) }}"
+
+# --- 落盘默认（可被 item 覆盖）-----------------------------------------------
+download_file_mode: "0644"
+download_file_owner: root
+download_file_group: root

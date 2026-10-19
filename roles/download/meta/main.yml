@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: download
+  author: harness-generator
+  description: 制品下载与代理（URL + 强制 sha256 强校验 / proxy_env 代理 / 本地缓存跳过 / 超时重试）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - download
+
+dependencies: []

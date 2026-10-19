@@ -1,0 +1,115 @@
+---
+# =============================================================================
+# roles/download — 入口
+#   download:validate → 校验必填字段（url + 64 位 hex sha256），**不允许省略强校验**
+#   download:resolve  → 归一化下载项（补默认 dest / mode / 属主）
+#   download:dirs     → 确保目标目录存在
+#   download:fetch    → 下载 + sha256 强校验（不符即失败，不落成品）
+#   download:verify   → 落盘后独立复验 sha256（纵深防御）
+#
+# 幂等语义：
+#   - 制品已存在且 sha256 相符 → 跳过，**不改动文件**（changed=0，不发网络请求，支持离线缓存）
+#   - 制品已存在但 sha256 不符 → 视为缓存损坏，重新下载（有意为之的 changed=1）
+# =============================================================================
+
+- name: "download:validate | 校验下载项必填字段（url + 64 位 hex sha256）"
+  ansible.builtin.assert:
+    that:
+      - item.url is defined
+      - item.url | string | length > 0
+      - (item.sha256 | default('')) is match('^[0-9a-fA-F]{64}$')
+    fail_msg: >-
+      下载项 {{ item.name | default(item.url | default('(缺 url)')) }} 非法：
+      必须提供 url 与 64 位 hex 的 sha256（强校验不可省略，不接受跳过或降级为提示）
+    quiet: true
+  loop: "{{ download_items }}"
+  loop_control:
+    label: "{{ item.name | default(item.url | default('?')) }}"
+  tags: ["download", "download:validate"]
+
+- name: "download:resolve | 重置归一化结果"
+  ansible.builtin.set_fact:
+    download_resolved_items: []
+  tags: ["download", "download:resolve"]
+
+- name: "download:resolve | 归一化下载项（补默认 dest / mode）"
+  ansible.builtin.set_fact:
+    download_resolved_items: "{{ download_resolved_items + [ _resolved ] }}"
+  vars:
+    # 注意：属主/属组不在此归一化——必须保留 `omit` 占位符在**模块参数**层解析
+    # （omit 无法经 set_fact 存续），故在 download:fetch 中按 item.owner|default(download_file_owner) 求值。
+    _name: "{{ item.name | default(item.url | basename) }}"
+    _resolved: >-
+      {{ item | combine({
+           'name': _name,
+           'sha256': item.sha256 | lower,
+           'dest': item.dest | default(download_cache_dir ~ '/' ~ _name),
+           'mode': item.mode | default(download_file_mode)
+         }) }}
+  loop: "{{ download_items }}"
+  loop_control:
+    label: "{{ item.name | default(item.url) }}"
+  tags: ["download", "download:resolve"]
+
+- name: "download:dirs | 确保制品目标目录存在"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "{{ download_cache_dir_mode }}"
+  loop: >-
+    {{ download_resolved_items | map(attribute='dest') | list
+       | map('dirname') | unique | list }}
+  loop_control:
+    label: "{{ item }}"
+  tags: ["download", "download:dirs"]
+
+- name: "download:fetch | 下载并强校验制品（sha256 不符即失败）"
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "{{ item.mode }}"
+    owner: "{{ item.owner | default(download_file_owner) }}"
+    group: "{{ item.group | default(download_file_group) }}"
+    timeout: "{{ download_timeout }}"
+    validate_certs: "{{ download_validate_certs }}"
+    force: "{{ download_force }}"
+    use_proxy: true
+  environment: "{{ download_proxy_env }}"
+  loop: "{{ download_resolved_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: download_fetch
+  until: download_fetch is succeeded
+  retries: "{{ download_retries }}"
+  delay: "{{ download_retry_delay }}"
+  tags: ["download", "download:fetch"]
+
+- name: "download:verify | 复验落盘制品 sha256（纵深防御）"
+  ansible.builtin.stat:
+    path: "{{ item.dest }}"
+    checksum_algorithm: sha256
+  loop: "{{ download_resolved_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: download_stat
+  when: download_verify_after | bool
+  tags: ["download", "download:verify"]
+
+- name: "download:verify | 断言制品 sha256 与期望一致"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.checksum == download_resolved_items[idx].sha256
+    fail_msg: >-
+      sha256 复验失败：{{ download_resolved_items[idx].name }}
+      期望 {{ download_resolved_items[idx].sha256 }}
+      实际 {{ item.stat.checksum | default('(文件缺失)') }}
+    quiet: true
+  loop: "{{ download_stat.results | default([]) }}"
+  loop_control:
+    index_var: idx
+    label: "{{ download_resolved_items[idx].name }}"
+  when:
+    - download_verify_after | bool
+  tags: ["download", "download:verify"]

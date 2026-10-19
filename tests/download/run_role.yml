@@ -1,0 +1,16 @@
+---
+# T003 下载/代理 role 验证 playbook。
+# 由 tests/download/test_download_role.sh 通过 `-e @extra.json` 注入：
+#   download_root_prefix（沙箱前缀）、k8s_artifact_dir、download_items、
+#   proxy_env、download_timeout/retries/retry_delay 等。
+- name: download role verification
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    # 沙箱以普通用户运行，属主参数置 omit（生产默认 root）
+    download_file_owner: "{{ omit }}"
+    download_file_group: "{{ omit }}"
+  roles:
+    - role: download

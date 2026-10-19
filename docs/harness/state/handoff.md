@@ -5,6 +5,71 @@
 
 ---
 
+## [2026-10-19] Generator · T003 实现完成（build）→ ready_for_eval
+
+- 时间：2026-10-19
+- 角色：Generator（harness-generator 子会话；只做 `active_task: T003`，未自判 PASS）
+- 当前任务：`T003`（下载与代理 role `download`）
+- 本次做了什么：
+  1. 写契约 `docs/harness/state/contracts/T003.md`（A1–A12 可判定验收项 + 幂等非典型例外 + **受限声明**）。
+  2. **TDD**：先写全离线测试（`tests/download/mock_servers.py` + `fixtures` + `run_role.yml` +
+     `test_download_role.sh`）→ 红灯 `PASS=18 FAIL=37`（`the role 'download' was not found`，exit 1）。
+  3. 实现 `roles/download`：`defaults`（items/timeout/retries/proxy_env/cache_dir 全部变量化）、
+     `tasks/main.yml`（validate → resolve → dirs → fetch → verify）、`handlers`、`meta`、`README.md`。
+  4. 绿灯：`tests/download/test_download_role.sh` → **`PASS=59 FAIL=0`**，exit 0。
+  5. `Makefile`：`test` 目标纳入新套件，并加 `test-download` 便捷目标。
+- **怎么验证**：
+  ```bash
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test        # T001 PASS=27 | T002 PASS=39 | T003 PASS=59，exit 0
+  make test-download                                     # 仅 T003 套件，全离线
+  tests/download/test_download_role.sh
+  ```
+- **测试/幂等结果**：`make test` **连跑两次**均 exit 0、`PASS=27/39/59 FAIL=0`，两次去色日志 diff 无差异；
+  T003 用例内第二次执行 `changed=0`；已存在制品 `inode/mtime/size` 不变；**源不可达时 `changed=0`**
+  （证明「已存在且 hash 相符 → 跳过」不发网络请求，可离线预置制品）。
+- **关键设计决策**：
+  - 强校验用 `get_url` 的 `checksum: "sha256:<hex>"`：实测「hash 不符 → 任务失败且 **dest 不落文件**」，
+    无半成品残留；另有 `download:verify` 落盘后独立复验作纵深防御。
+  - `download:validate` 强制每项提供 64 位 hex `sha256`（缺省/非法 → **fail fast，绝不降级为 warning**）。
+  - 代理用 `environment: "{{ download_proxy_env }}"`（缺省 `{{ proxy_env }}`），实测 `http_proxy` 生效、
+    `no_proxy` 被尊重（绕过代理且直连成功）。
+  - 重试用任务级 `until/retries/delay`（实测 `loop` + `until` 为**逐项**重试）。
+  - **唯一非典型幂等例外（已在契约 §5 声明）**：制品已存在但 sha256 不符 → 视为缓存损坏并**重新下载**（自愈）。
+- **牙齿实验（7 组，仓库副本上执行，主工作区零污染）**：E1 删 `checksum`→FAIL×4；E2 删 `environment`→FAIL×1；
+  E3 默认 retries=0→FAIL×3；E3c 删 `until/retries/delay`→FAIL×3；E4 放宽 sha256 正则→FAIL×2；
+  E5 `force: true`→FAIL×1；E6 制品目录脱离沙箱前缀→FAIL×9。
+  **E3 首轮未被捕获**（测试自己 `-e` 传了 `download_retries` 覆盖 role 默认）→ 已修正测试：
+  A9 改用 role 默认，并新增 **A9b**（`download_retries: 0` 必须失败且源仅被请求一次）双向锁定该变量。
+- **受限声明（对应 spec R1）**：本环境 registry 不可达、**禁止外网**，故不使用 molecule/testinfra，
+  改用**本地 mock HTTP 源 + mock 正向代理 + mock 不稳定源**真实验证；**真实 k8s 官方制品（dl.k8s.io）的
+  下载与 sha256、以及真实 HTTPS 的 `validate_certs` 无法在此验证**，须按契约 §6 的步骤在联网/真机复验。
+- 改了哪些文件：`roles/download/**`（新增）、`tests/download/**`（新增）、`Makefile`、
+  `docs/harness/state/contracts/T003.md`（新增）、`state.yaml`、`roadmap.md`（T003 → in-progress）、本文件。
+  **未改** `tests/skeleton/`、`tests/base/`、`roles/base/`；**未接入** `playbooks/site.yml`（契约 A12 有断言）。
+- 遗留项 / 风险（非阻塞）：
+  - 真实制品与真实 HTTPS 未验证（见上「受限声明」）。
+  - 测试失败时会**保留**沙箱目录（`/tmp/opencode/t003.XXXXXX`）并写 `t003_last_ports.json` 供排障；成功则清理。
+  - 制品属主/属组因 `omit` 无法经 `set_fact` 存续，改在 fetch 的模块参数层解析（tasks 内已注释）。
+- 下一步：`eval T003`（Evaluator 独立复现；`eval_round` 由 Evaluator 置 1）。
+
+---
+
+## [2026-10-19] Evaluator · T002 评估第 2 轮 → PASS（eval）
+
+- 时间：2026-10-19
+- 角色：Evaluator（harness-evaluator 子会话，独立复现；未改任何代码/测试/契约）
+- 当前任务：`T002`（被测提交 `741a926`，上一轮 `fd9d4ec` FAIL）
+- 结论：**PASS**（报告 `reports/T002-r2.md`）；六项硬指标均达标（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 4；产品完整度 4），阻塞 0。
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 连跑两次均 exit 0、T001 `PASS=27`、T002 `PASS=39`、`FAIL=0`，两次去色日志**完全一致**（核对 Generator 声称的 39 一致）。独立沙箱第二次 `changed=0`；0644/0755 权限、swap 注释、hosts 精确条目全部复核通过。
+- **D1（MAJOR）确认修复**：自建探针（不引用仓库测试脚本）独立验证 Debian→`chrony`、RedHat→`chronyd`、`-e base_ntp_service=…` 覆盖生效、Suse 落 else 分支；回退写死 `chronyd` 立即 `FAIL NTP 服务名解析：Debian → chrony`。
+- **牙齿实验 6/6 全部被捕获**（临时 worktree + private mount namespace，宿主零污染）：E1 回退 D1→FAIL；E2 删 hosts 循环→A5 两条精确行 FAIL；E3 `changed_when: true`→A6 FAIL；E4 mode 0600→A2 权限 FAIL；E5/E6 让 dest 绕过前缀（sysctl / hosts）→A10 打印前后哈希并 FAIL。
+- 其余复核：D2/D3/D6 **确认修复**（含 E2/E5/E6 牙齿）；D4 spec v1.2 与 role README、契约 §5 口径一致；**D5 维持如实记录**（`make smoke` 仍 0 task、`site.yml` 未接入 `base`，未被悄悄"修绿"）。回归：`741a926` 未触碰 `tests/skeleton/`、`playbooks/`、`roles/base/tasks/*`，测试脚本 diff 为纯新增。
+- 非阻塞项（N1–N6）：A9 仍整段跳过 NTP tag；A11 "用户覆盖" case 只证明 extra-var 优先级；缺 `base_disable_swap=false` 等配置变体负例；fstab 行首空白正则；README 裸 `ansible-playbook` 缺运行前提；smoke 0 task 建议后续独立 smoke playbook 解决。
+- 改了哪些文件：`docs/harness/state/reports/T002-r2.md`（新增）、`state.yaml`（accepted / eval_round 2 / done_tasks 2 / active_task T003 / phase BUILDING）、`roadmap.md`（T002 → done）、本文件。
+- 下一步：`build T003`（下载与代理 role：URL+sha256 校验、代理、本地缓存、幂等）。
+
+---
+
 ## [2026-10-19] Generator · T002 修复 r1 → ready_for_eval（build）
 
 - 时间：2026-10-19

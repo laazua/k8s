@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke lint test clean
+.PHONY: help syntax yamllint smoke lint test test-download clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -42,6 +42,10 @@ lint: yamllint syntax ## 静态检查 (yamllint + syntax-check)
 test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/skeleton/test_skeleton.sh
 	tests/base/test_base_role.sh
+	tests/download/test_download_role.sh
+
+test-download: ## 运行 download role 测试套件（全离线 mock 源/代理）
+	tests/download/test_download_role.sh
 
 clean: ## 清理运行产物
 	@rm -f *.retry
