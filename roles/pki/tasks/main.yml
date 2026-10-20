@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# roles/pki — 入口
+#   pki:check  → 探测 openssl（fail fast）
+#   pki:facts  → 从 inventory 分组 + k8s_vip + 服务网段推导全部 SAN（唯一来源）
+#   pki:dirs   → 创建 PKI 目录（0700）
+#   pki:ca     → 自建 3 个 CA：kubernetes-ca / etcd-ca / front-proxy-ca
+#   pki:cert   → apiserver / admin / front-proxy-client / etcd-server / etcd-peer /
+#                apiserver-etcd-client（数据驱动 pki_certs）
+#   pki:kubelet→ 每节点一份 kubelet 证书（CN=system:node:<节点>）
+#   pki:sa     → ServiceAccount 密钥对 sa.key/sa.pub
+#   pki:verify → 产物存在性 + 权限 + 链式校验 + 有效期（fail fast）
+#
+# 幂等语义（核心验收）：
+#   - 既有证书仍有效（> pki_renew_before_seconds）且与私钥匹配 → **不覆盖**（changed=0）；
+#   - 缺失/损坏/过期/与私钥不匹配/其签发 CA 被重建 → 重签（自愈）；
+#   - 私钥仅在缺失或不匹配时重建（避免无谓轮换）。
+# 不在范围：SAN 集合变化后的自动重签（用 pki_force_regen=true 显式触发，见 README）。
+# =============================================================================
+
+- name: "pki:check | 探测 openssl（自建 PKI 的唯一依赖，缺失即失败）"
+  ansible.builtin.command:
+    cmd: "openssl version"
+  register: pki_openssl_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 断言 openssl 可用"
+  ansible.builtin.assert:
+    that:
+      - pki_openssl_version.rc == 0
+    fail_msg: >-
+      未找到可用的 openssl（{{ pki_openssl_version.stderr | default('command not found') }}）。
+      pki role 用 openssl CLI 生成密钥/证书（本环境 community.crypto 不可用）。
+      请先在各主机安装 openssl（OpenSSL 1.1.1+ 或 3.x）。
+    quiet: true
+  tags: ["pki", "pki:check"]
+
+- name: "pki:facts | 推导拓扑与 SAN"
+  ansible.builtin.include_tasks: facts.yml
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:dirs | 创建 PKI 目录（{{ pki_dir_mode }}）"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "{{ pki_dir_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  loop:
+    - "{{ pki_dir }}"
+    - "{{ pki_etcd_dir }}"
+    - "{{ pki_kubelet_dir }}"
+  tags: ["pki", "pki:dirs"]
+
+- name: "pki:ca | 生成/维护 CA（自签）"
+  ansible.builtin.include_tasks: ca.yml
+  loop: "{{ pki_cas | dict2items }}"
+  loop_control:
+    loop_var: pki_ca_item
+    label: "{{ pki_ca_item.key }}"
+  vars:
+    pki_ca_name: "{{ pki_ca_item.key }}"
+    pki_ca: "{{ pki_ca_item.value }}"
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:cert | 签发组件证书（数据驱动：{{ pki_certs | length }} 张）"
+  ansible.builtin.include_tasks: cert.yml
+  loop: "{{ pki_certs }}"
+  loop_control:
+    loop_var: pki_cert
+    label: "{{ pki_cert.name }}"
+  tags: ["pki", "pki:cert"]
+
+- name: "pki:kubelet | 签发各节点 kubelet 证书"
+  ansible.builtin.include_tasks: kubelet.yml
+  tags: ["pki", "pki:kubelet"]
+
+- name: "pki:sa | 生成 ServiceAccount 密钥对"
+  ansible.builtin.include_tasks: sa.yml
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:verify | 落盘自检（存在性/权限/链式/有效期）"
+  ansible.builtin.include_tasks: verify.yml
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:cleanup | 清理构建目录（CSR/扩展/序列号）"
+  ansible.builtin.file:
+    path: "{{ pki_build_dir }}"
+    state: absent
+  when: pki_cleanup_build_dir | bool
+  tags: ["pki", "pki:cleanup"]

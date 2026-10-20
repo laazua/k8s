@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# pki:sa — ServiceAccount 签名密钥对（sa.key / sa.pub）
+#   幂等：sa.key 存在且 sa.pub 与其公钥一致 → 不做任何事（changed=0）
+#   自愈：私钥缺失/损坏或公钥不匹配 → 重建；仅公钥缺失/不匹配时只重导出 sa.pub
+#   注意：密钥对不涉及有效期（故不参与 pki_renew_before_seconds 判定）。
+# =============================================================================
+
+- name: "pki:sa | 检查 ServiceAccount 密钥对文件"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    checksum_algorithm: sha256
+  loop:
+    - "{{ pki_sa_key_path }}"
+    - "{{ pki_sa_pub_path }}"
+  register: pki_sa_stats
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 读取既有 sa.key 的公钥（匹配判定用）"
+  ansible.builtin.command:
+    cmd: "openssl pkey -in {{ pki_sa_key_path }} -pubout"
+  register: pki_sa_key_pubkey
+  changed_when: false
+  failed_when: false
+  when: pki_sa_stats.results[0].stat.exists
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 读取既有 sa.pub（匹配判定用）"
+  ansible.builtin.command:
+    cmd: "openssl pkey -pubin -in {{ pki_sa_pub_path }}"
+  register: pki_sa_pub_content
+  changed_when: false
+  failed_when: false
+  when: pki_sa_stats.results[1].stat.exists
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 判定 sa.key 是否需要生成（缺失 / 无法读取 / 强制）"
+  ansible.builtin.set_fact:
+    pki_sa_needs_key: >-
+      {{ pki_force_regen | bool
+         or not pki_sa_stats.results[0].stat.exists
+         or ((pki_sa_key_pubkey.rc | default(1)) != 0) }}
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 判定 sa.pub 是否需要（重新）导出"
+  ansible.builtin.set_fact:
+    pki_sa_needs_pub: >-
+      {{ pki_sa_needs_key | bool
+         or not pki_sa_stats.results[1].stat.exists
+         or (pki_sa_key_pubkey.stdout | default('') | trim)
+            != (pki_sa_pub_content.stdout | default('') | trim) }}
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 生成 sa.key（{{ pki_key_type }} {{ pki_key_size }}）"
+  ansible.builtin.command:
+    cmd: >-
+      openssl genpkey -algorithm {{ pki_key_algorithm }}
+      -pkeyopt {{ pki_key_generation_opt }}
+      -out {{ pki_sa_key_path }}
+  when: pki_sa_needs_key
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 强制 sa.key 权限 {{ pki_key_mode }}（openssl 受 umask 影响）"
+  ansible.builtin.file:
+    path: "{{ pki_sa_key_path }}"
+    mode: "{{ pki_key_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  when: pki_sa_needs_key
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 导出 sa.pub"
+  ansible.builtin.command:
+    cmd: "openssl pkey -in {{ pki_sa_key_path }} -pubout -out {{ pki_sa_pub_path }}"
+  when: pki_sa_needs_pub
+  tags: ["pki", "pki:sa"]
+
+- name: "pki:sa | 强制 sa.pub 权限 {{ pki_pub_mode }}"
+  ansible.builtin.file:
+    path: "{{ pki_sa_pub_path }}"
+    mode: "{{ pki_pub_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  when: pki_sa_needs_pub
+  tags: ["pki", "pki:sa"]

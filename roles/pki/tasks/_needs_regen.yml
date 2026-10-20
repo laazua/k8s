@@ -1,0 +1,73 @@
+---
+# =============================================================================
+# pki:_needs_regen — 判定某个「证书 + 私钥」对是否需要（重新）生成
+#   输入（vars）：pki_check_cert、pki_check_key
+#   输出（facts）：
+#     pki_needs_key  : 私钥缺失，或私钥与**可读的**证书公钥不匹配，或 pki_force_regen
+#     pki_needs_cert : 证书缺失 / 无法解析 / 已过期或进入续期窗口
+#                      （pki_renew_before_seconds）/ 与私钥不匹配 / 私钥需重建 / 强制
+#
+#   语义要点：
+#     - **仍有效且匹配的既有证书不会被覆盖**（本判定为 false → 后续任务全部 skip → changed=0）；
+#     - 证书损坏而私钥完好时，**不轮换私钥**（只重签证书）；
+#     - 到期判定用 openssl 自身的 `-checkend`（返回码语义已实测）。
+# =============================================================================
+
+- name: "pki:check | 检查证书文件 {{ pki_check_cert }}"
+  ansible.builtin.stat:
+    path: "{{ pki_check_cert }}"
+  register: pki_check_cert_stat
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 检查私钥文件 {{ pki_check_key }}"
+  ansible.builtin.stat:
+    path: "{{ pki_check_key }}"
+  register: pki_check_key_stat
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 校验既有证书是否仍在续期窗口之外（openssl x509 -checkend）"
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ pki_check_cert }} -noout -checkend {{ pki_renew_before_seconds }}"
+  register: pki_check_cert_validity
+  changed_when: false
+  failed_when: false
+  when: pki_check_cert_stat.stat.exists
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 读取既有证书公钥（用于证书-私钥匹配判定）"
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ pki_check_cert }} -noout -pubkey"
+  register: pki_check_cert_pubkey
+  changed_when: false
+  failed_when: false
+  when: pki_check_cert_stat.stat.exists
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 读取既有私钥公钥（用于证书-私钥匹配判定）"
+  ansible.builtin.command:
+    cmd: "openssl pkey -in {{ pki_check_key }} -pubout"
+  register: pki_check_key_pubkey
+  changed_when: false
+  failed_when: false
+  when: pki_check_key_stat.stat.exists
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 判定私钥是否需要重建（缺失 / 与可读证书不匹配 / 强制）"
+  ansible.builtin.set_fact:
+    pki_needs_key: >-
+      {{ pki_force_regen | bool
+         or not pki_check_key_stat.stat.exists
+         or ((pki_check_cert_pubkey.rc | default(1)) == 0
+             and (pki_check_key_pubkey.rc | default(1)) == 0
+             and (pki_check_cert_pubkey.stdout | default('') | trim)
+                 != (pki_check_key_pubkey.stdout | default('') | trim)) }}
+  tags: ["pki", "pki:check"]
+
+- name: "pki:check | 判定证书是否需要（重新）签发"
+  ansible.builtin.set_fact:
+    pki_needs_cert: >-
+      {{ pki_needs_key | bool
+         or pki_force_regen | bool
+         or not pki_check_cert_stat.stat.exists
+         or (pki_check_cert_validity.rc | default(1)) != 0 }}
+  tags: ["pki", "pki:check"]

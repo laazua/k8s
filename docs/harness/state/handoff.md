@@ -5,6 +5,73 @@
 
 ---
 
+## [2026-10-20] Generator · T004 实现完成（**中断后续跑**）→ ready_for_eval
+
+- 时间：2026-10-20
+- 角色：Generator（harness-generator 子会话；只做 `active_task: T004`，未自判 PASS）
+- 当前任务：`T004` PKI / 证书 role（`roles/pki`）
+- **上下文**：上一轮（2026-10-19）已完成 role 与测试的绝大部分，随后因 **API 限流中断**；
+  工作区留下未提交的半成品（`roles/pki`、`tests/pki`、契约 §1–§8 + §9.0）。本轮**没有重写**这些资产，
+  只做「评估 → 修缺陷 → 补齐测试/文档/门禁」。
+- 本次做了什么：
+  1. 跑 `tests/pki/test_pki_role.sh`，首版实现 **`PASS=89 FAIL=5`**，定位并修复 2 个真实缺陷：
+     - `tasks/facts.yml`：apiserver SAN 只加了 `map('extract', pki_host_addrs)` 解析出的**地址**，
+       漏掉 `pki_apiserver_names` 的**主机名** → 补入；
+     - `tasks/cert.yml`：首跑结束会清理 `pki_build_dir`，此后「仅某张 leaf 需重签」时目录不存在，
+       `copy` 失败（A13a/A13b 红）→ 新增「按需准备构建目录」任务（`when: pki_cert_needs_issue`）。
+  2. 补齐 `roles/pki/README.md`（测试 A1 要求，原半成品缺失）：产物清单/签发者、变量表、幂等语义、范围。
+  3. `Makefile`：`test` 纳入 pki 套件，新增 `test-pki` 目标（风格同 `test-download`）。
+  4. **红证据（诚实标注）**：
+     - 交接假设原红日志丢失，但 `/tmp/opencode/t004_red.log`（2026-10-19T15:38:46）仍在；
+     - 仍在 **git worktree**（`/tmp/opencode/t004-red`，HEAD=`6d6a367`）里**重构红**：只拷 `tests/pki`、
+       不给 `roles/pki` → **`PASS=26 FAIL=59`、exit 1**；与原始红日志的差异**仅**为 `mktemp` 随机沙箱路径；
+     - 另记录「实现中途红」`PASS=89 FAIL=5`，证明测试确实能抓缺陷（非恒绿）。
+  5. 契约 §4 验收项 A1–A20 全部勾选，§9.1/§9.2/§9.3/§9.4/§9.5 与 §10 填实。
+- **怎么验证**：
+  ```bash
+  tests/pki/test_pki_role.sh                                  # → PASS=100 FAIL=0, exit 0
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test             # 连跑两次，均 exit 0
+  yamllint -c .yamllint roles/pki tests/pki                   # rc=0
+  ```
+- **测试结果**：pki `PASS=100 FAIL=0`；全量门禁两次完全一致（去时间戳后 `diff` 0 行）：
+  skeleton `27` / base `39` / download `59` / **pki `100`**，FAIL 全为 0 → T001/T002/T003 无回退。
+- **幂等 / 不覆盖**：同一沙箱连跑两次 `changed=54 → changed=0`，24 个产物 sha256 清单**逐一不变**
+  （抽样：`apiserver.crt=653dc37c…`、`ca.crt=48b071f3…`、`kubelet/k8s-node1.crt=e1f39624…`、`sa.pub=4d393a52…`）。
+  外部另签 + 旧 mtime 的有效证书不被覆盖（`changed=0`、哈希不变）；损坏/过期证书被自愈重签且私钥复用；
+  etcd-ca 损坏 → CA 重建 + 其 leaf 全量重签且链自洽；`pki_force_regen=true` 全量重签仍验链通过。
+- **宿主零污染 / 安全**：`/etc/kubernetes` 执行前后均**不存在**（未创建）；`git status` 无任何 `.key/.crt/.pem`；
+  全部产物落在 `mktemp -d` 沙箱并已清理；无残留 worktree / 进程。
+- 改了哪些文件：`roles/pki/tasks/facts.yml`、`roles/pki/tasks/cert.yml`、`roles/pki/README.md`（新增）、
+  `tests/pki/*`（沿用上轮，未弱化断言）、`Makefile`、`docs/harness/state/contracts/T004.md`、
+  `docs/harness/state/state.yaml`、`docs/harness/state/roadmap.md`（T004 → in-progress）、本文件。
+- 遗留 / 风险（均已在契约 §5/§6 声明，非阻塞）：
+  - 受限项：多节点证书分发、apiserver/kubelet 真实加载证书、与真实 etcd/kubeadm 互操作未验证（需真机/VM）；
+  - `ansible-lint` 环境不可得，静态门禁仅 `syntax-check` + `yamllint`（沿用仓库既定策略）；
+  - 首跑约 1.5 min/次（openssl CLI + 逐任务幂等判定），pki 套件全套约 13 min——评估时请预留时间；
+  - `docs/harness/state/reports/T003-r1.md` 为上一轮 Evaluator 产物，至今仍未跟踪；本轮不越界提交（由后续提交处理）。
+- 下一步：`eval T004`（`state.yaml` 已置 `contract_status: ready_for_eval`、`phase: EVALUATING`）。
+
+---
+
+## [2026-10-19] Evaluator · T003 评估第 1 轮 → PASS（eval）
+
+- 时间：2026-10-19
+- 角色：Evaluator（harness-evaluator 子会话，独立复现；未改任何代码/测试/契约）
+- 当前任务：`T003`（被测提交 `6d6a367`）
+- 结论：**PASS**（报告 `reports/T003-r1.md`）；六项硬指标均达标（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5；产品完整度 4），阻塞 0，缺陷 3 MINOR + 3 NIT（均非阻塞）
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` **连跑三次**（第 3 次在清理环境后）均 exit 0、T001 `PASS=27`、T002 `PASS=39`、T003 `PASS=59`、`FAIL=0`，三次去色日志**逐行一致**——Generator 声称的 27/39/59 核实无误。
+- **独立复现（不复用仓库 mock/测试 playbook）**：自建 mock 源/代理 + 自建 playbook，36 条断言全绿（正常下载/hash/mode、幂等 + inode·mtime·size 不变、源不可达 `changed=0`、错 hash → 非 0 且无残留、换正确 hash 同 dest 成功、**自建记录型代理收到绝对 URI 请求**、`no_proxy` 直连、flaky 重试、`download_retries=0` 仅 1 次、缺/非法 sha256 网络前 fail-fast、显式 dest/mode）；另 14 条边界/负例（缓存损坏**自愈**、`--check` 无变更、空 items、`verify_after=false`、404 无残留、`timeout` 生效）全绿。
+- **离线证明**：`unshare -rn`（仅 lo、**无默认路由**）内 `tests/download/test_download_role.sh` → `PASS=59 FAIL=0`，证明测试真正离线。
+- **真实镜像站行为**：自建带 `Last-Modified`/`ETag`/`Accept-Ranges` 的源 → 第 2 次运行 `changed=0`、元数据不变且**零新增请求**；第 3 次源不可达仍 `changed=0`。
+- **牙齿实验 12 组全部被捕获**（临时 worktree，主工作区零污染）：M1 删 `checksum`→FAIL×4；M2 放宽 sha256 正则→A10 FAIL×2；M3 `force:true`→A5 离线跳过 FAIL；M3b `changed_when:true`→**A4 changed=0 FAIL**；M5 删 `environment`→A6 FAIL；M6 删 `checksum`+关纵深复验→**A3「sha256 不符却 exit 0」FAIL**；M7 注入硬编码 URL→A8 FAIL；M8b 制品目录脱离沙箱前缀→FAIL×22（真实尝试写 `/opt/k8s` 被拒）；M9/M10 重试相关→A9 FAIL×3；**M12 先删后下（真正破坏「跳过」）→ A4 非幂等 + A5「制品被改动」FAIL**。
+- 回归/隔离：`6d6a367` 未触碰 `tests/skeleton/`、`tests/base/`、`roles/base/`、`playbooks/`、`inventory/`、`group_vars/`、`ansible.cfg`；主工作区全程 clean、worktree 已清理、宿主 `/opt/k8s` 未被污染。
+- **缺陷（非阻塞）**：D1（MINOR）契约 §9.1/§9.2 的证据日志来自**已修订的旧测试版本**（红态旧 18/37、断言 55 条；用最终 59 断言测试重跑红态得 **21/38**；绿灯日志仍打印端口）；D2（MINOR）Generator 手工实验泄漏一个 `python3 -m http.server 18080` 孤儿进程（PID 32697，cwd 已删除）——**测试套件自身无残留**，Evaluator 已 kill 并释放端口；D3（MINOR）`A4` 以「日志最后一个 `changed=N`」判定，`force:true` 单独出现时 A4 不红（靠 A5 离线断言兜住），建议补「源请求数=0」独立断言；NIT：D4 确定性 checksum 不符仍被 `until` 重试 4 次、D5 folded-scalar 拼接可读性、D6 `make test` 的 smoke 仍 0 task（T001 遗留）。
+- 受限项维持诚实声明：真实 k8s 官方制品与真实 HTTPS `validate_certs` 未验证（契约 §5/§6）。
+- 改了哪些文件：`docs/harness/state/reports/T003-r1.md`（新增）、`state.yaml`（accepted / eval_round 1 / done_tasks 3 / active_task T004 / phase BUILDING）、`roadmap.md`（T003 → done）、本文件。
+- 下一步：`build T004`（PKI / 证书 role：自建 CA 与各组件证书、SAN 覆盖、私钥 600、重跑不覆盖有效证书）。
+
+---
+
 ## [2026-10-19] Generator · T003 实现完成（build）→ ready_for_eval
 
 - 时间：2026-10-19

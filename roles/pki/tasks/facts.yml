@@ -1,0 +1,127 @@
+---
+# =============================================================================
+# pki:facts — 推导拓扑与 SAN（**SAN 的唯一来源**）
+#   输入：inventory 分组（pki_master_group / pki_node_group / pki_etcd_group）、
+#         k8s_vip、服务网段（k8s_service_cidr）与各 host 的 ansible_host
+#   产出：pki_*_hosts / pki_host_addrs / pki_*_sans / pki_kubelet_cert_items /
+#         pki_leaf_specs / pki_expected_paths
+#   注意：本文件必须先于 ca/cert/kubelet/sa/verify 执行（main.yml 顺序已保证）。
+# =============================================================================
+
+- name: "pki:facts | 校验拓扑可用（fail fast：拿不到控制面分组就报错，绝不生成空 SAN 证书）"
+  ansible.builtin.assert:
+    that:
+      - (groups[pki_master_group] | default([])) | length > 0
+    fail_msg: >-
+      未在 inventory 中找到非空分组 '{{ pki_master_group }}'：pki role 需要至少一个控制面节点
+      才能推导证书 SAN。请检查 inventory 的 [{{ pki_master_group }}] 分组后再执行。
+    quiet: true
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 解析分组主机（etcd 分组缺省回落到控制面分组）"
+  ansible.builtin.set_fact:
+    pki_master_hosts: "{{ groups[pki_master_group] | default([]) }}"
+    pki_node_hosts: "{{ groups[pki_node_group] | default([]) }}"
+    pki_etcd_hosts: >-
+      {{ groups[pki_etcd_group] | default([])
+         if (groups[pki_etcd_group] | default([]) | length > 0)
+         else (groups[pki_master_group] | default([])) }}
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 解析主机地址（pki_host_addresses 覆盖 > ansible_host > 主机名）"
+  ansible.builtin.set_fact:
+    pki_host_addrs: >-
+      {{ (pki_host_addrs | default({}))
+         | combine({ n: (pki_host_addresses[n] | default(hostvars[n].ansible_host | default(n))) }) }}
+  loop: "{{ (pki_master_hosts + pki_node_hosts + pki_etcd_hosts) | unique }}"
+  loop_control:
+    loop_var: n
+    label: "{{ n }}"
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 初始化清单容器"
+  ansible.builtin.set_fact:
+    pki_kubelet_cert_items: []
+    pki_leaf_specs: []
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 推导 apiserver 证书名与 DNS 名"
+  ansible.builtin.set_fact:
+    pki_apiserver_names: >-
+      {{ (pki_master_hosts + (pki_node_hosts if pki_include_nodes_in_apiserver_sans else []))
+         | unique | list }}
+    pki_apiserver_dns_sans: >-
+      {{ [pki_kubernetes_service_name,
+          pki_kubernetes_service_name ~ '.default',
+          pki_kubernetes_service_name ~ '.default.svc',
+          pki_kubernetes_service_name ~ '.default.svc.' ~ pki_dns_domain] | unique | list }}
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 推导 apiserver SAN（VIP + 全部 master/节点名与地址 + 服务 DNS/IP + 回环）"
+  ansible.builtin.set_fact:
+    pki_apiserver_sans: >-
+      {{ (([k8s_vip] if (k8s_vip | string | length > 0) else [])
+          + pki_apiserver_dns_sans
+          + pki_apiserver_names
+          + (pki_apiserver_names | map('extract', pki_host_addrs) | list)
+          + [pki_apiserver_service_ip]
+          + pki_localhost_sans
+          + pki_apiserver_extra_sans) | unique | list }}
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 推导 etcd server/peer SAN（全部 etcd 成员名与地址）"
+  ansible.builtin.set_fact:
+    pki_etcd_sans: >-
+      {{ (pki_etcd_hosts
+          + (pki_etcd_hosts | map('extract', pki_host_addrs) | list)
+          + pki_localhost_sans
+          + pki_etcd_extra_sans) | unique | list }}
+    pki_etcd_peer_sans: >-
+      {{ (pki_etcd_hosts
+          + (pki_etcd_hosts | map('extract', pki_host_addrs) | list)
+          + pki_etcd_peer_extra_sans) | unique | list }}
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 组装 kubelet 证书清单（每节点一份，CN=system:node:<节点>）"
+  ansible.builtin.set_fact:
+    pki_kubelet_cert_items: >-
+      {{ (pki_kubelet_cert_items | default([]))
+         + [ {
+             'name': 'kubelet/' ~ n,
+             'cert': pki_kubelet_dir ~ '/' ~ n ~ '.crt',
+             'key': pki_kubelet_dir ~ '/' ~ n ~ '.key',
+             'common_name': pki_kubelet_common_name_prefix ~ n,
+             'organization': pki_kubelet_organization,
+             'ca': 'kubernetes',
+             'extended_key_usage': 'serverAuth,clientAuth',
+             'sans': ([n, pki_host_addrs[n]] + pki_localhost_sans + pki_kubelet_extra_sans)
+                     | unique | list,
+           } ] }}
+  loop: "{{ pki_node_hosts }}"
+  loop_control:
+    loop_var: n
+    label: "{{ n }}"
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 汇总 leaf 与其 CA 的对应关系（供链式校验）"
+  ansible.builtin.set_fact:
+    pki_leaf_specs: >-
+      {{ (pki_leaf_specs | default([]))
+         + [ { 'name': c.name, 'cert': c.cert, 'ca_cert': pki_cas[c.ca].cert } ] }}
+  loop: "{{ pki_certs + pki_kubelet_cert_items }}"
+  loop_control:
+    loop_var: c
+    label: "{{ c.name }}"
+  tags: ["pki", "pki:facts"]
+
+- name: "pki:facts | 汇总全部预期产物路径（落盘自检用）"
+  ansible.builtin.set_fact:
+    pki_expected_paths: >-
+      {{ (pki_cas | dict2items | map(attribute='value') | map(attribute='cert') | list)
+         + (pki_cas | dict2items | map(attribute='value') | map(attribute='key') | list)
+         + (pki_certs | map(attribute='cert') | list)
+         + (pki_certs | map(attribute='key') | list)
+         + (pki_kubelet_cert_items | map(attribute='cert') | list)
+         + (pki_kubelet_cert_items | map(attribute='key') | list)
+         + [pki_sa_key_path, pki_sa_pub_path] }}
+  tags: ["pki", "pki:facts"]

@@ -1,0 +1,19 @@
+---
+# =============================================================================
+#  T004 沙箱验证 playbook
+#   把 pki role 的落盘目标重定向到临时前缀（pki_root_prefix=sandbox_root），
+#   在**不触碰宿主 /etc/kubernetes** 的前提下真实执行：真生成密钥、真签名、真落盘。
+#   拓扑（VIP / 主机名 / 地址 / 服务网段）全部来自 -i 指定的测试 inventory。
+#   沙箱以普通用户运行 → 属主参数置 omit（生产默认为 root）。
+# =============================================================================
+- name: pki role sandbox verification
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    pki_root_prefix: "{{ sandbox_root }}"
+    pki_file_owner: "{{ omit }}"
+    pki_file_group: "{{ omit }}"
+  roles:
+    - role: pki

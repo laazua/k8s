@@ -1,0 +1,89 @@
+---
+# =============================================================================
+# pki:ca — 生成 / 维护一个自签 CA
+#   输入（vars）：pki_ca（字典：common_name/organization/cert/key）、pki_ca_name（逻辑名）
+#   幂等：既有 CA 证书仍在有效期且与私钥匹配 → 全部任务 skip（changed=0）
+#   自愈：缺失 / 损坏 / 过期 / 不匹配 → 重建（私钥仅在缺失或不匹配时新建）
+#   产出：pki_ca_rebuilt（字典：CA 逻辑名 → 本次是否被重建）——其签发的 leaf 必须重签
+#   原子性：先自签到构建目录，再 copy 到最终路径（失败不破坏既有 CA 证书）
+# =============================================================================
+
+- name: "pki:ca | 记录 {{ pki_ca_name }} CA 证书指纹（用于判定 leaf 是否需重签）"
+  ansible.builtin.stat:
+    path: "{{ pki_ca.cert }}"
+    checksum_algorithm: sha256
+  register: pki_ca_cert_before
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 判定 {{ pki_ca_name }} 的重建需求"
+  ansible.builtin.include_tasks: _needs_regen.yml
+  vars:
+    pki_check_cert: "{{ pki_ca.cert }}"
+    pki_check_key: "{{ pki_ca.key }}"
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 准备构建目录（需要生成时才创建）"
+  ansible.builtin.file:
+    path: "{{ pki_build_dir }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  when: pki_needs_key or pki_needs_cert
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 生成 CA 私钥（{{ pki_ca.common_name }}，{{ pki_key_type }}）"
+  ansible.builtin.command:
+    cmd: >-
+      openssl genpkey -algorithm {{ pki_key_algorithm }}
+      -pkeyopt {{ pki_key_generation_opt }}
+      -out {{ pki_ca.key }}
+  when: pki_needs_key
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 强制 CA 私钥权限 {{ pki_key_mode }}（openssl 受 umask 影响）"
+  ansible.builtin.file:
+    path: "{{ pki_ca.key }}"
+    mode: "{{ pki_key_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  when: pki_needs_key
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 自签 CA 证书 → 构建目录（{{ pki_ca_duration_days }} 天）"
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -new -key {{ pki_ca.key }}
+      -{{ pki_digest }} -days {{ pki_ca_duration_days }}
+      -subj "/CN={{ pki_ca.common_name }}/O={{ pki_ca.organization }}"
+      -addext "basicConstraints=critical,CA:TRUE"
+      -addext "keyUsage=critical,keyCertSign,cRLSign"
+      -out {{ pki_build_dir }}/{{ pki_ca_name }}-ca.crt
+  when: pki_needs_cert
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 安装 CA 证书到 {{ pki_ca.cert }}"
+  ansible.builtin.copy:
+    src: "{{ pki_build_dir }}/{{ pki_ca_name }}-ca.crt"
+    dest: "{{ pki_ca.cert }}"
+    remote_src: true
+    mode: "{{ pki_cert_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  when: pki_needs_cert
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 记录 {{ pki_ca_name }} CA 证书指纹（重建后）"
+  ansible.builtin.stat:
+    path: "{{ pki_ca.cert }}"
+    checksum_algorithm: sha256
+  register: pki_ca_cert_after
+  tags: ["pki", "pki:ca"]
+
+- name: "pki:ca | 汇总 CA 是否被重建（是 → 其签发 leaf 必须重签）"
+  ansible.builtin.set_fact:
+    pki_ca_rebuilt: >-
+      {{ (pki_ca_rebuilt | default({}))
+         | combine({ pki_ca_name: ((pki_ca_cert_before.stat.checksum | default('__MISSING__'))
+                                   != (pki_ca_cert_after.stat.checksum | default('__MISSING__'))) }) }}
+  tags: ["pki", "pki:ca"]

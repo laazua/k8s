@@ -1,0 +1,16 @@
+---
+# =============================================================================
+# pki:kubelet — 为**每个工作节点**签发一份 kubelet 证书
+#   清单由 pki:facts 组装（pki_kubelet_cert_items）：
+#     CN = system:node:<节点名>，O = system:nodes，SAN = 节点名 + 节点地址 + 回环
+#   签发/幂等逻辑复用 pki:cert（同一套判定与原子落盘）。
+#   注意：本 role 只**生成**节点证书；把证书分发到各节点属 T008/T014 范围。
+# =============================================================================
+
+- name: "pki:kubelet | 生成各节点 kubelet 证书（每节点一份）"
+  ansible.builtin.include_tasks: cert.yml
+  loop: "{{ pki_kubelet_cert_items }}"
+  loop_control:
+    loop_var: pki_cert
+    label: "{{ pki_cert.name }}"
+  tags: ["pki", "pki:kubelet"]

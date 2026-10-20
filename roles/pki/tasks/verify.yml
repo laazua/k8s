@@ -1,0 +1,143 @@
+---
+# =============================================================================
+# pki:verify — 落盘后自检（fail fast，绝不「静默成功」）
+#   1) 断言全部预期产物存在（缺失即失败并列出）
+#   2) 统一强制权限：目录 0700 / 私钥 0600 / 证书 0644 / 公钥 0644
+#      （集中在一处执行 → 既是兜底，也是「权限可判定」的唯一事实来源）
+#   3) 逐张 openssl verify 链式校验 + 有效期校验（--checkend 0）
+# =============================================================================
+
+- name: "pki:verify | 检查预期产物是否存在"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ pki_expected_paths }}"
+  register: pki_expected_stats
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 断言全部预期产物存在"
+  ansible.builtin.assert:
+    that:
+      - pki_expected_stats.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      PKI 产物缺失：{{ pki_expected_stats.results
+                        | selectattr('stat.exists', 'equalto', false)
+                        | map(attribute='item') | join(', ') }}
+    quiet: true
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 强制 PKI 目录权限 {{ pki_dir_mode }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "{{ pki_dir_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  loop:
+    - "{{ pki_dir }}"
+    - "{{ pki_etcd_dir }}"
+    - "{{ pki_kubelet_dir }}"
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 收集私钥清单"
+  ansible.builtin.find:
+    paths: "{{ pki_dir }}"
+    patterns: ["*.key"]
+    recurse: true
+    file_type: file
+  register: pki_found_keys
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 收集证书清单"
+  ansible.builtin.find:
+    paths: "{{ pki_dir }}"
+    patterns: ["*.crt"]
+    recurse: true
+    file_type: file
+  register: pki_found_certs
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 收集公钥清单"
+  ansible.builtin.find:
+    paths: "{{ pki_dir }}"
+    patterns: ["*.pub"]
+    recurse: true
+    file_type: file
+  register: pki_found_pubs
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 强制私钥权限 {{ pki_key_mode }}（兜底，含外部放入的密钥）"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ pki_key_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  loop: "{{ pki_found_keys.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 强制证书权限 {{ pki_cert_mode }}"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ pki_cert_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  loop: "{{ pki_found_certs.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 强制公钥权限 {{ pki_pub_mode }}"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ pki_pub_mode }}"
+    owner: "{{ pki_file_owner }}"
+    group: "{{ pki_file_group }}"
+  loop: "{{ pki_found_pubs.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 逐张链式校验（openssl verify -CAfile <CA> <cert>）"
+  ansible.builtin.command:
+    cmd: "openssl verify -CAfile {{ item.ca_cert }} {{ item.cert }}"
+  loop: "{{ pki_leaf_specs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: pki_chain_results
+  changed_when: false
+  failed_when: false
+  when: pki_verify_chain | bool
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 断言证书链全部自洽"
+  ansible.builtin.assert:
+    that:
+      - pki_chain_results.results | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      证书链校验失败：{{ pki_chain_results.results | selectattr('rc', 'defined')
+                         | selectattr('rc', 'ne', 0) | map(attribute='item.name') | join(', ') }}
+    quiet: true
+  when: pki_verify_chain | bool
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 逐张有效期校验（openssl x509 -checkend 0）"
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ item.cert }} -noout -checkend 0"
+  loop: "{{ pki_leaf_specs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: pki_expiry_results
+  changed_when: false
+  failed_when: false
+  tags: ["pki", "pki:verify"]
+
+- name: "pki:verify | 断言全部证书未过期"
+  ansible.builtin.assert:
+    that:
+      - pki_expiry_results.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      以下证书已过期或即将过期：{{ pki_expiry_results.results | selectattr('rc', 'ne', 0)
+                                   | map(attribute='item.name') | join(', ') }}
+    quiet: true
+  tags: ["pki", "pki:verify"]

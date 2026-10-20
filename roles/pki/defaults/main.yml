@@ -1,0 +1,170 @@
+---
+# =============================================================================
+# roles/pki — 自建 PKI（默认变量）
+#
+# 设计要点：
+#   1) **SAN 的唯一来源是「inventory 分组 + k8s_vip + 服务网段」**（见 tasks/facts.yml），
+#      tasks 中禁止出现任何硬编码 IP / 主机名 / 路径。
+#   2) 落盘路径由 `pki_root_prefix`（生产留空）+ `pki_config_dir`（默认 /etc/kubernetes）
+#      派生 → 测试可整体重定向到沙箱，生产即 /etc/kubernetes/pki。
+#   3) 幂等语义（详见每个 tasks/*.yml 头部注释）：
+#        有效且密钥匹配 → 不动（changed=0）；缺失/损坏/过期/不匹配/CA 被重建 → 重签。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用；生产保持空串。**不要加尾斜杠**）---------------------
+pki_root_prefix: ""
+
+# --- 目录 -------------------------------------------------------------------
+pki_config_dir: "{{ k8s_config_dir | default('/etc/kubernetes') }}"
+pki_dir: "{{ pki_root_prefix }}{{ pki_config_dir }}/pki"
+pki_etcd_dir: "{{ pki_dir }}/etcd"
+pki_kubelet_dir: "{{ pki_dir }}/kubelet"
+# 构建目录：CSR / openssl 扩展 / CA 序列号；默认用后即清理，不污染 PKI 目录
+pki_build_dir: "{{ pki_root_prefix }}/var/cache/kubernetes-pki"
+pki_cleanup_build_dir: true
+
+# --- 落盘权限（验收硬指标：私钥 600 / 证书 644 / 目录 700）------------------
+pki_dir_mode: "0700"
+pki_cert_mode: "0644"
+pki_key_mode: "0600"
+pki_pub_mode: "0644"
+# 沙箱测试时置为 {{ omit }}（以普通用户运行也能验证内容与权限）
+pki_file_owner: "{{ k8s_pki_owner | default('root') }}"
+pki_file_group: "{{ k8s_pki_group | default('root') }}"
+
+# --- 算法与有效期 -----------------------------------------------------------
+pki_key_type: RSA                 # RSA | EC
+pki_key_size: 2048                # RSA 位数
+pki_ec_curve: prime256v1          # EC 曲线（pki_key_type=EC 时生效）
+pki_digest: sha256
+pki_organization: Kubernetes
+pki_ca_duration_days: 3650
+pki_cert_duration_days: 3650
+pki_key_algorithm: "{{ 'RSA' if pki_key_type | upper == 'RSA' else 'EC' }}"
+pki_key_generation_opt: >-
+  {{ ('rsa_keygen_bits:' ~ pki_key_size) if pki_key_type | upper == 'RSA'
+     else ('ec_paramgen_curve:' ~ pki_ec_curve) }}
+
+# --- 重建（自愈）策略 -------------------------------------------------------
+# 证书剩余有效期小于该秒数 → 视为需要重签（默认 30 天）
+pki_renew_before_seconds: 2592000
+# 显式强制全量重签（例如 SAN 集合发生变化后；默认 false = 不打扰既有有效证书）
+pki_force_regen: false
+# 落盘后做链式校验（openssl verify + 有效期），失败即让 role 失败
+pki_verify_chain: true
+
+# --- 拓扑来源（SAN 的唯一来源）---------------------------------------------
+pki_master_group: k8s_master
+pki_node_group: k8s_node
+pki_etcd_group: etcd
+# 集群 VIP（复用全局变量 k8s_vip；未定义/为空则不写入 apiserver SAN）
+k8s_vip: ""
+# 主机地址显式覆盖：{ "<inventory_host>": "<address>" }；缺省取 hostvars[*].ansible_host
+pki_host_addresses: {}
+pki_dns_domain: "{{ k8s_dns_domain | default('cluster.local') }}"
+pki_kubernetes_service_name: kubernetes
+pki_service_cidr: "{{ k8s_service_cidr | default('10.96.0.0/12') }}"
+# kubernetes.default 的 ClusterIP：默认取服务网段第一个可用地址（可用变量显式覆盖）
+pki_apiserver_service_ip_override: ""
+_pki_service_octets: "{{ (pki_service_cidr | string).split('/')[0].split('.') }}"
+pki_apiserver_service_ip: >-
+  {{ pki_apiserver_service_ip_override if (pki_apiserver_service_ip_override | string | length > 0)
+     else (_pki_service_octets[0] ~ '.' ~ _pki_service_octets[1] ~ '.' ~ _pki_service_octets[2]
+           ~ '.' ~ ((_pki_service_octets[3] | int) + 1)) }}
+
+# --- 主体（CN / O）----------------------------------------------------------
+pki_ca_common_name: kubernetes-ca
+pki_etcd_ca_common_name: etcd-ca
+pki_front_proxy_ca_common_name: front-proxy-ca
+pki_apiserver_common_name: kube-apiserver
+pki_admin_common_name: kubernetes-admin
+pki_admin_organization: system:masters
+pki_kubelet_common_name_prefix: "system:node:"
+pki_kubelet_organization: system:nodes
+pki_etcd_server_common_name: etcd-server
+pki_etcd_peer_common_name: etcd-peer
+pki_apiserver_etcd_client_common_name: kube-apiserver-etcd-client
+pki_front_proxy_client_common_name: front-proxy-client
+
+# --- SAN 素材（附加项，追加在自动推导结果之后）------------------------------
+pki_localhost_sans: ["localhost", "127.0.0.1"]
+# 是否把工作节点也写进 apiserver 证书 SAN（验收要求「覆盖 VIP 与全部 master/节点名」）
+pki_include_nodes_in_apiserver_sans: true
+pki_apiserver_extra_sans: []
+pki_etcd_extra_sans: []
+pki_etcd_peer_extra_sans: []
+pki_kubelet_extra_sans: []
+
+# --- ServiceAccount 密钥对 ---------------------------------------------------
+pki_sa_key_path: "{{ pki_dir }}/sa.key"
+pki_sa_pub_path: "{{ pki_dir }}/sa.pub"
+
+# --- CA 清单（可增删；key 名用于 leaf 的 `ca:` 字段引用）---------------------
+pki_cas:
+  kubernetes:
+    common_name: "{{ pki_ca_common_name }}"
+    organization: "{{ pki_organization }}"
+    cert: "{{ pki_dir }}/ca.crt"
+    key: "{{ pki_dir }}/ca.key"
+  etcd:
+    common_name: "{{ pki_etcd_ca_common_name }}"
+    organization: "{{ pki_organization }}"
+    cert: "{{ pki_etcd_dir }}/ca.crt"
+    key: "{{ pki_etcd_dir }}/ca.key"
+  front-proxy:
+    common_name: "{{ pki_front_proxy_ca_common_name }}"
+    organization: "{{ pki_organization }}"
+    cert: "{{ pki_dir }}/front-proxy-ca.crt"
+    key: "{{ pki_dir }}/front-proxy-ca.key"
+
+# --- leaf 证书清单（数据驱动：后续任务追加条目即可，无需改代码）-------------
+#   sans 引用 tasks/facts.yml 推导出的变量（inventory 分组 + k8s_vip + 服务网段）
+pki_certs:
+  - name: apiserver
+    cert: "{{ pki_dir }}/apiserver.crt"
+    key: "{{ pki_dir }}/apiserver.key"
+    common_name: "{{ pki_apiserver_common_name }}"
+    organization: "{{ pki_organization }}"
+    ca: kubernetes
+    extended_key_usage: serverAuth
+    sans: "{{ pki_apiserver_sans }}"
+  - name: admin
+    cert: "{{ pki_dir }}/admin.crt"
+    key: "{{ pki_dir }}/admin.key"
+    common_name: "{{ pki_admin_common_name }}"
+    organization: "{{ pki_admin_organization }}"
+    ca: kubernetes
+    extended_key_usage: clientAuth
+    sans: []
+  - name: front-proxy-client
+    cert: "{{ pki_dir }}/front-proxy-client.crt"
+    key: "{{ pki_dir }}/front-proxy-client.key"
+    common_name: "{{ pki_front_proxy_client_common_name }}"
+    organization: "{{ pki_organization }}"
+    ca: front-proxy
+    extended_key_usage: clientAuth
+    sans: []
+  - name: etcd-server
+    cert: "{{ pki_etcd_dir }}/server.crt"
+    key: "{{ pki_etcd_dir }}/server.key"
+    common_name: "{{ pki_etcd_server_common_name }}"
+    organization: "{{ pki_organization }}"
+    ca: etcd
+    extended_key_usage: "serverAuth,clientAuth"
+    sans: "{{ pki_etcd_sans }}"
+  - name: etcd-peer
+    cert: "{{ pki_etcd_dir }}/peer.crt"
+    key: "{{ pki_etcd_dir }}/peer.key"
+    common_name: "{{ pki_etcd_peer_common_name }}"
+    organization: "{{ pki_organization }}"
+    ca: etcd
+    extended_key_usage: "serverAuth,clientAuth"
+    sans: "{{ pki_etcd_peer_sans }}"
+  - name: apiserver-etcd-client
+    cert: "{{ pki_dir }}/apiserver-etcd-client.crt"
+    key: "{{ pki_dir }}/apiserver-etcd-client.key"
+    common_name: "{{ pki_apiserver_etcd_client_common_name }}"
+    organization: "{{ pki_organization }}"
+    ca: etcd
+    extended_key_usage: clientAuth
+    sans: []
