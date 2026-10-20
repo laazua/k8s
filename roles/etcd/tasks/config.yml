@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# etcd:config — 数据目录 + systemd unit 渲染
+#   幂等：目录内容/权限不变 → changed=0；unit 模板内容不变 → changed=0 且不 notify。
+#   重启判定：unit 内容变化（template changed）或二进制变化（binary.yml copy changed）
+#             才 notify `etcd:restart`。
+# =============================================================================
+
+- name: "etcd:config | 创建成员数据目录（{{ etcd_data_dir_mode }}）"
+  ansible.builtin.file:
+    path: "{{ etcd_member_data_dir }}"
+    state: directory
+    mode: "{{ etcd_data_dir_mode }}"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  tags: ["etcd", "etcd:config"]
+
+- name: "etcd:config | 创建 systemd unit 目录"
+  ansible.builtin.file:
+    path: "{{ etcd_unit_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  tags: ["etcd", "etcd:config"]
+
+- name: "etcd:config | 渲染 etcd systemd unit"
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: "{{ etcd_unit_path }}"
+    mode: "{{ etcd_unit_mode }}"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  notify: "etcd:restart"
+  tags: ["etcd", "etcd:config"]

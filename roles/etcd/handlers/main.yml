@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/etcd — handlers
+#   只在 unit 内容或二进制内容变化时被 notify。
+#   `etcd_manage_service=false`（沙箱/受限环境）时跳过真实 systemctl 动作。
+# =============================================================================
+
+- name: "etcd:restart"
+  ansible.builtin.systemd:
+    name: "{{ etcd_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: etcd_manage_service | bool

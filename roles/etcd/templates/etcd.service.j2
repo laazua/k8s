@@ -1,0 +1,18 @@
+[Unit]
+Description=etcd member {{ etcd_member_name }}
+Documentation=https://etcd.io/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ etcd_service_type }}
+User={{ etcd_user }}
+Group={{ etcd_user_group }}
+ExecStart={{ etcd_bin_dir }}/etcd {{ etcd_exec_args | join(' ') }}
+Restart=always
+RestartSec={{ etcd_restart_sec }}
+LimitNOFILE={{ etcd_limit_nofile }}
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,102 @@
+---
+# =============================================================================
+# etcd:validate — fail fast（全部为只读断言，发生在任何落盘之前）
+#   1) 成员非空
+#   2) **成员数必须为奇数**（偶数无法形成稳定多数派）
+#   3) 成员数 >= etcd_min_members（默认 3）
+#   4) 成员名唯一；(address, client_port) 组合唯一
+#   5) 当前主机在成员清单中；layout 合法
+#   6) TLS 开启时证书/私钥齐全
+# =============================================================================
+
+- name: "etcd:validate | 断言成员清单非空"
+  ansible.builtin.assert:
+    that:
+      - etcd_resolved_members | length > 0
+    fail_msg: >-
+      etcd 成员为空：请在 inventory 中定义非空分组 '{{ etcd_inventory_group }}'，
+      或通过 etcd_members 显式提供成员列表。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言成员数为奇数"
+  ansible.builtin.assert:
+    that:
+      - (etcd_resolved_members | length) % 2 == 1
+    fail_msg: >-
+      etcd 集群成员数必须为奇数（当前 {{ etcd_resolved_members | length }}）：
+      偶数成员无法形成稳定的多数派，请增删成员至 3/5/7 等奇数。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言成员数不少于 etcd_min_members"
+  ansible.builtin.assert:
+    that:
+      - (etcd_resolved_members | length) >= (etcd_min_members | int)
+    fail_msg: >-
+      etcd 集群成员数不足（当前 {{ etcd_resolved_members | length }}，要求至少 {{ etcd_min_members }}）。
+      高可用至少需要 3 个成员；若确为单机开发，请显式设置 etcd_min_members=1。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言成员名唯一"
+  ansible.builtin.assert:
+    that:
+      - etcd_resolved_members | map(attribute='name') | list | unique | length == etcd_resolved_members | length
+    fail_msg: >-
+      etcd 成员名重复：{{ etcd_resolved_members | map(attribute='name') | list | join(', ') }}。
+      每个成员必须有唯一的 --name。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言 address:client_port 组合唯一"
+  ansible.builtin.assert:
+    that:
+      - etcd_member_endpoints | unique | length == etcd_member_endpoints | length
+    fail_msg: >-
+      etcd 成员的 address:client_port 组合重复：{{ etcd_member_endpoints | join(', ') }}。
+      co-located 多实例必须为每个成员分配不同端口。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言当前主机属于成员清单"
+  ansible.builtin.assert:
+    that:
+      - etcd_current_member | length > 0
+    fail_msg: >-
+      当前主机 '{{ etcd_member_name }}' 不在 etcd 成员清单中
+      （{{ etcd_resolved_members | map(attribute='name') | list | join(', ') }}）。
+      请检查 inventory 的 [{{ etcd_inventory_group }}] 分组或 etcd_member_name。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言部署布局合法"
+  ansible.builtin.assert:
+    that:
+      - etcd_instance_layout in ['per-host', 'co-located']
+    fail_msg: >-
+      etcd_instance_layout='{{ etcd_instance_layout }}' 非法：仅支持 per-host（生产）
+      或 co-located（单机多实例/测试）。
+    quiet: true
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 检查 TLS 证书/私钥是否存在"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ etcd_tls_required_files }}"
+  register: etcd_tls_stats
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:validate"]
+
+- name: "etcd:validate | 断言 TLS 证书/私钥齐全"
+  ansible.builtin.assert:
+    that:
+      - etcd_tls_stats.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      etcd TLS 已启用但证书文件缺失：
+      {{ etcd_tls_stats.results | selectattr('stat.exists', 'equalto', false)
+         | map(attribute='item') | join(', ') }}。
+      请先运行 pki role（T004），或设置 etcd_tls_enabled=false / 覆盖证书路径。
+    quiet: true
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:validate"]

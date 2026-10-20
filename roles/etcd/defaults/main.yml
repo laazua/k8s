@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# roles/etcd — etcd 集群（官方二进制 + systemd，奇数成员）
+#
+# 设计要点：
+#   1) 成员清单的**唯一来源**是 inventory 的 `etcd` 分组（`etcd_inventory_group`）
+#      或显式的 `etcd_members`；tasks 中禁止硬编码成员名 / IP / 端口。
+#   2) 落盘路径由 `etcd_root_prefix`（生产留空）派生 → 测试可整体重定向到沙箱。
+#   3) TLS 默认开启，证书来自 pki role：
+#        etcd/ca.crt、etcd/server.crt|key、etcd/peer.crt|key
+#      `--client-cert-auth` / `--peer-client-cert-auth` 默认开启（双向认证）。
+#   4) systemd 副作用由 `etcd_manage_service` 控制；测试置 false，只渲染 unit。
+#   5) 幂等：制品走 download role 的缓存命中；unit/二进制内容不变 → changed=0 且不触发重启。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用；生产保持空串，不要加尾斜杠）-------------------------
+etcd_root_prefix: ""
+
+# --- 版本 / 官方制品（D3：官方二进制 + 强制 sha256）--------------------------
+etcd_version: "3.5.16"
+etcd_arch: "{{ k8s_arch | default('amd64') }}"
+# etcd 官方历史发布桶（GitHub release 资产在本环境被阻断，见 contracts/T005.md §3）
+etcd_download_url_base: "https://storage.googleapis.com/etcd"
+etcd_download_url: "{{ etcd_download_url_base }}/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
+etcd_artifact_sha256: "b414b27a5ad05f7cb01395c447c85d3227e3fb1c176e51757a283b817f645ccc"
+etcd_archive_root: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}"
+etcd_artifact_dir: "{{ etcd_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+etcd_artifact_path: "{{ etcd_artifact_dir }}/{{ etcd_archive_root }}.tar.gz"
+etcd_dist_dir: "{{ etcd_root_prefix }}/opt/k8s/etcd"
+etcd_extract_dir: "{{ etcd_dist_dir }}/v{{ etcd_version }}"
+etcd_bin_dir: "{{ etcd_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+etcd_install_binaries: ["etcd", "etcdctl", "etcdutl"]
+etcd_bin_mode: "0755"
+
+# --- 拓扑（成员清单唯一来源）------------------------------------------------
+etcd_inventory_group: etcd
+# 显式覆盖：[] 表示从 inventory 分组推导。元素可为 "host" 或
+# { name, address, client_port, peer_port }（address/端口可覆盖 hostvars）。
+etcd_members: []
+etcd_member_name: "{{ inventory_hostname }}"
+etcd_port_client: 2379
+etcd_port_peer: 2380
+# 高可用最低成员数（单机开发可显式置 1）；奇数校验始终生效
+etcd_min_members: 3
+# per-host：每台主机一个成员（生产默认）
+# co-located：同一主机多实例（单机测试/实验），data-dir 与 unit 名按成员名隔离
+etcd_instance_layout: per-host
+etcd_cluster_token: k8s-etcd-cluster
+etcd_initial_cluster_state: new
+
+# --- 数据目录 / systemd unit（可重定向）-------------------------------------
+# etcd_data_dir 是基础路径（group_vars/etcd 可覆盖）；沙箱前缀在派生的成员目录上套用。
+etcd_data_dir: "/var/lib/etcd"
+etcd_member_data_dir: >-
+  {{ etcd_root_prefix }}{{ etcd_data_dir }}{{ ('/' ~ etcd_member_name) if etcd_instance_layout == 'co-located' else '' }}
+etcd_data_dir_mode: "0700"
+etcd_unit_dir: "{{ etcd_root_prefix }}{{ etcd_systemd_dir | default('/etc/systemd/system') }}"
+etcd_unit_name: "etcd{{ ('-' ~ etcd_member_name) if etcd_instance_layout == 'co-located' else '' }}.service"
+etcd_unit_path: "{{ etcd_unit_dir }}/{{ etcd_unit_name }}"
+etcd_unit_mode: "0644"
+
+# --- 监听地址（advertise 始终用成员 address）--------------------------------
+etcd_listen_address: "0.0.0.0"
+etcd_listen_peer_address: "{{ etcd_listen_address }}"
+
+# --- 运行用户 / 落盘属主 ----------------------------------------------------
+etcd_user: etcd
+etcd_user_group: etcd
+etcd_manage_user: true
+etcd_user_shell: /usr/sbin/nologin
+etcd_file_owner: "{{ etcd_user }}"
+etcd_file_group: "{{ etcd_user_group }}"
+
+# --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
+etcd_manage_service: true
+etcd_service_enabled: true
+etcd_service_state: started
+etcd_service_type: notify
+etcd_restart_sec: 5
+etcd_limit_nofile: 65536
+
+# --- 运行参数（全部可覆盖）--------------------------------------------------
+etcd_heartbeat_interval: 100
+etcd_election_timeout: 1000
+etcd_snapshot_count: 10000
+etcd_extra_args: []
+
+# --- TLS（默认开启；证书由 T004 pki role 生成）-----------------------------
+etcd_tls_enabled: true
+etcd_tls_client_auth: true
+etcd_tls_peer_client_auth: true
+etcd_config_dir: "{{ k8s_config_dir | default('/etc/kubernetes') }}"
+etcd_pki_dir: "{{ etcd_root_prefix }}{{ etcd_config_dir }}/pki/etcd"
+etcd_ca_file: "{{ etcd_pki_dir }}/ca.crt"
+etcd_cert_file: "{{ etcd_pki_dir }}/server.crt"
+etcd_key_file: "{{ etcd_pki_dir }}/server.key"
+etcd_peer_cert_file: "{{ etcd_pki_dir }}/peer.crt"
+etcd_peer_key_file: "{{ etcd_pki_dir }}/peer.key"

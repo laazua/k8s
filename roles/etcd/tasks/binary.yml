@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# etcd:binary — 官方二进制获取与安装
+#   1) 目录准备
+#   2) 复用 download role：URL + 强制 sha256 + 代理 + 本地缓存（离线命中不下载）
+#   3) 按版本目录解包（creates 幂等）
+#   4) 安装 etcd / etcdctl / etcdutl 到 etcd_bin_dir（内容不变 → changed=0）
+#   5) 断言实际版本 == etcd_version（防止缓存/URL 错配）
+# =============================================================================
+
+- name: "etcd:binary | 创建制品/解包/安装目录"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  loop:
+    - "{{ etcd_artifact_dir }}"
+    - "{{ etcd_dist_dir }}"
+    - "{{ etcd_extract_dir }}"
+    - "{{ etcd_bin_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["etcd", "etcd:binary"]
+
+- name: "etcd:binary | 下载官方发行包（复用 download role 的缓存/代理/sha256）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ etcd_root_prefix }}"
+    download_cache_dir: "{{ etcd_artifact_dir }}"
+    download_file_owner: "{{ etcd_file_owner }}"
+    download_file_group: "{{ etcd_file_group }}"
+    download_items:
+      - name: "{{ etcd_archive_root }}.tar.gz"
+        url: "{{ etcd_download_url }}"
+        sha256: "{{ etcd_artifact_sha256 }}"
+        dest: "{{ etcd_artifact_path }}"
+        mode: "0644"
+  tags: ["etcd", "etcd:binary"]
+
+- name: "etcd:binary | 解包发行包（按版本目录，幂等）"
+  ansible.builtin.unarchive:
+    src: "{{ etcd_artifact_path }}"
+    dest: "{{ etcd_extract_dir }}"
+    remote_src: true
+    creates: "{{ etcd_extract_dir }}/{{ etcd_archive_root }}/etcd"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  tags: ["etcd", "etcd:binary"]
+
+- name: "etcd:binary | 安装二进制到 {{ etcd_bin_dir }}"
+  ansible.builtin.copy:
+    src: "{{ etcd_extract_dir }}/{{ etcd_archive_root }}/{{ item }}"
+    dest: "{{ etcd_bin_dir }}/{{ item }}"
+    remote_src: true
+    mode: "{{ etcd_bin_mode }}"
+    owner: "{{ etcd_file_owner }}"
+    group: "{{ etcd_file_group }}"
+  loop: "{{ etcd_install_binaries }}"
+  loop_control:
+    label: "{{ item }}"
+  notify: "etcd:restart"
+  tags: ["etcd", "etcd:binary"]
+
+- name: "etcd:binary | 读取已安装 etcd 版本"
+  ansible.builtin.command:
+    cmd: "{{ etcd_bin_dir }}/etcd --version"
+  register: etcd_version_check
+  changed_when: false
+  check_mode: false
+  tags: ["etcd", "etcd:binary"]
+
+- name: "etcd:binary | 断言实际版本与 etcd_version 一致"
+  ansible.builtin.assert:
+    that:
+      - (etcd_version | string) in etcd_version_check.stdout
+    fail_msg: >-
+      已安装 etcd 版本与 etcd_version={{ etcd_version }} 不一致：
+      {{ etcd_version_check.stdout | default('(无法读取版本)') }}
+    quiet: true
+  tags: ["etcd", "etcd:binary"]

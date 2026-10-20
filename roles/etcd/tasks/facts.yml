@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# etcd:facts — 成员清单 / URL / initial-cluster 的唯一推导处
+#   输入：etcd_inventory_group、etcd_members、hostvars（ansible_host / etcd_*_port）、
+#         etcd_tls_enabled、etcd_listen_address
+#   产出：etcd_resolved_members、etcd_current_member、etcd_initial_cluster、
+#         etcd_*_urls、etcd_exec_args、etcd_tls_required_files
+#   本文件无副作用；不可解析的拓扑由 validate.yml fail fast。
+# =============================================================================
+
+- name: "etcd:facts | 初始化容器"
+  ansible.builtin.set_fact:
+    etcd_resolved_members: []
+    etcd_initial_cluster_entries: []
+    etcd_member_endpoints: []
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 推导 client/peer scheme（TLS 开关）"
+  ansible.builtin.set_fact:
+    etcd_client_scheme: "{{ 'https' if etcd_tls_enabled | bool else 'http' }}"
+    etcd_peer_scheme: "{{ 'https' if etcd_tls_enabled | bool else 'http' }}"
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 解析成员（显式 etcd_members 优先，否则取 inventory 分组）"
+  ansible.builtin.set_fact:
+    etcd_resolved_members: "{{ etcd_resolved_members + [ _member ] }}"
+    etcd_member_endpoints: "{{ etcd_member_endpoints + [ _member.address ~ ':' ~ (_member.client_port | string) ] }}"
+  vars:
+    _name: "{{ etcd_member_item.name | default(etcd_member_item) }}"
+    _hostvars: "{{ hostvars[_name] | default({}) }}"
+    _member:
+      name: "{{ _name }}"
+      address: "{{ etcd_member_item.address | default(_hostvars.ansible_host | default(_name)) }}"
+      client_port: "{{ etcd_member_item.client_port | default(_hostvars.etcd_client_port | default(etcd_port_client)) }}"
+      peer_port: "{{ etcd_member_item.peer_port | default(_hostvars.etcd_peer_port | default(etcd_port_peer)) }}"
+  loop: "{{ etcd_members if (etcd_members | length > 0) else (groups[etcd_inventory_group] | default([])) }}"
+  loop_control:
+    loop_var: etcd_member_item
+    label: "{{ etcd_member_item.name | default(etcd_member_item) }}"
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 构建 initial-cluster（name=peer_url,...）"
+  ansible.builtin.set_fact:
+    etcd_initial_cluster_entries: >-
+      {{ etcd_initial_cluster_entries
+         + [ etcd_member_item.name ~ '=' ~ etcd_peer_scheme ~ '://'
+             ~ etcd_member_item.address ~ ':' ~ (etcd_member_item.peer_port | string) ] }}
+  loop: "{{ etcd_resolved_members }}"
+  loop_control:
+    loop_var: etcd_member_item
+    label: "{{ etcd_member_item.name }}"
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 汇总 initial-cluster / 当前主机成员"
+  ansible.builtin.set_fact:
+    etcd_initial_cluster: "{{ etcd_initial_cluster_entries | join(',') }}"
+    etcd_current_member: >-
+      {{ etcd_resolved_members | selectattr('name', 'equalto', etcd_member_name)
+         | list | first | default({}) }}
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 推导本成员监听/广播 URL"
+  ansible.builtin.set_fact:
+    etcd_listen_client_urls: >-
+      {{ etcd_client_scheme }}://{{ etcd_listen_address }}:{{ etcd_current_member.client_port | default(etcd_port_client) }}
+    etcd_advertise_client_urls: >-
+      {{ etcd_client_scheme }}://{{ etcd_current_member.address | default(etcd_member_name) }}:{{ etcd_current_member.client_port | default(etcd_port_client) }}
+    etcd_listen_peer_urls: >-
+      {{ etcd_peer_scheme }}://{{ etcd_listen_peer_address }}:{{ etcd_current_member.peer_port | default(etcd_port_peer) }}
+    etcd_advertise_peer_urls: >-
+      {{ etcd_peer_scheme }}://{{ etcd_current_member.address | default(etcd_member_name) }}:{{ etcd_current_member.peer_port | default(etcd_port_peer) }}
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 组装 TLS 参数与必需文件清单"
+  ansible.builtin.set_fact:
+    etcd_tls_args: >-
+      {{ [] if not (etcd_tls_enabled | bool) else
+         ([ '--cert-file=' ~ etcd_cert_file,
+            '--key-file=' ~ etcd_key_file,
+            '--trusted-ca-file=' ~ etcd_ca_file,
+            '--peer-cert-file=' ~ etcd_peer_cert_file,
+            '--peer-key-file=' ~ etcd_peer_key_file,
+            '--peer-trusted-ca-file=' ~ etcd_ca_file ]
+          + (['--client-cert-auth'] if etcd_tls_client_auth | bool else [])
+          + (['--peer-client-cert-auth'] if etcd_tls_peer_client_auth | bool else [])) }}
+    etcd_tls_required_files: >-
+      {{ [] if not (etcd_tls_enabled | bool) else
+         [ etcd_ca_file, etcd_cert_file, etcd_key_file, etcd_peer_cert_file, etcd_peer_key_file ] }}
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 组装 etcd 启动参数（数据驱动，禁止硬编码）"
+  ansible.builtin.set_fact:
+    etcd_exec_args: >-
+      {{ [ '--name=' ~ etcd_member_name,
+           '--data-dir=' ~ etcd_member_data_dir,
+           '--listen-client-urls=' ~ etcd_listen_client_urls,
+           '--advertise-client-urls=' ~ etcd_advertise_client_urls,
+           '--listen-peer-urls=' ~ etcd_listen_peer_urls,
+           '--initial-advertise-peer-urls=' ~ etcd_advertise_peer_urls,
+           '--initial-cluster=' ~ etcd_initial_cluster,
+           '--initial-cluster-token=' ~ etcd_cluster_token,
+           '--initial-cluster-state=' ~ etcd_initial_cluster_state,
+           '--heartbeat-interval=' ~ (etcd_heartbeat_interval | string),
+           '--election-timeout=' ~ (etcd_election_timeout | string),
+           '--snapshot-count=' ~ (etcd_snapshot_count | string) ]
+         + etcd_tls_args + etcd_extra_args }}
+  tags: ["etcd", "etcd:facts"]

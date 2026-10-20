@@ -5,6 +5,63 @@
 
 ---
 
+## [2026-10-20] Generator · T005 实现完成 → ready_for_eval
+
+- 时间：2026-10-20
+- 角色：Generator（TDD：先红后绿；未自判 PASS）
+- 当前任务：`T005`（etcd 集群 role）
+- 交付物：
+  - `roles/etcd/`（`defaults/main.yml`、`tasks/{facts,validate,binary,config,service,main}.yml`、
+    `handlers/main.yml`、`templates/etcd.service.j2`、`meta/main.yml`、`README.md`）——
+    官方二进制（URL + 强制 sha256，复用 `download` role 的缓存/代理）+ systemd unit；
+    成员唯一来源 = inventory `etcd` 分组或 `etcd_members`；版本/端口/数据目录/token/TLS 与证书路径全变量化；
+    TLS 默认 true（pki 的 etcd CA/server/peer，`--client-cert-auth` 双向认证）。
+  - `tests/etcd/`（`test_etcd_role.sh` 152 断言、`sandbox.yml`、`inventory.ini`(3 成员)、
+    `inventory_even.ini`(偶数负例)、`unit_exec.py`）。
+  - `Makefile`：`test` 串入 etcd 套件 + 新目标 `make test-etcd`。
+  - `docs/harness/state/contracts/T005.md`（A1–A23 + 红/绿/自测证据 + 受限声明）。
+- TDD 红→绿：
+  - 红：`tests/etcd/test_etcd_role.sh` → `PASS=14 FAIL=32`，exit 1（role 不存在，脚本快速失败）`/tmp/opencode/t005_red.log`。
+  - 实现中真实红：①`unarchive` 要求 dest 已存在；②`changed_of` 只取末条 recap（TLS-off 集群漏建 logs 目录）。
+  - 绿：`PASS=152 FAIL=0`，exit 0 `…/t005_green4.log`。
+- 真实集群实测（沙箱 3 实例，端口 12379/22379/32379，peer 12380/22380/32380）：
+  `endpoint health` 3/3 healthy；`member list`=3；leader 唯一；`put/get` 正常；
+  `kill -9 etcd2` → 2/3 仍有 quorum 可写、member list 仍为 3 → 按同一 unit 的 `ExecStart` 重新拉起 →
+  3 端点恢复 healthy、故障前后 key 均可读、PID 变化；运行中重跑 `changed=0`、无 handler、PID 不变；
+  `etcd_heartbeat_interval` 变更 → `changed>=1` + `etcd:restart` 被通知；`etcd_tls_enabled=false` → HTTP 3 成员 healthy；
+  偶数成员（2）→ exit≠0 且报「必须为奇数（当前 2）」；TLS 证书缺失 → fail fast；离线缓存命中 → exit 0 且 `changed=0`。
+- 全量门禁（`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 连跑两次）：
+  两次均 **exit 0**；`27 / 39 / 59 / 100 / 152`，`FAIL=0`；归一化后两次日志 `diff` **0 行**；
+  运行后宿主无 etcd 进程、测试端口空闲、沙箱目录已清理。
+- 共享开发机安全：未写 `/etc/systemd/system`（`etcd_manage_service=false` 只渲染 unit，测试从 `ExecStart` 直接拉起）、
+  未占用 2379/2380、未创建 `/var/lib/etcd` 与 `/usr/local/bin/etcd*`；未改 `roles/{base,download,pki}`、
+  `tests/{skeleton,base,download,pki}`；`playbooks/site.yml` 未引用 etcd；未提交任何证书/私钥。
+- 遗留风险：①真机 `systemctl enable/start` 与 unit 的 `User=etcd` 路径属受限项，需真机复验（契约 §5/§6.2 已声明）；
+  ②`etcd_min_members` 默认 3，单成员开发集群需显式置 1（已报错提示）；③制品源为 `storage.googleapis.com`
+  （GitHub release 资产在本环境被阻断），换源时需同步改 sha256。
+- 下一步：`eval T005`。Evaluator 复现命令：`tests/etcd/test_etcd_role.sh` 或 `make test-etcd`。
+
+---
+
+## [2026-10-20] Evaluator · T004 评估第 1 轮 → PASS（eval）
+
+- 时间：2026-10-20
+- 角色：Evaluator（harness-evaluator 独立子会话；只读评审，未改任何代码/测试/契约）
+- 当前任务：`T004`（被测提交 `08945c4`）
+- 结论：**PASS**（报告 `reports/T004-r1.md`）；六项硬指标 功能 4 / 幂等 5 / 可配置 5 / 测试 4 / 结构 4 / 安全 5；产品完整度 4；阻塞 0；缺陷 2 MINOR + 3 NIT（均非阻塞）。
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` **连跑两次**均 exit 0；T001 `27`、T002 `39`、T003 `59`、T004 `100`，`FAIL=0`；归一化 ANSI/随机沙箱路径后两次日志 `diff` **0 行**，与 Generator 声称一致（无回退）。
+- **独立复现（自建 playbook + 自建 inventory，etcd 成员与 master 分离）**：61 条断言全绿（除下述 D1）；apiserver SAN 实测含 VIP/3 master/2 node/服务 IP/四件套 DNS；kubelet 各自节点且不扩散；etcd server/peer 含 3 个 etcd 成员；三链 `openssl verify` 通过、错 CA 必败；11 对证书/私钥公钥逐字节一致；私钥 600/证书 644/目录 700 用 `stat` 实测。
+- **幂等/不覆盖/自愈**：第二次 `changed=0`，24 个产物 sha256 逐一不变；`--check` rc=0/changed=0；外部签发+旧 mtime 有效证书不被覆盖；垃圾证书（changed=6）与真实过期证书（2019→2020）均自愈且私钥复用；etcd-ca 损坏 → CA 重建 + 3 leaf 全量重签；`pki_force_regen=true` changed=53 全量重签仍验链通过；`pki_config_dir` 重定向生效；缺 `k8s_master` exit=2 且报分组名。
+- **牙齿实验 5/5 全部被捕获**（独立 worktree，主工作区 clean）：删 VIP→A3 FAIL；删 master 主机名→A3 FAIL；私钥 mode 0644→A7 FAIL；强制每次重签→A11「changed=40 非幂等」+「产物被改动」+A12 FAIL；apiserver-etcd-client 改用错 CA→etcd 链 FAIL。
+- **TDD 诚实性 PASS**：原始红日志（mtime `2026-10-19 15:38:46`，`PASS=26 FAIL=59`）仍在；worktree 重构红归一化后与原始红 `diff` 0 行；中途红 `PASS=89 FAIL=5` 日志亦在，未发现事后伪造。
+- **安全/隔离**：`git ls-files` 无 `.key/.crt/.pem`；`/etc/kubernetes` 未创建；无残留沙箱/进程；测试离线（仅本地 openssl+ansible）。
+- **回归**：`08945c4` 未触碰 `tests/{skeleton,base,download}`、`roles/{base,download}`、`playbooks/`（diff 0 行）。
+- **非阻塞缺陷**：D1（MINOR）私钥文件「存在但不可解析」时不自愈且 role 仍 exit 0（`_needs_regen.yml:55-64` / `verify.yml:68-77`）；D2（MINOR）选择性 tags `--tags pki:ca`/`pki:cert` 报 `pki_needs_key` undefined，与契约 §10.1「`pki:*` 可单跑」不符；D3（NIT）kubelet 证书默认只为 `k8s_node` 生成、master 无（契约 A2/A4 以 node 为 N，不阻塞）；D4（NIT）测试用 OpenSSL 3.4+ `-not_before/-not_after`；D5（NIT）A15b 只显式验 front-proxy 链。
+- 改了哪些文件：`docs/harness/state/reports/T004-r1.md`（新增）、`state.yaml`（accepted / eval_round 1 / done_tasks 4 / active_task T005 / phase BUILDING）、`roadmap.md`（T004 → done）、本文件。
+- 下一步：`build T005`（etcd 集群 role：3 成员 healthy、member list、重启恢复）。建议后续触碰 `roles/pki` 时顺手修 D1/D2。
+
+---
+
 ## [2026-10-20] Generator · T004 实现完成（**中断后续跑**）→ ready_for_eval
 
 - 时间：2026-10-20

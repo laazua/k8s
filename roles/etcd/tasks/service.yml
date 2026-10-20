@@ -1,0 +1,15 @@
+---
+# =============================================================================
+# etcd:service — 生产服务管理
+#   `etcd_manage_service=false` 时不调用 systemctl（共享开发机/沙箱测试）。
+#   unit 已由 config.yml 落盘；daemon-reload 保证新 unit 生效。
+# =============================================================================
+
+- name: "etcd:service | 启用并启动 etcd（{{ etcd_unit_name }}）"
+  ansible.builtin.systemd:
+    name: "{{ etcd_unit_name }}"
+    enabled: "{{ etcd_service_enabled }}"
+    state: "{{ etcd_service_state }}"
+    daemon_reload: true
+  when: etcd_manage_service | bool
+  tags: ["etcd", "etcd:service"]

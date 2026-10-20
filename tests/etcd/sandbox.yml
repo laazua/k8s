@@ -1,0 +1,41 @@
+---
+# =============================================================================
+#  T005 沙箱验证 playbook
+#    play 1：用 pki role 在沙箱生成 etcd CA / server / peer / apiserver-etcd-client
+#            （TLS 关闭时整个 role 跳过，无需证书）
+#    play 2：在 [etcd] 的三个成员上真实执行 etcd role：
+#            - 二进制/数据目录/unit 全部重定向到 sandbox_root
+#            - co-located 布局：单机三实例，各成员独立的 data-dir / unit 文件名 / 端口
+#            - 不创建系统用户、不调用 systemctl（共享开发机禁止）
+#    unit 渲染后由测试脚本解析 ExecStart 直接拉起进程（真实集群断言在 shell 里做）。
+# =============================================================================
+- name: pki role sandbox for etcd TLS
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    pki_root_prefix: "{{ sandbox_root }}"
+    pki_file_owner: "{{ omit }}"
+    pki_file_group: "{{ omit }}"
+  roles:
+    - role: pki
+      when: etcd_tls_enabled | default(true) | bool
+
+- name: etcd role sandbox verification
+  hosts: etcd
+  connection: local
+  become: false
+  gather_facts: false
+  serial: 1
+  vars:
+    etcd_root_prefix: "{{ sandbox_root }}"
+    etcd_file_owner: "{{ omit }}"
+    etcd_file_group: "{{ omit }}"
+    etcd_manage_user: false
+    etcd_manage_service: false
+    etcd_instance_layout: co-located
+    etcd_listen_address: 127.0.0.1
+    etcd_listen_peer_address: 127.0.0.1
+  roles:
+    - role: etcd
