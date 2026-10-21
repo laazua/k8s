@@ -63,13 +63,20 @@ etcd_unit_mode: "0644"
 etcd_listen_address: "0.0.0.0"
 etcd_listen_peer_address: "{{ etcd_listen_address }}"
 
-# --- 运行用户 / 落盘属主 ----------------------------------------------------
+# --- 运行用户 / 属主模型（安全关键）-----------------------------------------
+# 三段式属主，禁止复用同一个变量：
+#   1) etcd_root_owner/group：systemd unit、二进制、解包/制品目录 —— 永远 root:root。
+#      服务用户绝不能拥有任何可执行/可加载路径（否则 etcd 进程可改写 unit 或替换二进制提权）。
+#   2) etcd_data_owner/group：数据目录 —— 服务用户独占 0700。
+#   3) etcd_cert_owner/group：证书分发目录 —— root 拥有、服务组可读（见下方 TLS 段）。
 etcd_user: etcd
 etcd_user_group: etcd
 etcd_manage_user: true
 etcd_user_shell: /usr/sbin/nologin
-etcd_file_owner: "{{ etcd_user }}"
-etcd_file_group: "{{ etcd_user_group }}"
+etcd_root_owner: root
+etcd_root_group: root
+etcd_data_owner: "{{ etcd_user }}"
+etcd_data_group: "{{ etcd_user_group }}"
 
 # --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
 etcd_manage_service: true
@@ -91,8 +98,39 @@ etcd_tls_client_auth: true
 etcd_tls_peer_client_auth: true
 etcd_config_dir: "{{ k8s_config_dir | default('/etc/kubernetes') }}"
 etcd_pki_dir: "{{ etcd_root_prefix }}{{ etcd_config_dir }}/pki/etcd"
+# pki 源文件（T004 产物；默认 root:root 0600 / 目录 0700）
 etcd_ca_file: "{{ etcd_pki_dir }}/ca.crt"
 etcd_cert_file: "{{ etcd_pki_dir }}/server.crt"
 etcd_key_file: "{{ etcd_pki_dir }}/server.key"
 etcd_peer_cert_file: "{{ etcd_pki_dir }}/peer.crt"
 etcd_peer_key_file: "{{ etcd_pki_dir }}/peer.key"
+
+# --- 证书分发（B1 权限模型：非 root 服务用户可读、但不可改写）----------------
+# 背景：pki 以 root:root 0600 + 目录 0700 生成私钥，`User=etcd` 的进程读不到 →
+#       真实 systemd 启动必然失败。这里不放松 pki 源目录（kube-apiserver 等也消费它），
+#       而是由 etcd role 把运行时需要的 5 个文件复制到独立目录：
+#         * 目录 root:<etcd 组> 0750（组可进入，others 不可）
+#         * 私钥 root:<etcd 组> 0640（组可读、others 不可、服务用户不可改写）
+#         * 证书 root:<etcd 组> 0644
+#       unit 用 Group=<etcd 组> + SupplementaryGroups=<etcd 组> 获得组读权限。
+#       数据目录属主（服务用户 0700）与证书属主（root + 组只读）严格分离。
+etcd_share_config_dir: "/etc/etcd"
+etcd_pki_share_dir: "{{ etcd_root_prefix }}{{ etcd_share_config_dir }}/pki"
+etcd_cert_owner: root
+etcd_cert_group: "{{ etcd_user_group }}"
+etcd_cert_dir_mode: "0750"
+etcd_cert_mode: "0644"
+etcd_cert_key_mode: "0640"
+# 运行时路径（unit 的 --cert-file/--key-file/... 指向分发目录，而非 pki 源 0600 私钥）
+etcd_runtime_ca_file: "{{ etcd_pki_share_dir }}/ca.crt"
+etcd_runtime_cert_file: "{{ etcd_pki_share_dir }}/server.crt"
+etcd_runtime_key_file: "{{ etcd_pki_share_dir }}/server.key"
+etcd_runtime_peer_cert_file: "{{ etcd_pki_share_dir }}/peer.crt"
+etcd_runtime_peer_key_file: "{{ etcd_pki_share_dir }}/peer.key"
+# 滚动重启后的健康探测（以 root 运行 role；证书用分发目录内的 server 证书，含 clientAuth）
+etcd_healthcheck_cert_file: "{{ etcd_runtime_cert_file }}"
+etcd_healthcheck_key_file: "{{ etcd_runtime_key_file }}"
+etcd_restart_health_retries: 30
+etcd_restart_health_delay: 2
+# 测试/无 systemd 环境专用：非空时用该 argv 重启本成员（生产留空 → 走 systemd）
+etcd_service_restart_argv: []

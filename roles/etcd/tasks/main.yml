@@ -4,8 +4,9 @@
 #   etcd:facts    → 从 inventory 分组 / etcd_members 推导成员、URL、initial-cluster
 #   etcd:validate → 奇数成员 / 最小成员数 / 唯一性 / 当前主机 / TLS 证书（fail fast）
 #   etcd:user     → 系统用户/组（沙箱测试跳过）
-#   etcd:binary   → download role 取包 + 解包 + 安装 + 版本断言
-#   etcd:config   → 数据目录 + 渲染 systemd unit（变更 notify 重启）
+#   etcd:binary   → download role 取包 + 解包 + 安装 + 版本断言（root:root）
+#   etcd:certs    → 分发 TLS 证书到服务用户可读的分发目录（root:<etcd 组> 0640/0750）
+#   etcd:config   → 数据目录（etcd 用户 0700）+ 渲染 systemd unit（root:root 0644）
 #   etcd:service  → 启用/启动（生产；测试 etcd_manage_service=false）
 # =============================================================================
 
@@ -37,6 +38,10 @@
 - name: "etcd:binary | 获取/安装官方二进制"
   ansible.builtin.import_tasks: binary.yml
   tags: [etcd, "etcd:binary"]
+
+- name: "etcd:certs | 分发 TLS 证书（服务用户可读、root 拥有）"
+  ansible.builtin.import_tasks: certs.yml
+  tags: [etcd, "etcd:certs"]
 
 - name: "etcd:config | 数据目录与 systemd unit"
   ansible.builtin.import_tasks: config.yml

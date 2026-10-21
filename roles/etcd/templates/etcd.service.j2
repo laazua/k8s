@@ -8,6 +8,10 @@ Wants=network-online.target
 Type={{ etcd_service_type }}
 User={{ etcd_user }}
 Group={{ etcd_user_group }}
+{% if etcd_tls_enabled | bool %}
+# 私钥 root:{{ etcd_cert_group }} {{ etcd_cert_key_mode }}：主组/补充组即可读，且服务用户不能改写
+SupplementaryGroups={{ etcd_cert_group }}
+{% endif %}
 ExecStart={{ etcd_bin_dir }}/etcd {{ etcd_exec_args | join(' ') }}
 Restart=always
 RestartSec={{ etcd_restart_sec }}

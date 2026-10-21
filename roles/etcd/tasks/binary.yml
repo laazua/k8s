@@ -1,20 +1,20 @@
 ---
 # =============================================================================
 # etcd:binary — 官方二进制获取与安装
-#   1) 目录准备
+#   1) 目录准备（**root:root**：服务用户不得拥有可执行/可加载路径）
 #   2) 复用 download role：URL + 强制 sha256 + 代理 + 本地缓存（离线命中不下载）
 #   3) 按版本目录解包（creates 幂等）
-#   4) 安装 etcd / etcdctl / etcdutl 到 etcd_bin_dir（内容不变 → changed=0）
+#   4) 安装 etcd / etcdctl / etcdutl 到 etcd_bin_dir（root:root 0755；内容不变 → changed=0）
 #   5) 断言实际版本 == etcd_version（防止缓存/URL 错配）
 # =============================================================================
 
-- name: "etcd:binary | 创建制品/解包/安装目录"
+- name: "etcd:binary | 创建制品/解包/安装目录（{{ etcd_root_owner }}:{{ etcd_root_group }} 0755）"
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0755"
-    owner: "{{ etcd_file_owner }}"
-    group: "{{ etcd_file_group }}"
+    owner: "{{ etcd_root_owner }}"
+    group: "{{ etcd_root_group }}"
   loop:
     - "{{ etcd_artifact_dir }}"
     - "{{ etcd_dist_dir }}"
@@ -30,8 +30,8 @@
   vars:
     download_root_prefix: "{{ etcd_root_prefix }}"
     download_cache_dir: "{{ etcd_artifact_dir }}"
-    download_file_owner: "{{ etcd_file_owner }}"
-    download_file_group: "{{ etcd_file_group }}"
+    download_file_owner: "{{ etcd_root_owner }}"
+    download_file_group: "{{ etcd_root_group }}"
     download_items:
       - name: "{{ etcd_archive_root }}.tar.gz"
         url: "{{ etcd_download_url }}"
@@ -46,18 +46,18 @@
     dest: "{{ etcd_extract_dir }}"
     remote_src: true
     creates: "{{ etcd_extract_dir }}/{{ etcd_archive_root }}/etcd"
-    owner: "{{ etcd_file_owner }}"
-    group: "{{ etcd_file_group }}"
+    owner: "{{ etcd_root_owner }}"
+    group: "{{ etcd_root_group }}"
   tags: ["etcd", "etcd:binary"]
 
-- name: "etcd:binary | 安装二进制到 {{ etcd_bin_dir }}"
+- name: "etcd:binary | 安装二进制到 {{ etcd_bin_dir }}（{{ etcd_bin_mode }} {{ etcd_root_owner }}:{{ etcd_root_group }}）"
   ansible.builtin.copy:
     src: "{{ etcd_extract_dir }}/{{ etcd_archive_root }}/{{ item }}"
     dest: "{{ etcd_bin_dir }}/{{ item }}"
     remote_src: true
     mode: "{{ etcd_bin_mode }}"
-    owner: "{{ etcd_file_owner }}"
-    group: "{{ etcd_file_group }}"
+    owner: "{{ etcd_root_owner }}"
+    group: "{{ etcd_root_group }}"
   loop: "{{ etcd_install_binaries }}"
   loop_control:
     label: "{{ item }}"

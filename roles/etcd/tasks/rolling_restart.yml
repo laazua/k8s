@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# etcd:rolling_restart — 逐个重启单个成员（D3）
+#
+# 目标：配置/二进制变更时**不得**让全部成员同时重启（会丢 quorum）。
+# 实现：
+#   1) throttle: 1 —— 同一时刻只允许一个主机执行重启任务（线性 strategy 下串行）；
+#   2) 重启后立即等待本成员 endpoint health 恢复（until + retries）；
+#   3) 再校验集群仍保有 quorum（healthy 端点 >= 多数派），才结束本主机 handler，
+#      下一个主机才会进入（throttle 阻塞）。
+# 生产仍建议在 play 层设置 `serial: 1`（跨 play 的更强保证，见 README/契约）。
+# =============================================================================
+
+- name: "etcd:restart | 逐个重启：本成员 systemd 重启（throttle=1 跨主机串行）"
+  ansible.builtin.systemd:
+    name: "{{ etcd_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  throttle: 1
+  when: etcd_manage_service | bool
+  tags: ["etcd", "etcd:restart"]
+
+- name: "etcd:restart | 逐个重启：本成员自定义重启命令（测试/无 systemd 环境）"
+  ansible.builtin.command:
+    argv: "{{ etcd_service_restart_argv }}"
+  throttle: 1
+  changed_when: true
+  when:
+    - etcd_service_restart_argv | length > 0
+    - not (etcd_manage_service | bool)
+  tags: ["etcd", "etcd:restart"]
+
+- name: "etcd:restart | 逐个重启：等待本成员恢复 healthy 并校验 quorum 后才继续"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/wait_member_healthy.yml"
+  when: (etcd_manage_service | bool) or (etcd_service_restart_argv | length > 0)
+  tags: ["etcd", "etcd:restart"]

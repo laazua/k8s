@@ -13,6 +13,7 @@
     etcd_resolved_members: []
     etcd_initial_cluster_entries: []
     etcd_member_endpoints: []
+    etcd_cluster_client_urls: []
   tags: ["etcd", "etcd:facts"]
 
 - name: "etcd:facts | 推导 client/peer scheme（TLS 开关）"
@@ -59,6 +60,23 @@
          | list | first | default({}) }}
   tags: ["etcd", "etcd:facts"]
 
+- name: "etcd:facts | 构建集群 client URL 列表（滚动重启的 quorum 探测用）"
+  ansible.builtin.set_fact:
+    etcd_cluster_client_urls: >-
+      {{ etcd_cluster_client_urls
+         + [ etcd_client_scheme ~ '://' ~ etcd_member_item.address
+             ~ ':' ~ (etcd_member_item.client_port | string) ] }}
+  loop: "{{ etcd_resolved_members }}"
+  loop_control:
+    loop_var: etcd_member_item
+    label: "{{ etcd_member_item.name }}"
+  tags: ["etcd", "etcd:facts"]
+
+- name: "etcd:facts | 计算 quorum（多数派）门槛"
+  ansible.builtin.set_fact:
+    etcd_quorum: "{{ ((etcd_resolved_members | length) // 2) + 1 }}"
+  tags: ["etcd", "etcd:facts"]
+
 - name: "etcd:facts | 推导本成员监听/广播 URL"
   ansible.builtin.set_fact:
     etcd_listen_client_urls: >-
@@ -75,17 +93,22 @@
   ansible.builtin.set_fact:
     etcd_tls_args: >-
       {{ [] if not (etcd_tls_enabled | bool) else
-         ([ '--cert-file=' ~ etcd_cert_file,
-            '--key-file=' ~ etcd_key_file,
-            '--trusted-ca-file=' ~ etcd_ca_file,
-            '--peer-cert-file=' ~ etcd_peer_cert_file,
-            '--peer-key-file=' ~ etcd_peer_key_file,
-            '--peer-trusted-ca-file=' ~ etcd_ca_file ]
+         ([ '--cert-file=' ~ etcd_runtime_cert_file,
+            '--key-file=' ~ etcd_runtime_key_file,
+            '--trusted-ca-file=' ~ etcd_runtime_ca_file,
+            '--peer-cert-file=' ~ etcd_runtime_peer_cert_file,
+            '--peer-key-file=' ~ etcd_runtime_peer_key_file,
+            '--peer-trusted-ca-file=' ~ etcd_runtime_ca_file ]
           + (['--client-cert-auth'] if etcd_tls_client_auth | bool else [])
           + (['--peer-client-cert-auth'] if etcd_tls_peer_client_auth | bool else [])) }}
     etcd_tls_required_files: >-
       {{ [] if not (etcd_tls_enabled | bool) else
          [ etcd_ca_file, etcd_cert_file, etcd_key_file, etcd_peer_cert_file, etcd_peer_key_file ] }}
+    etcd_healthcheck_args: >-
+      {{ [] if not (etcd_tls_enabled | bool) else
+         [ '--cacert=' ~ etcd_runtime_ca_file,
+           '--cert=' ~ etcd_healthcheck_cert_file,
+           '--key=' ~ etcd_healthcheck_key_file ] }}
   tags: ["etcd", "etcd:facts"]
 
 - name: "etcd:facts | 组装 etcd 启动参数（数据驱动，禁止硬编码）"

@@ -2,40 +2,51 @@
 # =============================================================================
 #  T005 沙箱验证 playbook
 #    play 1：用 pki role 在沙箱生成 etcd CA / server / peer / apiserver-etcd-client
-#            （TLS 关闭时整个 role 跳过，无需证书）
-#    play 2：在 [etcd] 的三个成员上真实执行 etcd role：
-#            - 二进制/数据目录/unit 全部重定向到 sandbox_root
+#            **以 root 执行**（become），thus 与生产一致：目录 0700 root:root、
+#            私钥 0600 root:root。TLS 关闭时整个 role 跳过。
+#    play 2：在 [etcd] 的三个成员上真实执行 etcd role（become root）：
+#            - 生产属主模型：系统目录/unit/二进制 root:root；数据目录 etcd 用户 0700；
+#              证书分发目录 root:<etcd 组> 0750、私钥 0640、证书 0644
+#            - etcd_user/group 由测试覆盖为 65534（nobody），测试脚本用 setpriv
+#              以该非 root uid 真实拉起成员 → 验证 B1 的证书可读性
 #            - co-located 布局：单机三实例，各成员独立的 data-dir / unit 文件名 / 端口
-#            - 不创建系统用户、不调用 systemctl（共享开发机禁止）
-#    unit 渲染后由测试脚本解析 ExecStart 直接拉起进程（真实集群断言在 shell 里做）。
+#            - 不创建系统用户（目标机已存在 uid 65534）、不调用 systemctl（共享开发机禁止）
+#    unit 渲染后由测试脚本解析 ExecStart、以非 root uid 拉起进程（真实集群断言在 shell 里做）。
+#
+#    restart_hook_script / restart_unit_exec：测试专用。非空时 role 的重启 handler
+#    通过该脚本真实重启本成员（生产留空 → 走 systemd），用于验证「滚动重启 + 等 health」。
 # =============================================================================
 - name: pki role sandbox for etcd TLS
   hosts: localhost
   connection: local
-  become: false
+  become: true
   gather_facts: false
   vars:
     pki_root_prefix: "{{ sandbox_root }}"
-    pki_file_owner: "{{ omit }}"
-    pki_file_group: "{{ omit }}"
   roles:
     - role: pki
-      when: etcd_tls_enabled | default(true) | bool
+      when:
+        - etcd_tls_enabled | default(true) | bool
+        - pki_sandbox_enabled | default(true) | bool
 
 - name: etcd role sandbox verification
   hosts: etcd
   connection: local
-  become: false
+  become: true
   gather_facts: false
   serial: 1
   vars:
     etcd_root_prefix: "{{ sandbox_root }}"
-    etcd_file_owner: "{{ omit }}"
-    etcd_file_group: "{{ omit }}"
+    etcd_user: "65534"
+    etcd_user_group: "65534"
     etcd_manage_user: false
     etcd_manage_service: false
     etcd_instance_layout: co-located
     etcd_listen_address: 127.0.0.1
     etcd_listen_peer_address: 127.0.0.1
+    etcd_service_restart_argv: >-
+      {{ [restart_hook_script, etcd_member_name, etcd_unit_path, etcd_root_prefix,
+          etcd_user, etcd_user_group, restart_unit_exec]
+         if (restart_hook_script | default('') | length > 0) else [] }}
   roles:
     - role: etcd

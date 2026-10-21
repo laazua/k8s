@@ -1,0 +1,93 @@
+---
+# =============================================================================
+# etcd:certs — 证书分发（B1：非 root 服务用户可读，但不可改写）
+#
+# 模型：
+#   pki 源（T004）      : root:root 0600，目录 0700 —— 保持不变（kube-apiserver 等也消费）
+#   本 role 分发目录    : root:<etcd 组> 0750
+#     ├─ *.crt          : 0644（公开材料）
+#     └─ server/peer.key: 0640（组可读、others 不可、服务用户不可写）
+#   unit: Group=<etcd 组> + SupplementaryGroups=<etcd 组> → 进程按组读私钥
+#   数据目录             : <etcd 用户>:<etcd 组> 0700（与证书属主严格分离）
+#
+# 为什么复制而不是改 pki 权限：pki role 每次运行都会把目录重置为 0700、私钥 0600；
+# 直接放松 pki 会削弱其它消费者，且跨 role 幂等冲突。复制让 etcd 的权限模型
+# 自包含、可重复、不影响 T004 的验收。
+# =============================================================================
+
+- name: "etcd:certs | 创建分发目录父级（{{ etcd_root_owner }}:{{ etcd_root_group }} 0755）"
+  ansible.builtin.file:
+    path: "{{ etcd_pki_share_dir | dirname }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ etcd_root_owner }}"
+    group: "{{ etcd_root_group }}"
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]
+
+- name: "etcd:certs | 创建证书分发目录（{{ etcd_cert_dir_mode }} {{ etcd_cert_owner }}:{{ etcd_cert_group }}）"
+  ansible.builtin.file:
+    path: "{{ etcd_pki_share_dir }}"
+    state: directory
+    mode: "{{ etcd_cert_dir_mode }}"
+    owner: "{{ etcd_cert_owner }}"
+    group: "{{ etcd_cert_group }}"
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]
+
+- name: "etcd:certs | 分发 CA 证书（{{ etcd_cert_mode }}）"
+  ansible.builtin.copy:
+    src: "{{ etcd_ca_file }}"
+    dest: "{{ etcd_runtime_ca_file }}"
+    remote_src: true
+    mode: "{{ etcd_cert_mode }}"
+    owner: "{{ etcd_cert_owner }}"
+    group: "{{ etcd_cert_group }}"
+  notify: "etcd:restart"
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]
+
+- name: "etcd:certs | 分发 server/peer 证书与私钥（私钥 {{ etcd_cert_key_mode }}）"
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    mode: "{{ item.mode }}"
+    owner: "{{ etcd_cert_owner }}"
+    group: "{{ etcd_cert_group }}"
+  loop:
+    - { src: "{{ etcd_cert_file }}", dest: "{{ etcd_runtime_cert_file }}", mode: "{{ etcd_cert_mode }}" }
+    - { src: "{{ etcd_key_file }}", dest: "{{ etcd_runtime_key_file }}", mode: "{{ etcd_cert_key_mode }}" }
+    - { src: "{{ etcd_peer_cert_file }}", dest: "{{ etcd_runtime_peer_cert_file }}", mode: "{{ etcd_cert_mode }}" }
+    - { src: "{{ etcd_peer_key_file }}", dest: "{{ etcd_runtime_peer_key_file }}", mode: "{{ etcd_cert_key_mode }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: "etcd:restart"
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]
+
+- name: "etcd:certs | 读取分发后的私钥状态"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ etcd_runtime_key_file }}"
+    - "{{ etcd_runtime_peer_key_file }}"
+  register: etcd_cert_key_stats
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]
+
+- name: "etcd:certs | 断言私钥权限模型（root 拥有 + 0640，无 world 权限）"
+  ansible.builtin.assert:
+    that:
+      - item.stat.uid == 0
+      - item.stat.mode == etcd_cert_key_mode
+    fail_msg: >-
+      证书分发私钥权限不符合模型：{{ item.item }} 需要 root:{{ etcd_cert_group }}
+      {{ etcd_cert_key_mode }}，实际 uid={{ item.stat.uid | default('?') }}
+      mode={{ item.stat.mode | default('?') }}。
+    quiet: true
+  loop: "{{ etcd_cert_key_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: etcd_tls_enabled | bool
+  tags: ["etcd", "etcd:certs"]

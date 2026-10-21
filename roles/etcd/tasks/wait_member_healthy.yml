@@ -1,0 +1,55 @@
+---
+# =============================================================================
+# etcd:wait_member_healthy — 滚动重启的闸门
+#   1) 本成员 endpoint health 恢复（重试直到成功）
+#   2) 集群 healthy 端点 >= quorum（多数派）——防止「重启下一个时只剩少数派」
+# 任一条件不满足则 handler 失败 → 不会继续重启下一个成员（fail fast，保住 quorum）。
+# =============================================================================
+
+- name: "etcd:restart | 等待 {{ etcd_member_name }} endpoint 恢复 healthy"
+  ansible.builtin.command:
+    argv: >-
+      {{ [ etcd_bin_dir ~ '/etcdctl',
+           '--endpoints=' ~ etcd_advertise_client_urls,
+           '--dial-timeout=1s', '--command-timeout=2s',
+           'endpoint', 'health' ] + etcd_healthcheck_args }}
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_restart_member_health
+  until: etcd_restart_member_health.rc == 0
+  retries: "{{ etcd_restart_health_retries }}"
+  delay: "{{ etcd_restart_health_delay }}"
+  changed_when: false
+  check_mode: false
+  tags: ["etcd", "etcd:restart"]
+
+- name: "etcd:restart | 校验集群多数派仍健康（quorum >= {{ etcd_quorum }}）"
+  ansible.builtin.command:
+    argv: >-
+      {{ [ etcd_bin_dir ~ '/etcdctl',
+           '--endpoints=' ~ (etcd_cluster_client_urls | join(',')),
+           '--dial-timeout=1s', '--command-timeout=2s',
+           'endpoint', 'health', '--cluster' ] + etcd_healthcheck_args }}
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_restart_quorum_probe
+  until: >-
+    (etcd_restart_quorum_probe.stdout_lines | default([])
+     | select('search', 'is healthy') | list | length) >= (etcd_quorum | int)
+  retries: "{{ etcd_restart_health_retries }}"
+  delay: "{{ etcd_restart_health_delay }}"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["etcd", "etcd:restart"]
+
+- name: "etcd:restart | 断言 quorum 未丢失（否则 fail fast，阻止继续重启）"
+  ansible.builtin.assert:
+    that:
+      - (etcd_restart_quorum_probe.stdout_lines | default([])
+         | select('search', 'is healthy') | list | length) >= (etcd_quorum | int)
+    fail_msg: >-
+      滚动重启中止：集群 healthy 端点数低于 quorum（要求 >= {{ etcd_quorum }}）。
+      输出：{{ etcd_restart_quorum_probe.stdout | default('') }}
+    quiet: true
+  tags: ["etcd", "etcd:restart"]

@@ -5,6 +5,71 @@
 
 ---
 
+## [2026-10-21] Generator · T005 修复第 1 轮 → ready_for_eval（build）
+
+- 时间：2026-10-21
+- 角色：Generator（TDD：先写会失败的断言，再实现；**未自判 PASS**）
+- 当前任务：`T005`（响应 `reports/T005-r1.md` 的 B1/B2、D3、D4/D5、D6–D8）
+- **交付/改动**：
+  - `roles/etcd/defaults/main.yml`：删除单一 `etcd_file_owner`，改为三段属主
+    `etcd_root_owner/group`（root：unit/二进制/制品/分发父目录）、`etcd_data_owner/group`（服务用户：数据目录）、
+    `etcd_cert_owner/group`（root + 服务组：证书分发）；新增 `etcd_pki_share_dir`、`etcd_cert_{dir,mode,key_mode}`、
+    `etcd_runtime_*`、`etcd_restart_health_{retries,delay}`、`etcd_service_restart_argv`（仅测试）。
+  - 新增 `roles/etcd/tasks/certs.yml`（B1）：**不改 pki 源**，复制 CA/server/peer 5 文件到分发目录
+    （目录 `root:<etcd 组> 0750`、私钥 `0640`、证书 `0644`），role 内 `stat` 断言私钥 uid=0/mode=0640。
+  - `roles/etcd/tasks/{binary,config}.yml`、`templates/etcd.service.j2`（B2）：系统路径统一 root；
+    unit `0644`、二进制 `0755`、数据目录服务用户 `0700`；unit 增加 `Group=`/`SupplementaryGroups=`，
+    TLS flag 指向分发目录。
+  - 新增 `roles/etcd/tasks/rolling_restart.yml` + `wait_member_healthy.yml`（D3），`handlers/main.yml` 改为调用；
+    `throttle: 1` 串行、每成员重启后等本成员 health + 校验 healthy 端点数 `>= etcd_quorum`，失败即中止。
+  - `roles/etcd/tasks/facts.yml`：新增 `etcd_cluster_client_urls`、`etcd_quorum`、`etcd_healthcheck_args`。
+  - `tests/etcd/test_etcd_role.sh`：扩充到 **225 条**断言；`sandbox.yml` 以 root 应用生产属主、
+    以真实非 root uid（`setpriv`）启动；新增 `inventory_even4.ini`。
+    D4 用 `/proc/<pid>/stat` starttime；D5 在 `etcd_min_members=1` 下跑 2/4 成员；
+    B1 断言服务 uid 可读分发私钥但**不可读 pki 源私钥**；B2 用 `stat` 断言属主且宿主目录未被 chown。
+  - `roles/etcd/README.md`：补「权限模型」表、变量表、滚动重启语义、真机 `sudo -u etcd test -r` 复验。
+  - 契约 `contracts/T005.md`：§4 增 A24–A27；§5.1–5.3 写明权限模型/滚动/受限；§6.2 真机步骤；
+    §9.4 红绿；§10.1/10.4–10.6 修复记录与两次门禁。
+- **TDD 红 → 绿**：
+  - 红（新断言对旧实现）：`/tmp/opencode/t005_red_r1fix.log`，已执行断言 **`PASS=62 FAIL=89`**；
+    B1/B2/D3/D4 均已红；旧实现无法以非 root 启动集群（`PermissionError` 读 unit），后续用例无意义，测试被终止（如实记录）。
+  - 绿：`tests/etcd/test_etcd_role.sh` → `/tmp/opencode/t005green2.log`，**`PASS=225 FAIL=0`，exit 0**（约 8m40s）。
+- **全量门禁（连跑两次）**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test`
+  - `/tmp/opencode/t005fix_make1.log`、`t005fix_make2.log`，两次均 **exit 0**（rc=0）。
+  - 计数：T001 `27` / T002 `39` / T003 `59` / T004 `100` / **T005 `225`**，合计 **450**，`FAIL=0`；
+    T001–T004 无回退（首轮 T005 为 152，合计 377）。
+- **真实滚动重启/非 root 验证**：3 进程 uid=65534；运行中重跑 `changed=0`、PID 与 starttime 不变；
+  `etcd_heartbeat_interval=150` → 3 个成员逐个重启（etcd1→etcd2→etcd3），每次均有 health 等待与 quorum 校验，
+  后台采样 quorum 最小值 `>=2`，重启后 3/3 healthy、PID 全变、数据不丢、leader 唯一；同配置再跑 `changed=0` 且无 handler。
+- **宿主收尾**：无 etcd 进程；12379/22379/32379 与 12380/22380/32380 空闲；`/etc/systemd/system`、`/usr/local/bin`
+  仍 `root:root 0755`；无宿主 etcd unit；`/var/lib/etcd` 不存在；沙箱（含调试 `t005dbg2.*`）已清理。
+  **未修改** `roles/pki`、`tests/pki`（B1 选择分发而非放宽 pki，理由见契约 §5.1/§10.5）。
+- 改了哪些文件：上述 role/test/README + `contracts/T005.md` + `state.yaml` + 本文件；
+  `reports/T005-r1.md` 为 Evaluator 产物，未修改、未提交。
+- 下一步：`eval T005 (r2)`（`state.yaml`：`ready_for_eval` / `EVALUATING` / `next_action: eval T005 (r2)`；
+  `roadmap.md` T005 保持 `in-progress`）。
+
+---
+
+## [2026-10-21] Evaluator · T005 评估第 1 轮 → FAIL（eval）
+
+- 时间：2026-10-21
+- 角色：Evaluator（harness-evaluator 独立子会话；只读评审，未改任何代码/测试/契约）
+- 当前任务：`T005`（被测提交 `aa35184`）
+- 结论：**FAIL**（报告 `reports/T005-r1.md`）；六项硬指标 功能 3 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / **安全 2**；产品完整度 3；阻塞 2（B1/B2）+ MAJOR 1 + MINOR 2 + NIT 3。
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` **连跑两次**均 exit 0；T001 `27`、T002 `39`、T003 `59`、T004 `100`、T005 `152`，`FAIL=0`；归一化 ANSI/沙箱路径/PID 后两次日志 `diff` **0 行**。TDD 红态 `PASS=14 FAIL=32` 独立复现，与契约 §9.1 一致。
+- **独立真实集群（自建 inventory/playbook，不复用仓库测试断言）**：3 成员 TLS 集群 health 3/3、`member list`=3、leader 唯一、put/get 往返；`kill -9` 一个成员 → 2/3 healthy 且 put 成功、member list 仍 3 → 同一 unit 重新拉起 → 3/3 healthy、故障前后 key 均可读、leader 唯一；运行中重跑 `changed=0`、3 个 PID 的 `/proc` starttime 不变；配置变更 changed=3 + handler，同配置再跑 `changed=0`；TLS off 3 成员 HTTP 集群 health 3/3；2/4/1 成员、空成员、TLS 缺失、错 sha256 全部 fail-fast 且未落盘。
+- **牙齿实验 5/5 被捕获**（临时 `git worktree`，主工作区 clean；仅做端口/日志前缀机械隔离，未改断言）：T1 少成员 → 138/14（A4/A6/A7/A8/A10/A11/A15/A18）；T2 删 sha256 → 78/73（安装失败级联）；T3 删奇数校验+min=1 → 146/6（A12 4 条）；T4 每次强制变更 → 146/6（A14/A15/A16/A17）；T5 删 `--data-dir` → 147/5（A4×3 + A18）。
+- **阻塞缺陷**：
+  - **B1（BLOCKER）**：生产 unit `User=etcd` 无法读 T004 默认生成的 `root:root 0600` etcd server/peer 私钥（目录 0700）；以非 root 用户按 unit 参数启动 etcd 实测 `open .../peer.crt: permission denied`。测试用 `pki_file_owner: omit` + 同用户运行完全绕过。修法：etcd role 对 etcd 证书/私钥做 `etcd:etcd 0600` 授权（或 pki `root:etcd 0640` + `SupplementaryGroups=etcd`），并加非 root 读/启动测试（`roles/pki/defaults/main.yml:29,32-33`、`templates/etcd.service.j2:9`、`tests/etcd/sandbox.yml:18-20`）。
+  - **B2（BLOCKER）**：role 用 `etcd_file_owner`（默认 etcd）对 `/etc/systemd/system`、`/usr/local/bin`、unit 文件与二进制 chown；unit 0644 由 etcd 拥有 → 服务用户可改自己的 unit/替换二进制，提权面。实测把 root:root 的沙箱目录跑成 `zhangsan:zhangsan`（代表默认 etcd）。修法：数据目录用 etcd，系统目录/unit/二进制保持 root:root；用 `stat` 断言属主（`defaults/main.yml:31,57,60,67-72`、`tasks/binary.yml:11-25`、`tasks/config.yml:18-34`、`tests/etcd/sandbox.yml:32-35`）。
+- 其他缺陷：D3（MAJOR）配置变更时所有成员同时重启、无滚动/编排保护；D4（MINOR）A15 PID 断言比较 shell 变量而非 `/proc`；D5（MINOR）A12 奇数校验仅靠文案兜住（默认 min=3 也拒绝 2）；D6–D8（NIT）契约/README 未显式声明 `User=etcd` 私钥可读前提、A2 未验 etcdctl/etcdutl 权限、`etcd_file_owner` 未文档化。
+- 诚实性：契约 §5 如实声明单机多实例 ≠ 多主机 HA、未真实 systemctl、未验证真实 systemd；未把渲染断言说成 systemd 已生效。宿主零污染：`/etc/systemd/system/etcd*.service` 0、`/var/lib/etcd` 与 `/usr/local/bin/etcd*` 不存在、无残留进程/端口；`git ls-files` 无 `.key/.crt/.pem`；未改 T001–T004 资产。
+- 改了哪些文件：`docs/harness/state/reports/T005-r1.md`（新增）、`state.yaml`（changes_requested / eval_round 1 / active_task T005 / phase BUILDING / next_action build T005 (fix r1)）、本文件。`roadmap.md` T005 保持 `in-progress`（FAIL 不勾选）。
+- 下一步：`build T005 (fix r1)`——先修 B1/B2（证书属主与系统目录属主分离），补非 root 读取/启动与 `stat` 属主断言，再重跑两次 `make test` + 牙齿/独立探针。
+
+---
+
 ## [2026-10-20] Generator · T005 实现完成 → ready_for_eval
 
 - 时间：2026-10-20
