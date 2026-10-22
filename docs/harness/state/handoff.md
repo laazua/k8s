@@ -5,6 +5,38 @@
 
 ---
 
+## [2026-10-21] Evaluator · T005 评估第 2 轮 → PASS（eval）
+
+- 时间：2026-10-21
+- 角色：Evaluator（harness-evaluator 独立子会话；只读评审，未改代码/测试/契约）
+- 当前任务：`T005`（被测 `d24f1a1`，父 `aa35184`）
+- **结论：PASS**（报告 `reports/T005-r2.md`）；六项硬指标
+  **功能 4 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5**，产品完整度 4；**0 阻塞**、2 MINOR、3 NIT。
+- 复现：
+  - `env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 连跑两次均 **exit 0**；
+    T001 `27` / T002 `39` / T003 `59` / T004 `100` / **T005 `225`**，合计 **450**，`FAIL=0`；归一化 diff **0 行**。
+  - 独立复现（`/tmp/opencode/t005r2_indep/`，自建 inventory/playbook、端口 13379/14379/15379）：
+    pki 源 `root:root 700/600`、分发 `root:65534 750/640/644`；3 进程 uid=65534；health 3/3、
+    member list=3、leader 唯一、put/get；kill 一成员→2/3 写成功→拉起 3/3 且数据在；
+    运行中重跑 `changed=0`、PID+`/proc` starttime 不变。
+  - 牙齿（全部独立 worktree）：B1 变异 42 FAIL；B2 变异 `nobody:nobody 755/644`；
+    删奇数校验 + `min_members=1` 下 2 成员 rc=0 且渲染 unit；删 `--data-dir`/TLS flags 的 unit 断言必红；
+    6 组实验后主工作区保持 clean。
+- **MINOR（非阻塞，必须下传 T006）**：
+  - D3 的 role 层“第二道防线”不成立：`throttle: 1` 只串行 restart 任务，`wait_member_healthy` 是后续任务。
+    无 `serial: 1` 的 3 主机 play 中 3 个成员会先全部重启，之后才做 quorum 闸门；
+    107 次采样 min_healthy=**1**，handler 仍 exit 0（`/tmp/opencode/t005r2_indep/multi.log:295,303`）。
+    公开测试用 `tests/etcd/sandbox.yml:37 serial: 1` 掩盖了该语义；README:131-134 / 契约 §5.2 表述过强。
+  - 建议：把“单成员 restart+wait”收进同一 `throttle: 1` 临界区（或用 assert 检测 play batch），
+    或明确“必须 `serial: 1`”并在 **T006/T007 的 etcd 重启 play 显式设置 `serial: 1`**。
+- 宿主收尾：无 etcd 进程、所有测试端口释放；`/etc/systemd/system`、`/usr/local/bin` 仍 `root:root 755`；
+  `/var/lib/etcd`、`/etc/kubernetes` 不存在；无宿主 etcd unit；worktree 已全部移除。
+- 变更：`state.yaml`（`accepted` / `eval_round: 2` / `done_tasks: 5` / `active_task: T006` / `next_action: build T006`
+  / `phase: BUILDING` / `blockers: []`）、`roadmap.md` T005→done、本文件、`reports/T005-r2.md`。
+- 下一步：`build T006`（控制面 LB+VIP）；开工前读 `reports/T005-r2.md` §5 MINOR-1，etcd 重启编排必须带 `serial: 1`。
+
+---
+
 ## [2026-10-21] Generator · T005 修复第 1 轮 → ready_for_eval（build）
 
 - 时间：2026-10-21
