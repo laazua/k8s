@@ -1,9 +1,9 @@
 # {{ ansible_managed | default('Ansible managed: roles/haproxy') }}
 # 后端成员来自 inventory 分组 {{ haproxy_master_group }}；请勿手工修改。
+# 注意：pidfile 由 systemd unit 的 `-p {{ haproxy_pid_file }}` 指定，
+#       daemon 由 systemd 管理（-Ws），因此这里不再重复声明。
 global
     maxconn {{ haproxy_maxconn }}
-    pidfile {{ haproxy_pid_file }}
-    daemon
 
 defaults
     mode tcp

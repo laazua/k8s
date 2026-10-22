@@ -15,7 +15,9 @@
 # =============================================================================
 
 # --- 沙箱前缀（仅测试用；生产保持空串）---------------------------------------
-keepalived_root_prefix: ""
+# 支持统一前缀 `base_root_prefix`（测试沙箱），或单独覆盖 keepalived_root_prefix。
+keepalived_root_prefix: "{{ base_root_prefix | default('') }}"
+keepalived_base_prefix: "{{ keepalived_root_prefix | regex_replace('/+$', '') }}"
 
 # --- 模式 -------------------------------------------------------------------
 ha_mode: "{{ k8s_ha_mode | default('keepalived') }}"
@@ -52,23 +54,33 @@ keepalived_check_rise: 2
 keepalived_haproxy_pid_file: "{{ haproxy_pid_file | default('/run/haproxy.pid') }}"
 
 # --- 落盘路径（可重定向）-----------------------------------------------------
-keepalived_config_dir: "{{ keepalived_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/keepalived"
-keepalived_config_file: "{{ keepalived_config_dir }}/keepalived.conf"
+# 生产默认 = keepalived 服务实际读取的路径（/etc/keepalived/keepalived.conf）。
+# 沙箱用 *_root_prefix / base_root_prefix 整体重定向，绝不写宿主 /etc。
+keepalived_config_dir: "{{ keepalived_base_prefix }}/etc/keepalived"
+keepalived_config_file: "{{ keepalived_base_prefix }}/etc/keepalived/keepalived.conf"
 keepalived_config_mode: "0644"
 keepalived_script_dir: "{{ keepalived_config_dir }}/scripts"
 keepalived_check_script: "{{ keepalived_script_dir }}/chk_haproxy.sh"
 keepalived_notify_script: "{{ keepalived_script_dir }}/notify.sh"
 keepalived_state_log: "{{ keepalived_config_dir }}/state.log"
 keepalived_script_mode: "0755"
-keepalived_pid_file: "/run/keepalived.pid"
+
+# --- systemd drop-in：unit 引用路径与渲染路径来自**同一变量** ----------------
+keepalived_systemd_dropin_dir: "{{ keepalived_base_prefix }}/etc/systemd/system/{{ keepalived_service_name }}.service.d"
+keepalived_systemd_dropin_file: "{{ keepalived_systemd_dropin_dir }}/10-role-config.conf"
 
 # --- kube-vip 分支（仅配置渲染；镜像/清单路径可配）--------------------------
 kube_vip_image: "ghcr.io/kube-vip/kube-vip:v0.8.0"
-kube_vip_manifest_dir: "{{ keepalived_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/manifests"
+kube_vip_manifest_dir: "{{ keepalived_base_prefix }}/etc/kubernetes/manifests"
 kube_vip_manifest_file: "{{ kube_vip_manifest_dir }}/kube-vip.yaml"
-kube_vip_config_map_name: kube-vip
+# kube-vip manager 在静态 Pod 模式下自动读取该 kubeconfig（节点真实路径，
+# 不随沙箱前缀重定向——它由 kubelet 的 hostPath 挂载）。
+kube_vip_kubeconfig: "/etc/kubernetes/admin.conf"
 kube_vip_cp_enable: true
 kube_vip_leaderelection: true
+kube_vip_leaseduration: 5
+kube_vip_renewdeadline: 3
+kube_vip_retryperiod: 1
 
 # --- 安装 / 服务（生产 true；共享开发机测试必须 false）-----------------------
 keepalived_manage_package: true

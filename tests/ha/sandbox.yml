@@ -17,8 +17,8 @@
     haproxy_manage_service: false
     keepalived_manage_package: false
     keepalived_manage_service: false
-    haproxy_root_prefix: "{{ sandbox_root }}/{{ inventory_hostname }}"
-    keepalived_root_prefix: "{{ sandbox_root }}/{{ inventory_hostname }}"
+    # 统一沙箱前缀（生产为空 → 渲染到 /etc/{haproxy,keepalived} 约定路径）
+    base_root_prefix: "{{ sandbox_root }}/{{ inventory_hostname }}"
     haproxy_pid_file: "{{ sandbox_root }}/{{ inventory_hostname }}/run/haproxy.pid"
     keepalived_haproxy_pid_file: "{{ sandbox_root }}/{{ inventory_hostname }}/run/haproxy.pid"
     # keepalived 的 enable_script_security 要求脚本及父目录 root 拥有且不可被

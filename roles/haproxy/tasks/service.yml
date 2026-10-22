@@ -1,6 +1,7 @@
 ---
 # =============================================================================
 # haproxy:service — 生产启用/启动（测试 haproxy_manage_service=false）
+#   daemon_reload 让 config.yml 渲染的 drop-in 立刻生效；
 #   配置变更由 handler 重启；首次启动在这里保证 running。
 # =============================================================================
 
@@ -9,5 +10,6 @@
     name: "{{ haproxy_service_name }}"
     state: started
     enabled: "{{ haproxy_service_enabled | bool }}"
+    daemon_reload: true
   when: haproxy_manage_service | bool
   tags: ["haproxy", "haproxy:service"]

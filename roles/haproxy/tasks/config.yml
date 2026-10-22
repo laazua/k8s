@@ -1,7 +1,10 @@
 ---
 # =============================================================================
-# haproxy:config — 配置目录 + haproxy.cfg
-#   幂等：内容不变 → changed=0 且不 notify（不重启）。
+# haproxy:config — 配置目录 + haproxy.cfg + systemd drop-in
+#   1) haproxy.cfg 渲染到发行版 unit 读取的约定路径（见 defaults 的 haproxy_config_file）；
+#   2) drop-in 显式把 unit 的 ExecStart/ExecStartPre 指到**同一个变量**
+#      `haproxy_config_file`，保证「渲染路径 == unit 引用路径」；
+#   3) 幂等：内容不变 → changed=0 且不 notify（不重启）。
 # =============================================================================
 
 - name: "haproxy:config | 创建配置目录"
@@ -11,10 +14,25 @@
     mode: "0755"
   tags: ["haproxy", "haproxy:config"]
 
+- name: "haproxy:config | 创建 systemd drop-in 目录"
+  ansible.builtin.file:
+    path: "{{ haproxy_systemd_dropin_dir }}"
+    state: directory
+    mode: "0755"
+  tags: ["haproxy", "haproxy:config"]
+
 - name: "haproxy:config | 渲染 haproxy.cfg"
   ansible.builtin.template:
     src: haproxy.cfg.j2
     dest: "{{ haproxy_config_file }}"
     mode: "{{ haproxy_config_mode }}"
+  notify: "haproxy:restart"
+  tags: ["haproxy", "haproxy:config"]
+
+- name: "haproxy:config | 渲染 systemd drop-in（unit 引用同一配置路径）"
+  ansible.builtin.template:
+    src: systemd-dropin.conf.j2
+    dest: "{{ haproxy_systemd_dropin_file }}"
+    mode: "0644"
   notify: "haproxy:restart"
   tags: ["haproxy", "haproxy:config"]

@@ -35,10 +35,25 @@
     mode: "0755"
   tags: ["keepalived", "keepalived:config"]
 
+- name: "keepalived:config | 创建 systemd drop-in 目录"
+  ansible.builtin.file:
+    path: "{{ keepalived_systemd_dropin_dir }}"
+    state: directory
+    mode: "0755"
+  tags: ["keepalived", "keepalived:config"]
+
 - name: "keepalived:config | 渲染 keepalived.conf"
   ansible.builtin.template:
     src: keepalived.conf.j2
     dest: "{{ keepalived_config_file }}"
     mode: "{{ keepalived_config_mode }}"
+  notify: "keepalived:restart"
+  tags: ["keepalived", "keepalived:config"]
+
+- name: "keepalived:config | 渲染 systemd drop-in（unit 引用同一配置路径）"
+  ansible.builtin.template:
+    src: systemd-dropin.conf.j2
+    dest: "{{ keepalived_systemd_dropin_file }}"
+    mode: "0644"
   notify: "keepalived:restart"
   tags: ["keepalived", "keepalived:config"]

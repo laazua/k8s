@@ -1,0 +1,6 @@
+# {{ ansible_managed | default('Ansible managed: roles/keepalived') }}
+# systemd drop-in：显式覆盖 keepalived unit 的 ExecStart，`-f` 指向 role 渲染的
+# keepalived.conf（与渲染路径来自同一变量 keepalived_config_file）。
+[Service]
+ExecStart=
+ExecStart={{ keepalived_binary }} --dont-fork -f {{ keepalived_config_file }}

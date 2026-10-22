@@ -13,7 +13,9 @@
 # =============================================================================
 
 # --- 沙箱前缀（仅测试用；生产保持空串，不要加尾斜杠）-------------------------
-haproxy_root_prefix: ""
+# 支持统一前缀 `base_root_prefix`（测试沙箱），或单独覆盖 haproxy_root_prefix。
+haproxy_root_prefix: "{{ base_root_prefix | default('') }}"
+haproxy_base_prefix: "{{ haproxy_root_prefix | regex_replace('/+$', '') }}"
 
 # --- 成员来源 ---------------------------------------------------------------
 haproxy_master_group: "{{ k8s_master_group | default('k8s_master') }}"
@@ -25,7 +27,7 @@ haproxy_resolved_members: []
 # --- 监听 / 后端 -------------------------------------------------------------
 haproxy_lb_port: "{{ k8s_apiserver_port | default(6443) }}"
 haproxy_backend_port: "{{ k8s_apiserver_port | default(6443) }}"
-haproxy_bind_address: "0.0.0.0"
+haproxy_bind_address: "{{ k8s_lb_bind_address | default('0.0.0.0') }}"
 haproxy_frontend_name: k8s_apiserver
 haproxy_backend_name: k8s_apiserver
 haproxy_balance: roundrobin
@@ -40,10 +42,18 @@ haproxy_timeout_server: 1h
 haproxy_maxconn: 2000
 
 # --- 落盘路径（可重定向）-----------------------------------------------------
-haproxy_config_dir: "{{ haproxy_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/haproxy"
-haproxy_config_file: "{{ haproxy_config_dir }}/haproxy.cfg"
+# 生产默认 = 发行版 haproxy unit 实际读取的 CONFIG 路径（/etc/haproxy/haproxy.cfg）。
+# 沙箱用 *_root_prefix / base_root_prefix 整体重定向，绝不写宿主 /etc。
+haproxy_config_dir: "{{ haproxy_base_prefix }}/etc/haproxy"
+haproxy_config_file: "{{ haproxy_base_prefix }}/etc/haproxy/haproxy.cfg"
 haproxy_config_mode: "0644"
 haproxy_pid_file: "/run/haproxy.pid"
+
+# --- systemd drop-in：unit 引用路径与渲染路径来自**同一变量** ----------------
+# 显式重写 ExecStart/ExecStartPre，只加载 haproxy_config_file，
+# 不再依赖发行版 unit 的 $CFGDIR（避免加载包样例/额外文件）。
+haproxy_systemd_dropin_dir: "{{ haproxy_base_prefix }}/etc/systemd/system/{{ haproxy_service_name }}.service.d"
+haproxy_systemd_dropin_file: "{{ haproxy_systemd_dropin_dir }}/10-role-config.conf"
 
 # --- 安装 / 服务（生产 true；共享开发机测试必须 false）-----------------------
 haproxy_manage_package: true

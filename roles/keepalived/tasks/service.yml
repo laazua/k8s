@@ -8,5 +8,6 @@
     name: "{{ keepalived_service_name }}"
     state: started
     enabled: "{{ keepalived_service_enabled | bool }}"
+    daemon_reload: true
   when: keepalived_manage_service | bool
   tags: ["keepalived", "keepalived:service"]

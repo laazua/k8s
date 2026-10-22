@@ -5,8 +5,8 @@
 phase: EVALUATING        # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T006      # 例如 T001
 contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 0          # 当前任务已评估轮数
-next_action: "eval T006"
+eval_round: 1          # 当前任务已评估轮数
+next_action: "eval T006 (r2)"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -30,5 +30,5 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 阻塞项，每条一句话
-updated: "2026-10-22T02:50:54Z"   # ISO8601
+blockers: []          # r1 已修 B1/M1；等 r2 复核
+updated: "2026-10-22T05:52:09Z"   # ISO8601

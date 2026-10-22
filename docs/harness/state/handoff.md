@@ -5,6 +5,77 @@
 
 ---
 
+## [2026-10-22] Generator · T006 修复轮 r1 → ready_for_eval（build）
+
+- 时间：2026-10-22
+- 角色：Generator（harness-generator 子会话；只做 T006，不自判 PASS）
+- 任务：`T006`（r1 修复 `reports/T006-r1.md` 的 B1 + M1 + MINOR/NIT）
+- **做了什么**
+  - **B1**：haproxy/keepalived 默认配置路径改为服务约定：
+    `roles/haproxy/defaults/main.yml` → `<prefix>/etc/haproxy/haproxy.cfg`；
+    `roles/keepalived/defaults/main.yml` → `<prefix>/etc/keepalived/keepalived.conf`；
+    仍可用 `*_config_file` 覆盖，`base_root_prefix`/`*_root_prefix` 整体沙箱重定向（去尾斜杠）。
+  - **新增 systemd drop-in**（`templates/systemd-dropin.conf.j2`，
+    `/etc/systemd/system/<svc>.service.d/10-role-config.conf`）：显式重写 `ExecStart`（`-f` 同一变量），
+    haproxy 同时设 `Environment="CONFIG=<同一变量>"` 并清空 `$CFGDIR` 引用；service/handler `daemon_reload: true`。
+    渲染路径 == unit 引用路径 == 约定路径（测试三方交叉断言）。
+  - **M1**：`kube-vip.yaml.j2` 补齐 `command`+`args: ["manager"]`、`hostNetwork`、
+    `priorityClassName: system-node-critical`、`NET_ADMIN`/`NET_RAW`、kubeconfig hostPath 挂载
+    （`kube_vip_kubeconfig`，默认 `/etc/kubernetes/admin.conf`）、`vip_nodename` downward API +
+    leader-election 时长；README/契约说明静态 Pod 无需额外 RBAC（DaemonSet 需自建）。
+  - **MINOR/NIT**：bind 复用 `k8s_lb_bind_address`；删除死变量与重复 pidfile/daemon；README 修正并标注
+    T007 前 playbook 占位；端口快照加 80/443。
+- **TDD 红→绿**
+  - 红：`/tmp/opencode/t006r1_red.log` **PASS=117 FAIL=69**（exit 1）——新路径/一致性/drop-in/kube-vip 字段断言全红。
+  - 绿：`/tmp/opencode/t006r1_green2.log` **PASS=186 FAIL=0**（exit 0）。
+  - 牙齿（改路径→红）：`/tmp/opencode/t006r1_teeth.log` **PASS=145 FAIL=39**，两处变异分别命中
+    `H drop-in ExecStart 显式 -f 渲染路径` 与 `K defaults 默认路径 = 服务约定…`；还原后 sha256 不变。
+- **全量门禁**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 两次均 **exit 0**，计数一致：
+  `27/39/59/100/225/186`，合计 **636**，`FAIL=0`（T001–T005 未回退；T006 因新增断言 160→186）。
+- **动态复验（测试内真实 netns）**：VIP 初始 ha1、停 keepalived 漂移 ha2、停 haproxy 整机故障、
+  恢复 preempt 回切、12 次 LB 命中双后端、杀后端后 8/8 仅落存活后端、运行中重跑 `changed=0` 且
+  haproxy/keepalived PID 与配置 sha256 不变——全部 PASS；测试**从 drop-in 解析路径启动**，
+  确保跑的是 unit 会引用的文件。
+- **宿主收尾**：无 netns/veth/HA 进程/`/run/t006-*`/`/run/vrrp.pid`；无 `/etc/{haproxy,keepalived,kubernetes}`；
+  80/443/6443/16443 无监听；无密钥文件。
+- **遗留/风险**：systemd 运行（enable/start/daemon-reload）与包样例覆盖仍属真机复验项（契约 §5.2）；
+  kube-vip 仅渲染、未真实漂移（§5.3）；同机端口协调归 T007（§5.4）。
+- **下一步**：`eval T006 (r2)`。`state.yaml` 置 `ready_for_eval` / `phase: EVALUATING`；
+  `roadmap.md` T006 保持 `in-progress`。
+
+---
+
+## [2026-10-22] Evaluator · T006 评估第 1 轮 → FAIL（eval）
+
+- 时间：2026-10-22
+- 角色：Evaluator（harness-evaluator 独立子会话；只读评审，未改任何代码/测试/契约）
+- 当前任务：`T006`（被测提交 `4e6c503`）
+- **结论：FAIL**（报告 `reports/T006-r1.md`）；六项硬指标 功能 **3** / 幂等 **5** / 可配置 **3** /
+  测试 4 / 结构 4 / 安全 4；产品完整度 3。阻塞 **B1** + MAJOR **M1** + 4 个 MINOR + NIT。
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` **连跑两次**均 exit 0；
+  T001 `27` / T002 `39` / T003 `59` / T004 `100` / T005 `225` / T006 `160`，合计 **610**，`FAIL=0`。
+  独立动态（自建 netns/veth + role 渲染配置）`PASS=48 FAIL=0`：VIP 漂移 **699 ms**、
+  preempt 回切 **3648 ms**、LB 20/20（10/10）、杀后端 **5013 ms** 摘除后 20/20 只落存活后端；
+  fail-fast 7/7 明确失败；TDD 红 `38/118` → green4 `160/0`。牙齿实验 5/5 变异均被捕获
+  （删 server 行 151/9、写死 VIP 145/15、去 check 151/9、破坏幂等 158/2、强制 nopreempt 158/2）。
+- **B1（BLOCKER）**：role 渲染到 `/etc/kubernetes/{haproxy,keepalived}`，但发行版 systemd
+  haproxy 读 `CONFIG=/etc/haproxy/haproxy.cfg`、keepalived 默认读 `/etc/keepalived/keepalived.conf`；
+  按默认 `manage_service=true` 时服务不会加载 role 配置，可能启动包样例（keepalived 样例含
+  `state MASTER`、vrid 51、VIP `192.168.200.16-18`）。测试 `manage_service=false` + 手动 `-f`
+  掩盖了该路径，且 `tests/ha/test_ha_role.sh:109-110` 反向禁止默认路径。
+- **M1（MAJOR）**：kube-vip 清单缺 `args: ["manager"]`、kubeconfig 挂载、NET_ADMIN/NET_RAW capabilities。
+- 宿主收尾：无 netns/veth/HA 进程/`/run/t006-*`；`/etc/{haproxy,keepalived,kubernetes}` 不存在；
+  80/443/6443/16443 无监听；route md5 与 iptables 规则集前后一致；回归/密钥检查通过。
+- 变更：`docs/harness/state/reports/T006-r1.md`（新增）、`state.yaml`
+  （`changes_requested` / `eval_round: 1` / `active_task: T006` / `phase: BUILDING` /
+  `next_action: "build T006 (fix r1)"` / `blockers`）、本文件。
+  `roadmap.md` T006 保持 `in-progress`（FAIL 不勾选）。
+- 下一步：`build T006 (fix r1)`——先修 B1（改默认配置路径或写 systemd drop-in，并覆盖包样例），
+  再补 M1，更新测试（去掉默认路径禁令、断言有效 unit 配置路径、端口快照加 80/443），
+  重跑两次 `make test` + `test_ha_role.sh` 后交 r2。
+
+---
+
 ## [2026-10-22] Generator · T006 -> ready_for_eval（build）
 
 - 时间：2026-10-22

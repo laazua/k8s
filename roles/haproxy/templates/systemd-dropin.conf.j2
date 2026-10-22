@@ -1,0 +1,13 @@
+# {{ ansible_managed | default('Ansible managed: roles/haproxy') }}
+# systemd drop-in：显式覆盖发行版 haproxy unit 的配置路径。
+# 与渲染路径来自同一变量 haproxy_config_file，二者必须一致。
+[Service]
+Environment="CONFIG={{ haproxy_config_file }}"
+Environment="PIDFILE={{ haproxy_pid_file }}"
+ExecStartPre=
+ExecStartPre={{ haproxy_binary }} -f {{ haproxy_config_file }} -c -q
+ExecStart=
+ExecStart={{ haproxy_binary }} -Ws -f {{ haproxy_config_file }} -p {{ haproxy_pid_file }}
+ExecReload=
+ExecReload={{ haproxy_binary }} -f {{ haproxy_config_file }} -c -q
+ExecReload=/bin/kill -USR2 $MAINPID

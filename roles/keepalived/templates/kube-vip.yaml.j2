@@ -1,5 +1,11 @@
 # {{ ansible_managed | default('Ansible managed: roles/keepalived') }}
 # ha_mode=kube-vip：静态 Pod 清单（仅配置渲染；真实漂移/选主未验证，见契约 §5）
+#
+# 运行前提（真机）：
+#   - 节点上存在集群可用的 kubeconfig（默认 /etc/kubernetes/admin.conf，变量
+#     kube_vip_kubeconfig），由 hostPath 挂载进容器；静态 Pod 用该文件直连 apiserver。
+#   - 若改用 DaemonSet 部署，需额外创建 ServiceAccount + ClusterRole(Binding)
+#     （services/endpoints/nodes 读写），本清单不包含 RBAC 对象。
 apiVersion: v1
 kind: Pod
 metadata:
@@ -7,9 +13,14 @@ metadata:
   namespace: kube-system
 spec:
   hostNetwork: true
+  priorityClassName: system-node-critical
   containers:
     - name: kube-vip
       image: {{ kube_vip_image }}
+      imagePullPolicy: IfNotPresent
+      command: ["/kube-vip"]
+      args:
+        - manager
       env:
         - name: vip_arp
           value: "true"
@@ -19,9 +30,33 @@ spec:
           value: "{{ keepalived_interface }}"
         - name: vip_cidr
           value: "{{ keepalived_vip_prefix }}"
+        - name: vip_nodename
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         - name: cp_enable
           value: "{{ kube_vip_cp_enable | lower }}"
         - name: vip_leaderelection
           value: "{{ kube_vip_leaderelection | lower }}"
+        - name: vip_leaseduration
+          value: "{{ kube_vip_leaseduration }}"
+        - name: vip_renewdeadline
+          value: "{{ kube_vip_renewdeadline }}"
+        - name: vip_retryperiod
+          value: "{{ kube_vip_retryperiod }}"
         - name: vip_address
           value: "{{ keepalived_vip }}"
+      securityContext:
+        capabilities:
+          add:
+            - NET_ADMIN
+            - NET_RAW
+      volumeMounts:
+        - name: kubeconfig
+          mountPath: {{ kube_vip_kubeconfig }}
+          readOnly: true
+  volumes:
+    - name: kubeconfig
+      hostPath:
+        path: {{ kube_vip_kubeconfig }}
+        type: File

@@ -65,13 +65,15 @@ for f in "$ROLE_HAPROXY/defaults/main.yml" "$ROLE_HAPROXY/tasks/main.yml" \
   "$ROLE_HAPROXY/tasks/validate.yml" "$ROLE_HAPROXY/tasks/facts.yml" \
   "$ROLE_HAPROXY/tasks/config.yml" "$ROLE_HAPROXY/tasks/install.yml" \
   "$ROLE_HAPROXY/tasks/service.yml" "$ROLE_HAPROXY/handlers/main.yml" \
-  "$ROLE_HAPROXY/templates/haproxy.cfg.j2" "$ROLE_HAPROXY/meta/main.yml" \
+  "$ROLE_HAPROXY/templates/haproxy.cfg.j2" \
+  "$ROLE_HAPROXY/templates/systemd-dropin.conf.j2" "$ROLE_HAPROXY/meta/main.yml" \
   "$ROLE_HAPROXY/README.md" \
   "$ROLE_KEEPALIVED/defaults/main.yml" "$ROLE_KEEPALIVED/tasks/main.yml" \
   "$ROLE_KEEPALIVED/tasks/validate.yml" "$ROLE_KEEPALIVED/tasks/keepalived.yml" \
   "$ROLE_KEEPALIVED/tasks/kube_vip.yml" "$ROLE_KEEPALIVED/tasks/scripts.yml" \
   "$ROLE_KEEPALIVED/tasks/service.yml" "$ROLE_KEEPALIVED/handlers/main.yml" \
   "$ROLE_KEEPALIVED/templates/keepalived.conf.j2" \
+  "$ROLE_KEEPALIVED/templates/systemd-dropin.conf.j2" \
   "$ROLE_KEEPALIVED/templates/chk_haproxy.sh.j2" \
   "$ROLE_KEEPALIVED/templates/notify.sh.j2" \
   "$ROLE_KEEPALIVED/templates/kube-vip.yaml.j2" \
@@ -91,11 +93,18 @@ check "H defaults 提供成员分组变量且默认 k8s_master" \
 check "H defaults 复用全局 apiserver 端口" "grep -qE '^haproxy_lb_port:.*k8s_apiserver_port' '$HD'"
 check "H defaults 后端端口独立可配" "grep -qE '^haproxy_backend_port:' '$HD'"
 check "H defaults 提供 balance 策略" "grep -qE '^haproxy_balance:[[:space:]]*roundrobin' '$HD'"
+check "H defaults bind 复用全局 k8s_lb_bind_address（MINOR-1）" \
+  "grep -qE '^haproxy_bind_address:.*k8s_lb_bind_address' '$HD'"
 check "H defaults 提供 connect/client/server timeouts" \
   "grep -qE '^haproxy_timeout_connect:' '$HD' && grep -qE '^haproxy_timeout_client:' '$HD' && \
    grep -qE '^haproxy_timeout_server:' '$HD'"
-check "H defaults 配置路径可重定向（root_prefix + k8s_config_dir）" \
-  "grep -qE '^haproxy_root_prefix:' '$HD' && grep -q 'k8s_config_dir' '$HD'"
+check "H defaults 配置路径可重定向（root_prefix/base_root_prefix）" \
+  "grep -qE '^haproxy_root_prefix:.*base_root_prefix' '$HD' && grep -q 'haproxy_base_prefix' '$HD'"
+check "H defaults 默认路径 = 发行版/服务约定 /etc/haproxy/haproxy.cfg（可变量覆盖）" \
+  "grep -qE '^haproxy_config_file:.*\\{\\{ haproxy_base_prefix \\}\\}/etc/haproxy/haproxy\\.cfg' '$HD'"
+check "H defaults 的 systemd drop-in 路径与配置同前缀派生" \
+  "grep -qE '^haproxy_systemd_dropin_dir:.*haproxy_service_name' '$HD' && \
+   grep -qE '^haproxy_systemd_dropin_file:.*haproxy_systemd_dropin_dir' '$HD'"
 check "H defaults 提供 pid 文件（track_script 复用）" "grep -qE '^haproxy_pid_file:' '$HD'"
 check "H defaults 提供服务/包安装开关" \
   "grep -qE '^haproxy_manage_service:' '$HD' && grep -qE '^haproxy_manage_package:' '$HD'"
@@ -106,10 +115,12 @@ check "H tasks/templates 无硬编码 IPv4" \
   "! grep -rqE '([0-9]{1,3}\\.){3}[0-9]{1,3}' $ROLE_HAPROXY/tasks/ $ROLE_HAPROXY/templates/"
 check "H tasks/templates 无硬编码 6443" \
   "! grep -rqE '(^|[^0-9])6443([^0-9]|$)' $ROLE_HAPROXY/tasks/ $ROLE_HAPROXY/templates/"
-check "H tasks 无硬编码 /etc/haproxy 或 /etc/kubernetes" \
+check "H tasks/templates 不硬编码配置路径（唯一来源是 defaults 变量）" \
   "! grep -rqE '/etc/(haproxy|kubernetes)' $ROLE_HAPROXY/tasks/ $ROLE_HAPROXY/templates/"
 check "H 使用 FQCN" "grep -rq 'ansible\\.builtin\\.' $ROLE_HAPROXY/tasks/"
 check "H 配置变更 notify handler" "grep -rq 'notify:' $ROLE_HAPROXY/tasks/"
+check "H service 任务 daemon_reload（drop-in 生效）" \
+  "grep -q 'daemon_reload: true' $ROLE_HAPROXY/tasks/service.yml"
 
 check "K defaults 的 ha_mode 复用 k8s_ha_mode" "grep -qE '^ha_mode:.*k8s_ha_mode' '$KD'"
 check "K defaults 的 VIP 复用 k8s_vip" "grep -qE '^keepalived_vip:.*k8s_vip' '$KD'"
@@ -128,6 +139,15 @@ check "K defaults 提供 kube-vip image / manifest 路径" \
   "grep -qE '^kube_vip_image:' '$KD' && grep -qE '^kube_vip_manifest_file:' '$KD'"
 check "K defaults 提供服务/包安装开关" \
   "grep -qE '^keepalived_manage_service:' '$KD' && grep -qE '^keepalived_manage_package:' '$KD'"
+check "K defaults 配置路径可重定向（root_prefix/base_root_prefix）" \
+  "grep -qE '^keepalived_root_prefix:.*base_root_prefix' '$KD' && grep -q 'keepalived_base_prefix' '$KD'"
+check "K defaults 默认路径 = 服务约定 /etc/keepalived/keepalived.conf（可变量覆盖）" \
+  "grep -qE '^keepalived_config_file:.*\\{\\{ keepalived_base_prefix \\}\\}/etc/keepalived/keepalived\\.conf' '$KD'"
+check "K defaults 的 systemd drop-in 路径与配置同前缀派生" \
+  "grep -qE '^keepalived_systemd_dropin_dir:.*keepalived_service_name' '$KD' && \
+   grep -qE '^keepalived_systemd_dropin_file:.*keepalived_systemd_dropin_dir' '$KD'"
+check "K service 任务 daemon_reload（drop-in 生效）" \
+  "grep -q 'daemon_reload: true' $ROLE_KEEPALIVED/tasks/service.yml"
 check "K tasks 无硬编码成员名 ha1/ha2" "! grep -rqE 'ha[12]' $ROLE_KEEPALIVED/tasks/ $ROLE_KEEPALIVED/templates/"
 check "K tasks/templates 无硬编码 IPv4" \
   "! grep -rqE '([0-9]{1,3}\\.){3}[0-9]{1,3}' $ROLE_KEEPALIVED/tasks/ $ROLE_KEEPALIVED/templates/"
@@ -195,7 +215,7 @@ NS2=t006ha2
 VETH1=veth-ha1
 VETH2=veth-ha2
 VIP=10.99.0.100
-PORT_PRE="$(ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -E ':(6443|16443)$' | sort || true)"
+PORT_PRE="$(ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -E ':(80|443|6443|16443)$' | sort || true)"
 MOCK_PIDS=()
 HAPROXY_PIDS=()
 KEEPALIVED_PIDS=()
@@ -258,8 +278,8 @@ expect_fail "ha_mode 非法时失败" /tmp/opencode/t006_ff_mode.log 'ha_mode|ke
   -e 'ha_mode=bogus' -e "haproxy_root_prefix=$FSB/mode" -e "keepalived_root_prefix=$FSB/mode"
 expect_fail "interface 为空时失败" /tmp/opencode/t006_ff_iface.log 'interface|网卡' \
   -e 'keepalived_interface=' -e "haproxy_root_prefix=$FSB/iface" -e "keepalived_root_prefix=$FSB/iface"
-check "fail-fast 未渲染 keepalived 配置" "[[ ! -f '$FSB/vip/etc/kubernetes/keepalived/keepalived.conf' ]]"
-check "fail-fast 未渲染 haproxy 配置" "[[ ! -f '$FSB/x/etc/kubernetes/haproxy/haproxy.cfg' ]]"
+check "fail-fast 未渲染 keepalived 配置" "[[ ! -f '$FSB/vip/etc/keepalived/keepalived.conf' ]]"
+check "fail-fast 未渲染 haproxy 配置" "[[ ! -f '$FSB/x/etc/haproxy/haproxy.cfg' ]]"
 
 echo "-- A5 配置渲染（成员来自 inventory）"
 C1=0
@@ -270,11 +290,13 @@ if ap "$INV" /tmp/opencode/t006_run1.log; then
 else
   bad "首跑渲染失败（见 /tmp/opencode/t006_run1.log）"
 fi
-H1="$SB/ha1/etc/kubernetes/haproxy/haproxy.cfg"
-H2="$SB/ha2/etc/kubernetes/haproxy/haproxy.cfg"
-K1="$SB/ha1/etc/kubernetes/keepalived/keepalived.conf"
-K2="$SB/ha2/etc/kubernetes/keepalived/keepalived.conf"
-for f in "$H1" "$H2" "$K1" "$K2"; do check "渲染产物 $f" "[[ -f '$f' ]]"; done
+H1="$SB/ha1/etc/haproxy/haproxy.cfg"
+H2="$SB/ha2/etc/haproxy/haproxy.cfg"
+K1="$SB/ha1/etc/keepalived/keepalived.conf"
+K2="$SB/ha2/etc/keepalived/keepalived.conf"
+HD1="$SB/ha1/etc/systemd/system/haproxy.service.d/10-role-config.conf"
+KD1="$SB/ha1/etc/systemd/system/keepalived.service.d/10-role-config.conf"
+for f in "$H1" "$H2" "$K1" "$K2" "$HD1" "$KD1"; do check "渲染产物 $f" "[[ -f '$f' ]]"; done
 check "H haproxy.cfg defaults mode tcp" "grep -qE '^defaults' '$H1' && sed -n '/^defaults/,/^[a-z]/p' '$H1' | grep -q 'mode tcp'"
 check "H backend 为 tcp 且 balance 来自变量" \
   "grep -q 'balance roundrobin' '$H1' && grep -q 'mode tcp' '$H1'"
@@ -320,6 +342,24 @@ check "K notify.sh 可执行" "[[ -x '$SAFE_ROOT/ha1/scripts/notify.sh' ]]"
 check "K 脚本目录 root 拥有（enable_script_security 前提）" \
   "[[ \"\$(sudo -n stat -c '%u:%g %a' '$SAFE_ROOT/ha1/scripts')\" == '0:0 755' ]]"
 
+echo "-- A5b systemd 路径一致性（渲染路径 == unit 引用路径 == 服务约定路径）"
+hp_unit_path="$(sed -nE 's/^ExecStart=.* -f ([^ ]+).*/\1/p' "$HD1" | head -1)"
+hp_env_path="$(sed -nE 's/^Environment=.*CONFIG=([^" ]+)".*/\1/p' "$HD1" | head -1)"
+check "H drop-in ExecStart 显式 -f 渲染路径（同一变量）" \
+  "[[ -n '$hp_unit_path' && '$hp_unit_path' == '$H1' ]]"
+check "H drop-in Environment CONFIG == 渲染路径（同一变量）" \
+  "[[ -n '$hp_env_path' && '$hp_env_path' == '$H1' ]]"
+check "H 渲染路径以约定 /etc/haproxy/haproxy.cfg 结尾（生产默认）" \
+  "[[ '$H1' == */etc/haproxy/haproxy.cfg ]]"
+check "H drop-in 不再引用 \$CFGDIR（只加载 role 渲染文件）" "! grep -q 'CFGDIR' '$HD1'"
+k_unit_path="$(sed -nE 's/^ExecStart=.* -f ([^ ]+).*/\1/p' "$KD1" | head -1)"
+check "K drop-in ExecStart 显式 -f 渲染路径（同一变量）" \
+  "[[ -n '$k_unit_path' && '$k_unit_path' == '$K1' ]]"
+check "K 渲染路径以约定 /etc/keepalived/keepalived.conf 结尾（生产默认）" \
+  "[[ '$K1' == */etc/keepalived/keepalived.conf ]]"
+check "K 渲染路径与 H 使用同一 base_root_prefix 重定向" \
+  "[[ '$H1' == '$SB/ha1/etc/haproxy/haproxy.cfg' && '$K1' == '$SB/ha1/etc/keepalived/keepalived.conf' ]]"
+
 echo "-- A6 kube-vip 分支（仅配置渲染 + 前置校验；真实漂移未验证，见契约）"
 KVS="$SB/kubevip"
 if ap "$INV" /tmp/opencode/t006_kubevip.log -e 'ha_mode=kube-vip' -e "sandbox_root=$KVS"; then
@@ -330,10 +370,24 @@ fi
 KV1="$KVS/ha1/etc/kubernetes/manifests/kube-vip.yaml"
 check "KV 渲染 kube-vip manifest" "[[ -f '$KV1' ]]"
 check "KV manifest 含 image（变量）" "grep -qE 'image: .*kube-vip' '$KV1'"
+check "KV manifest 含 manager 子命令（command/args）" \
+  "grep -qE '^[[:space:]]+command:' '$KV1' && grep -q '/kube-vip' '$KV1' && \
+   grep -qE '^[[:space:]]+- manager' '$KV1'"
+check "KV manifest hostNetwork: true" "grep -qE '^[[:space:]]+hostNetwork: true' '$KV1'"
+check "KV manifest priorityClassName: system-node-critical" \
+  "grep -qE '^[[:space:]]+priorityClassName: system-node-critical' '$KV1'"
+check "KV manifest capabilities NET_ADMIN + NET_RAW" \
+  "grep -q 'securityContext' '$KV1' && grep -q 'NET_ADMIN' '$KV1' && grep -q 'NET_RAW' '$KV1'"
+check "KV manifest 挂载 kubeconfig hostPath" \
+  "grep -qE '^[[:space:]]+hostPath:' '$KV1' && grep -q '/etc/kubernetes/admin.conf' '$KV1'"
+check "KV manifest kubeconfig volumeMount" \
+  "grep -qE 'mountPath: /etc/kubernetes/admin.conf' '$KV1' && grep -qE '^[[:space:]]+volumes:' '$KV1'"
+check "KV manifest vip_nodename 来自 downward API（选主必需）" \
+  "grep -q 'vip_nodename' '$KV1' && grep -q 'spec.nodeName' '$KV1'"
 check "KV manifest 含 vip_address = 10.99.0.100" "grep -qE 'vip_address' '$KV1' && grep -q '10\\.99\\.0\\.100' '$KV1'"
 check "KV manifest 含 vip_interface = veth-ha1" "grep -qE 'vip_interface' '$KV1' && grep -q 'veth-ha1' '$KV1'"
 check "KV manifest 含 port 6443" "grep -qE 'name: port' '$KV1' && grep -q '6443' '$KV1'"
-check "KV 模式不渲染 keepalived.conf" "[[ ! -f '$KVS/ha1/etc/kubernetes/keepalived/keepalived.conf' ]]"
+check "KV 模式不渲染 keepalived.conf" "[[ ! -f '$KVS/ha1/etc/keepalived/keepalived.conf' ]]"
 expect_fail "kube-vip 模式 VIP 为空时失败" /tmp/opencode/t006_kv_novip.log 'VIP|vip' \
   -e 'ha_mode=kube-vip' -e 'keepalived_vip=' -e "sandbox_root=$SB/kvnovip"
 
@@ -372,23 +426,29 @@ start_mock() {
   MOCK_PIDS+=("$(cat "$dir/mock.pid")")
 }
 start_haproxy() {
-  local ns="$1" dir="$2" i
+  local ns="$1" dir="$2" i cfg
+  cfg="$(sed -nE 's/^ExecStart=.* -f ([^ ]+).*/\1/p' \
+    "$dir/etc/systemd/system/haproxy.service.d/10-role-config.conf" 2>/dev/null | head -1)"
+  [[ -n "$cfg" && -f "$cfg" ]] || return 1
   sudo -n mkdir -p "$dir/run"
   sudo -n env LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" ip netns exec "$ns" \
-    "$HAPROXY_BIN" -D -f "$dir/etc/kubernetes/haproxy/haproxy.cfg" -p "$dir/run/haproxy.pid"
+    "$HAPROXY_BIN" -D -f "$cfg" -p "$dir/run/haproxy.pid"
   for ((i = 0; i < 50; i++)); do [[ -s "$dir/run/haproxy.pid" ]] && break; sleep 0.1; done
   [[ -s "$dir/run/haproxy.pid" ]] || return 1
   sudo -n chmod 0644 "$dir/run/haproxy.pid" 2>/dev/null || true
   HAPROXY_PIDS+=("$(cat "$dir/run/haproxy.pid")")
 }
 start_keepalived() {
-  local ns="$1" dir="$2" i
+  local ns="$1" dir="$2" i cfg
   local log="$SB/logs/$(basename "$dir")/keepalived.log"
+  cfg="$(sed -nE 's/^ExecStart=.* -f ([^ ]+).*/\1/p' \
+    "$dir/etc/systemd/system/keepalived.service.d/10-role-config.conf" 2>/dev/null | head -1)"
+  [[ -n "$cfg" && -f "$cfg" ]] || return 1
   sudo -n mkdir -p "$dir/run"
   mkdir -p "$(dirname "$log")"
   sudo -n env LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" ip netns exec "$ns" \
     "$KEEPALIVED_BIN" -P -n -l -G -D \
-    -f "$dir/etc/kubernetes/keepalived/keepalived.conf" \
+    -f "$cfg" \
     -p "$dir/run/keepalived.pid" -r "$dir/run/vrrp.pid" \
     >"$log" 2>&1 &
   for ((i = 0; i < 50; i++)); do [[ -s "$dir/run/keepalived.pid" ]] && break; sleep 0.1; done
@@ -484,8 +544,8 @@ check "回切后 https://VIP:6443/healthz 返回 ok" "curl_vip 2>/dev/null | gre
 echo "-- A12 收尾：trap 清理 netns/veth/进程，宿主端口无残留"
 cleanup
 check "netns 已删除" "! sudo -n ip netns list | grep -qE '(^| )t006ha[12]( |$)'"
-PORT_POST="$(ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -E ':(6443|16443)$' | sort || true)"
-check "宿主 6443/16443 监听状态与测试前一致（零占用）" "[[ \"$PORT_POST\" == \"$PORT_PRE\" ]]"
+PORT_POST="$(ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -E ':(80|443|6443|16443)$' | sort || true)"
+check "宿主 80/443/6443/16443 监听状态与测试前一致（零占用）" "[[ \"$PORT_POST\" == \"$PORT_PRE\" ]]"
 check "无遗留 mock/haproxy/keepalived 进程（沙箱路径）" "! pgrep -af '$SB/' >/dev/null"
 check "无 host 级 /run/vrrp.pid 残留" "[[ ! -e /run/vrrp.pid ]]"
 check "未写宿主 /etc/haproxy" "[[ ! -e /etc/haproxy ]]"
