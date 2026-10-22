@@ -1,0 +1,38 @@
+---
+# =============================================================================
+#  T006 沙箱验证 playbook
+#    - 在 [k8s_master] 的主机上执行 haproxy + keepalived role；
+#    - 所有落盘路径由 sandbox_root 重定向（宿主 /etc、/run 零污染）；
+#    - 包安装与 systemd 服务管理一律关闭：测试用 role 渲染出的真实配置
+#      在 netns 中直接启动 haproxy/keepalived 二进制。
+#    - 成员来源仍是 inventory 的 [k8s_master]，测试不硬编码后端。
+# =============================================================================
+- name: T006 HA roles sandbox
+  hosts: all
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    haproxy_manage_package: false
+    haproxy_manage_service: false
+    keepalived_manage_package: false
+    keepalived_manage_service: false
+    haproxy_root_prefix: "{{ sandbox_root }}/{{ inventory_hostname }}"
+    keepalived_root_prefix: "{{ sandbox_root }}/{{ inventory_hostname }}"
+    haproxy_pid_file: "{{ sandbox_root }}/{{ inventory_hostname }}/run/haproxy.pid"
+    keepalived_haproxy_pid_file: "{{ sandbox_root }}/{{ inventory_hostname }}/run/haproxy.pid"
+    # keepalived 的 enable_script_security 要求脚本及父目录 root 拥有且不可被
+    # 组/其他用户写。/tmp 是 1777，因此测试把脚本放到 root:root 0700 的 /run 子目录。
+    keepalived_safe_root: "{{ sandbox_root }}/safe"
+    keepalived_script_dir: "{{ keepalived_safe_root }}/{{ inventory_hostname }}/scripts"
+    keepalived_check_script: "{{ keepalived_script_dir }}/chk_haproxy.sh"
+    keepalived_notify_script: "{{ keepalived_script_dir }}/notify.sh"
+    keepalived_state_log: "{{ keepalived_safe_root }}/{{ inventory_hostname }}/state.log"
+    haproxy_lb_port: 6443
+    haproxy_backend_port: 16443
+    haproxy_check_inter: 500ms
+    haproxy_check_fall: 2
+    haproxy_check_rise: 1
+  roles:
+    - role: haproxy
+    - role: keepalived

@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/keepalived — handlers
+#   配置或脚本内容变化才 notify；测试环境（manage_service=false）跳过 systemd。
+# =============================================================================
+
+- name: "keepalived:restart"
+  ansible.builtin.systemd:
+    name: "{{ keepalived_service_name }}"
+    state: restarted
+    daemon_reload: true
+  when: keepalived_manage_service | bool
+  tags: ["keepalived", "keepalived:restart"]

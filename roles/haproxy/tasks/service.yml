@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# haproxy:service — 生产启用/启动（测试 haproxy_manage_service=false）
+#   配置变更由 handler 重启；首次启动在这里保证 running。
+# =============================================================================
+
+- name: "haproxy:service | 启用并启动 haproxy"
+  ansible.builtin.systemd:
+    name: "{{ haproxy_service_name }}"
+    state: started
+    enabled: "{{ haproxy_service_enabled | bool }}"
+  when: haproxy_manage_service | bool
+  tags: ["haproxy", "haproxy:service"]

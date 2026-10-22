@@ -1,0 +1,33 @@
+---
+# =============================================================================
+# roles/keepalived — 入口（VIP 层）
+#   keepalived:validate → VIP/网卡/VRRP 参数 fail fast（先于任何落盘）
+#   keepalived:scripts  → chk_haproxy / notify 脚本（仅 keepalived 模式）
+#   keepalived:config   → 渲染 keepalived.conf（仅 keepalived 模式）
+#   keepalived:service  → enable/start（生产；测试 false）
+#   keepalived:vip      → ha_mode=kube-vip 时渲染静态 Pod 清单（不做真实漂移）
+# =============================================================================
+
+- name: "keepalived:validate | VIP/网卡/VRRP 参数 fail fast"
+  ansible.builtin.import_tasks: validate.yml
+  tags: [keepalived, "keepalived:validate"]
+
+- name: "keepalived:scripts | 渲染健康检查与通知脚本"
+  ansible.builtin.import_tasks: scripts.yml
+  when: ha_mode == 'keepalived'
+  tags: [keepalived, "keepalived:scripts"]
+
+- name: "keepalived:config | 渲染 keepalived.conf"
+  ansible.builtin.import_tasks: keepalived.yml
+  when: ha_mode == 'keepalived'
+  tags: [keepalived, "keepalived:config"]
+
+- name: "keepalived:service | 启用并启动 keepalived"
+  ansible.builtin.import_tasks: service.yml
+  when: ha_mode == 'keepalived'
+  tags: [keepalived, "keepalived:service"]
+
+- name: "keepalived:vip | kube-vip 配置渲染（ha_mode=kube-vip）"
+  ansible.builtin.import_tasks: kube_vip.yml
+  when: ha_mode == 'kube-vip'
+  tags: [keepalived, "keepalived:kube-vip"]

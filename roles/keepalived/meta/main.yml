@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: keepalived
+  author: harness-generator
+  description: 控制面 VIP（keepalived/VRRP；可切换 kube-vip 配置渲染）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9", "10"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - keepalived
+    - vrrp
+    - ha
+
+dependencies: []

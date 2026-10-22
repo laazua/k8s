@@ -1,0 +1,54 @@
+---
+# =============================================================================
+# roles/haproxy — apiserver 前置 TCP 负载均衡
+#
+# 设计要点：
+#   1) 后端成员**唯一来源**是 inventory 的 `k8s_master` 分组（或显式
+#      `haproxy_backend_servers`）；tasks/templates 禁止硬编码成员名 / IP / 端口。
+#   2) 所有落盘路径由 `haproxy_root_prefix` 派生 → 测试整体重定向到沙箱。
+#   3) 端口全部变量化：`haproxy_lb_port`（客户端访问，默认 = k8s_apiserver_port）
+#      与 `haproxy_backend_port`（真实 apiserver 监听端口）分离，便于同机/测试。
+#   4) 包安装与 systemd 服务管理由开关控制；共享开发机测试置 false，只渲染配置。
+#   5) 配置内容不变 → changed=0 且不 notify handler（不重启）。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用；生产保持空串，不要加尾斜杠）-------------------------
+haproxy_root_prefix: ""
+
+# --- 成员来源 ---------------------------------------------------------------
+haproxy_master_group: "{{ k8s_master_group | default('k8s_master') }}"
+# 显式覆盖：[{ name: m1, address: 10.0.0.11, port: 6443 }, ...]
+# [] 表示从 inventory 分组推导（推荐）。
+haproxy_backend_servers: []
+haproxy_resolved_members: []
+
+# --- 监听 / 后端 -------------------------------------------------------------
+haproxy_lb_port: "{{ k8s_apiserver_port | default(6443) }}"
+haproxy_backend_port: "{{ k8s_apiserver_port | default(6443) }}"
+haproxy_bind_address: "0.0.0.0"
+haproxy_frontend_name: k8s_apiserver
+haproxy_backend_name: k8s_apiserver
+haproxy_balance: roundrobin
+
+# --- 健康检查 / 超时 ---------------------------------------------------------
+haproxy_check_inter: 2s
+haproxy_check_fall: 3
+haproxy_check_rise: 2
+haproxy_timeout_connect: 5s
+haproxy_timeout_client: 1h
+haproxy_timeout_server: 1h
+haproxy_maxconn: 2000
+
+# --- 落盘路径（可重定向）-----------------------------------------------------
+haproxy_config_dir: "{{ haproxy_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/haproxy"
+haproxy_config_file: "{{ haproxy_config_dir }}/haproxy.cfg"
+haproxy_config_mode: "0644"
+haproxy_pid_file: "/run/haproxy.pid"
+
+# --- 安装 / 服务（生产 true；共享开发机测试必须 false）-----------------------
+haproxy_manage_package: true
+haproxy_package_name: haproxy
+haproxy_binary: /usr/sbin/haproxy
+haproxy_manage_service: true
+haproxy_service_name: haproxy
+haproxy_service_enabled: true

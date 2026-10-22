@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# haproxy:config — 配置目录 + haproxy.cfg
+#   幂等：内容不变 → changed=0 且不 notify（不重启）。
+# =============================================================================
+
+- name: "haproxy:config | 创建配置目录"
+  ansible.builtin.file:
+    path: "{{ haproxy_config_dir }}"
+    state: directory
+    mode: "0755"
+  tags: ["haproxy", "haproxy:config"]
+
+- name: "haproxy:config | 渲染 haproxy.cfg"
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ haproxy_config_file }}"
+    mode: "{{ haproxy_config_mode }}"
+  notify: "haproxy:restart"
+  tags: ["haproxy", "haproxy:config"]

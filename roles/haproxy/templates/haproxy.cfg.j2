@@ -1,0 +1,25 @@
+# {{ ansible_managed | default('Ansible managed: roles/haproxy') }}
+# 后端成员来自 inventory 分组 {{ haproxy_master_group }}；请勿手工修改。
+global
+    maxconn {{ haproxy_maxconn }}
+    pidfile {{ haproxy_pid_file }}
+    daemon
+
+defaults
+    mode tcp
+    option tcplog
+    timeout connect {{ haproxy_timeout_connect }}
+    timeout client {{ haproxy_timeout_client }}
+    timeout server {{ haproxy_timeout_server }}
+
+frontend {{ haproxy_frontend_name }}
+    bind {{ haproxy_bind_address }}:{{ haproxy_lb_port }}
+    mode tcp
+    default_backend {{ haproxy_backend_name }}
+
+backend {{ haproxy_backend_name }}
+    mode tcp
+    balance {{ haproxy_balance }}
+{% for member in haproxy_resolved_members %}
+    server {{ member.name }} {{ member.address }}:{{ member.port | default(haproxy_backend_port) }} check inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }}
+{% endfor %}

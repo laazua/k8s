@@ -1,0 +1,6 @@
+#!/bin/sh
+# {{ ansible_managed | default('Ansible managed: roles/keepalived') }}
+# keepalived 状态变更审计：$1 = master|backup|fault
+STATE="${1:-unknown}"
+printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STATE" >> "{{ keepalived_state_log }}"
+exit 0

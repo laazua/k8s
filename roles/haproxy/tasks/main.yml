@@ -1,0 +1,29 @@
+---
+# =============================================================================
+# roles/haproxy — 入口
+#   haproxy:facts   → 从 inventory 的 [k8s_master] 推导后端成员
+#   haproxy:validate→ 成员/VIP/端口 fail fast（发生在任何落盘之前）
+#   haproxy:install → 安装包（可关）并断言二进制存在
+#   haproxy:config  → 渲染 haproxy.cfg（变更才 notify 重启）
+#   haproxy:service → enable/start（生产；测试 haproxy_manage_service=false）
+# =============================================================================
+
+- name: "haproxy:facts | 从 inventory 推导后端成员"
+  ansible.builtin.import_tasks: facts.yml
+  tags: [haproxy, "haproxy:facts"]
+
+- name: "haproxy:validate | 成员/端口 fail fast"
+  ansible.builtin.import_tasks: validate.yml
+  tags: [haproxy, "haproxy:validate"]
+
+- name: "haproxy:install | 安装 haproxy 并校验二进制"
+  ansible.builtin.import_tasks: install.yml
+  tags: [haproxy, "haproxy:install"]
+
+- name: "haproxy:config | 渲染 haproxy.cfg"
+  ansible.builtin.import_tasks: config.yml
+  tags: [haproxy, "haproxy:config"]
+
+- name: "haproxy:service | 启用并启动 haproxy"
+  ansible.builtin.import_tasks: service.yml
+  tags: [haproxy, "haproxy:service"]

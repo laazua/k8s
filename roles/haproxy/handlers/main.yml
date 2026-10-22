@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/haproxy — handlers
+#   只在 haproxy.cfg 内容变化时被 notify；测试环境（manage_service=false）
+#   会跳过 systemd 动作，仅证明「配置未变不会触发重启」。
+# =============================================================================
+
+- name: "haproxy:restart"
+  ansible.builtin.systemd:
+    name: "{{ haproxy_service_name }}"
+    state: restarted
+    daemon_reload: true
+  when: haproxy_manage_service | bool
+  tags: ["haproxy", "haproxy:restart"]

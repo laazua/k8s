@@ -1,0 +1,54 @@
+---
+# =============================================================================
+# haproxy:validate — fail fast（全部只读，发生在任何落盘之前）
+#   1) 成员清单非空（inventory 分组缺失/为空 → 明确报错）
+#   2) 每个成员有 name / address，端口合法
+#   3) 成员名唯一（HAProxy server 名必须唯一）
+#   4) 前端端口合法
+# =============================================================================
+
+- name: "haproxy:validate | 断言后端成员非空"
+  ansible.builtin.assert:
+    that:
+      - haproxy_resolved_members | length > 0
+    fail_msg: >-
+      HAProxy 后端成员为空：请检查 inventory 分组 '{{ haproxy_master_group }}'
+      （默认 k8s_master）是否有主机，或通过 haproxy_backend_servers 显式提供。
+    quiet: true
+  tags: ["haproxy", "haproxy:validate"]
+
+- name: "haproxy:validate | 断言成员字段完整"
+  ansible.builtin.assert:
+    that:
+      - item.name | default('') | length > 0
+      - item.address | default('') | length > 0
+      - (item.port | default(haproxy_backend_port) | int) > 0
+      - (item.port | default(haproxy_backend_port) | int) < 65536
+    fail_msg: >-
+      HAProxy 后端成员字段非法：{{ item }}。
+      每个成员必须包含非空 name/address，port 必须在 1-65535。
+    quiet: true
+  loop: "{{ haproxy_resolved_members }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+  tags: ["haproxy", "haproxy:validate"]
+
+- name: "haproxy:validate | 断言成员名唯一"
+  ansible.builtin.assert:
+    that:
+      - haproxy_resolved_members | map(attribute='name') | list | unique | length == haproxy_resolved_members | length
+    fail_msg: >-
+      HAProxy 后端成员名重复：{{ haproxy_resolved_members | map(attribute='name') | list | join(', ') }}。
+      每个后端必须有唯一的 server 名。
+    quiet: true
+  tags: ["haproxy", "haproxy:validate"]
+
+- name: "haproxy:validate | 断言前端端口合法"
+  ansible.builtin.assert:
+    that:
+      - (haproxy_lb_port | int) > 0
+      - (haproxy_lb_port | int) < 65536
+    fail_msg: >-
+      haproxy_lb_port='{{ haproxy_lb_port }}' 非法：必须在 1-65535。
+    quiet: true
+  tags: ["haproxy", "haproxy:validate"]

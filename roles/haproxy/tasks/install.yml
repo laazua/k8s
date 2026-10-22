@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# haproxy:install — 包安装（可关）与二进制存在性断言
+#   测试环境不安装进系统：haproxy_manage_package=false，
+#   并通过 haproxy_binary 指向解包后的真实二进制。
+# =============================================================================
+
+- name: "haproxy:install | 安装 haproxy 包"
+  ansible.builtin.package:
+    name: "{{ haproxy_package_name }}"
+    state: present
+  when: haproxy_manage_package | bool
+  tags: ["haproxy", "haproxy:install"]
+
+- name: "haproxy:install | 检查 haproxy 二进制"
+  ansible.builtin.stat:
+    path: "{{ haproxy_binary }}"
+  register: haproxy_binary_stat
+  tags: ["haproxy", "haproxy:install"]
+
+- name: "haproxy:install | 断言 haproxy 二进制存在且可执行"
+  ansible.builtin.assert:
+    that:
+      - haproxy_binary_stat.stat.exists
+      - haproxy_binary_stat.stat.executable
+    fail_msg: >-
+      haproxy 二进制不可用：{{ haproxy_binary }}。
+      请安装 haproxy 包，或设置 haproxy_binary 指向真实可执行文件。
+    quiet: true
+  tags: ["haproxy", "haproxy:install"]

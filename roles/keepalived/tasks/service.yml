@@ -1,0 +1,12 @@
+---
+# =============================================================================
+# keepalived:service — 生产启用/启动（测试 keepalived_manage_service=false）
+# =============================================================================
+
+- name: "keepalived:service | 启用并启动 keepalived"
+  ansible.builtin.systemd:
+    name: "{{ keepalived_service_name }}"
+    state: started
+    enabled: "{{ keepalived_service_enabled | bool }}"
+  when: keepalived_manage_service | bool
+  tags: ["keepalived", "keepalived:service"]

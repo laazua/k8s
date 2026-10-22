@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# haproxy:facts — 成员清单推导（inventory 是唯一事实来源）
+#   - 默认：groups[haproxy_master_group] 中每个主机一条后端；
+#     address 取 hostvars[host].ansible_host（回退 inventory_hostname）。
+#   - 显式覆盖：haproxy_backend_servers 非空时直接使用（元素为 dict）。
+# =============================================================================
+
+- name: "haproxy:facts | 初始化成员清单"
+  ansible.builtin.set_fact:
+    haproxy_resolved_members: []
+  tags: ["haproxy", "haproxy:facts"]
+
+- name: "haproxy:facts | 从 inventory 分组推导后端"
+  ansible.builtin.set_fact:
+    haproxy_resolved_members: >-
+      {{ haproxy_resolved_members + [{
+           'name': item,
+           'address': hostvars[item].ansible_host | default(item),
+           'port': haproxy_backend_port | int
+         }] }}
+  loop: "{{ groups[haproxy_master_group] | default([]) }}"
+  when: haproxy_backend_servers | length == 0
+  tags: ["haproxy", "haproxy:facts"]
+
+- name: "haproxy:facts | 使用显式后端清单"
+  ansible.builtin.set_fact:
+    haproxy_resolved_members: "{{ haproxy_backend_servers }}"
+  when: haproxy_backend_servers | length > 0
+  tags: ["haproxy", "haproxy:facts"]

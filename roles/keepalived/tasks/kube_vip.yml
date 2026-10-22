@@ -1,0 +1,21 @@
+---
+# =============================================================================
+# keepalived:kube-vip — ha_mode=kube-vip 的配置渲染
+#   ⚠ 本任务只做静态 Pod 清单渲染 + 前置校验；
+#     真实 VIP 漂移 / ARP / 选主行为**未验证**（见 contracts/T006.md §5）。
+#     镜像是否可拉取、kubelet 是否加载该静态 Pod 由实际集群环境决定。
+# =============================================================================
+
+- name: "keepalived:kube-vip | 创建静态 Pod 清单目录"
+  ansible.builtin.file:
+    path: "{{ kube_vip_manifest_dir }}"
+    state: directory
+    mode: "0755"
+  tags: ["keepalived", "keepalived:kube-vip"]
+
+- name: "keepalived:kube-vip | 渲染 kube-vip 静态 Pod 清单"
+  ansible.builtin.template:
+    src: kube-vip.yaml.j2
+    dest: "{{ kube_vip_manifest_file }}"
+    mode: "0644"
+  tags: ["keepalived", "keepalived:kube-vip"]

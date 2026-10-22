@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING          # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING        # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T006      # 例如 T001
-contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 2          # 当前任务已评估轮数
-next_action: "build T006"
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 0          # 当前任务已评估轮数
+next_action: "eval T006"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -31,4 +31,4 @@ defaults:
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
 blockers: []          # 阻塞项，每条一句话
-updated: "2026-10-21T16:05:00Z"   # ISO8601
+updated: "2026-10-22T02:50:54Z"   # ISO8601

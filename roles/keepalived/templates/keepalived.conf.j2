@@ -1,0 +1,44 @@
+# {{ ansible_managed | default('Ansible managed: roles/keepalived') }}
+# VIP 与成员清单来自全局变量/inventory；请勿手工修改。
+global_defs {
+    router_id {{ inventory_hostname }}
+    script_user root
+    enable_script_security
+}
+
+vrrp_script chk_haproxy {
+    script "{{ keepalived_check_script }}"
+    interval {{ keepalived_check_interval }}
+    timeout {{ keepalived_check_timeout }}
+    fall {{ keepalived_check_fall }}
+    rise {{ keepalived_check_rise }}
+}
+
+vrrp_instance {{ keepalived_instance_name }} {
+    state {{ keepalived_state }}
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_virtual_router_id }}
+    priority {{ keepalived_priority }}
+    advert_int {{ keepalived_advert_int }}
+{% if keepalived_nopreempt | bool %}
+    nopreempt
+{% endif %}
+    garp_master_delay {{ keepalived_garp_master_delay }}
+
+    authentication {
+        auth_type {{ keepalived_auth_type }}
+        auth_pass {{ keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ keepalived_vip }}/{{ keepalived_vip_prefix }}
+    }
+
+    track_script {
+        chk_haproxy
+    }
+
+    notify_master "{{ keepalived_notify_script }} master"
+    notify_backup "{{ keepalived_notify_script }} backup"
+    notify_fault "{{ keepalived_notify_script }} fault"
+}

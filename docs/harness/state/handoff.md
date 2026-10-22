@@ -5,6 +5,54 @@
 
 ---
 
+## [2026-10-22] Generator · T006 -> ready_for_eval（build）
+
+- 时间：2026-10-22
+- 角色：Generator
+- 当前任务：`T006`（控制面高可用 role · LB + VIP）
+- 本次做了什么：
+  - 新增 `roles/haproxy`：从 inventory `[k8s_master]` 推导后端，渲染 `haproxy.cfg`
+    （`mode tcp`、`balance roundrobin`、每 master `server ... check inter/fall/rise`、
+    connect/client/server timeouts），包安装/二进制断言、systemd 启停、变更才重启。
+  - 新增 `roles/keepalived`：VRRP VIP（priority 按 inventory 推导或 host var 覆盖）、
+    `virtual_router_id`/`advert_int`/PASS 认证、`virtual_ipaddress = k8s_vip`、
+    `track_script` 检查本机 haproxy pid、`notify_master/backup/fault` 写状态日志；
+    `ha_mode=kube-vip` 渲染静态 Pod 清单 + 前置校验（真实漂移未验证）。
+  - 新增 `tests/ha/`：`test_ha_role.sh`（160 断言）、`sandbox.yml`、`inventory.ini`、
+    `mock_backend.py`（TLS mock）、`provision_bins.sh`（dnf download + rpm2cpio 解包，不安装）、
+    `README.md`。用 **2 netns + veth** 真实运行 role 渲染的 keepalived/haproxy：
+    VIP 初始 ha1(150) → 停 ha1 keepalived → 漂移 ha2 → 停 ha1 haproxy → 恢复 → preempt 回切；
+    haproxy 12 次请求命中两个后端；杀一个后端后连续 5 次只落存活后端。
+  - `Makefile` 接入 `test` 与 `test-ha`；`do` 未改 `site.yml`（编排属 T007）。
+- 改了哪些文件：
+  `roles/haproxy/**`、`roles/keepalived/**`、`tests/ha/**`、`Makefile`、
+  `docs/harness/state/contracts/T006.md`、`state.yaml`、`roadmap.md`、本文件。
+- 怎么验证（给下一位）：
+  ```
+  tests/ha/test_ha_role.sh
+  make test-ha
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test   # 连跑两次
+  ```
+  若二进制缺失：`tests/ha/provision_bins.sh`，然后
+  `export HAPROXY_BIN=/tmp/opencode/t006root/usr/sbin/haproxy`
+  `export KEEPALIVED_BIN=/tmp/opencode/t006root/usr/sbin/keepalived`
+  `export LD_LIBRARY_PATH=/tmp/opencode/t006root/usr/lib64:/tmp/opencode/t006root/usr/lib64/mariadb`
+- 测试/幂等结果：
+  - 红：`tests/ha/test_ha_role.sh` → `PASS=38 FAIL=118`（role 不存在）。
+  - 绿：`PASS=160 FAIL=0`；第二次渲染 `changed=0`，运行中 haproxy/keepalived PID 不变。
+  - 全量门禁连跑两次均 exit 0，计数一致：T001 `27` / T002 `39` / T003 `59` /
+    T004 `100` / T005 `225` / **T006 `160`**，合计 **610**，`FAIL=0`。
+- 遗留问题 / 风险：
+  - netns 是单内核 L2 模拟，**不等价于多机 HA**；真实网卡/交换机、防火墙 112、云 ARP/BGP 未验证。
+    真机复验步骤见 `contracts/T006.md` §5.1。
+  - `kube-vip` 仅配置渲染 + 前置校验，**真实漂移/选主未验证**（§5.3）。
+  - systemd 与包安装未验证（测试用解包二进制直接启动；§5.2）。
+  - 同机 haproxy 与 apiserver 的 6443 端口协调留给 T007（§5.4）。
+  - T005-r2 MINOR 下传：**任何 etcd 重启编排必须 `serial: 1`**（§5.5）。
+- 下一步建议（`state.yaml.next_action`）：`eval T006`
+
+---
+
 ## [2026-10-21] Evaluator · T005 评估第 2 轮 → PASS（eval）
 
 - 时间：2026-10-21

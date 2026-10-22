@@ -1,0 +1,91 @@
+---
+# =============================================================================
+# keepalived:validate — fail fast（只读；先于任何落盘）
+#   1) ha_mode ∈ {keepalived, kube-vip}
+#   2) VIP 非空
+#   3) 网卡非空
+#   4) virtual_router_id ∈ 1..255
+#   5) priority ∈ 1..255
+#   6) advert_int 为正整数
+#   7) auth_pass（PASS 认证）1..8 字符
+#   8) kube-vip 模式：image 非空
+# =============================================================================
+
+- name: "keepalived:validate | 断言 ha_mode 合法"
+  ansible.builtin.assert:
+    that:
+      - ha_mode in ['keepalived', 'kube-vip']
+    fail_msg: >-
+      ha_mode='{{ ha_mode }}' 非法：仅支持 keepalived 或 kube-vip。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 VIP 已定义"
+  ansible.builtin.assert:
+    that:
+      - keepalived_vip | default('') | length > 0
+    fail_msg: >-
+      VIP 未定义：请设置 k8s_vip（或 keepalived_vip）为非空地址，
+      例如 inventory/group_vars 中的 k8s_vip: <VIP 地址>。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 VIP 网卡已定义"
+  ansible.builtin.assert:
+    that:
+      - keepalived_interface | default('') | length > 0
+    fail_msg: >-
+      VIP 网卡未定义：请设置 k8s_vip_interface（或 keepalived_interface），
+      例如 eth0 / ens192。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 virtual_router_id 在 1..255"
+  ansible.builtin.assert:
+    that:
+      - (keepalived_virtual_router_id | int) >= 1
+      - (keepalived_virtual_router_id | int) <= 255
+    fail_msg: >-
+      virtual_router_id='{{ keepalived_virtual_router_id }}' 非法：
+      VRRP virtual_router_id 必须在 1-255 之间，且同一 L2 内唯一。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 priority 在 1..255"
+  ansible.builtin.assert:
+    that:
+      - (keepalived_priority | int) >= 1
+      - (keepalived_priority | int) <= 255
+    fail_msg: >-
+      keepalived_priority='{{ keepalived_priority }}' 非法：必须在 1-255。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 advert_int 为正整数"
+  ansible.builtin.assert:
+    that:
+      - (keepalived_advert_int | int) > 0
+    fail_msg: >-
+      keepalived_advert_int='{{ keepalived_advert_int }}' 非法：必须为正整数秒。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | 断言 PASS 认证串长度为 1..8"
+  ansible.builtin.assert:
+    that:
+      - keepalived_auth_pass | length >= 1
+      - keepalived_auth_pass | length <= 8
+    fail_msg: >-
+      keepalived_auth_pass 长度必须为 1-8（VRRP PASS 认证限制）。
+    quiet: true
+  tags: ["keepalived", "keepalived:validate"]
+
+- name: "keepalived:validate | kube-vip 模式断言镜像已配置"
+  ansible.builtin.assert:
+    that:
+      - kube_vip_image | default('') | length > 0
+    fail_msg: >-
+      ha_mode=kube-vip 但 kube_vip_image 为空：请提供可访问的 kube-vip 镜像。
+    quiet: true
+  when: ha_mode == 'kube-vip'
+  tags: ["keepalived", "keepalived:validate"]

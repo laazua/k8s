@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# keepalived:scripts — 健康检查 / 通知脚本
+#   chk_haproxy.sh: 检查**本机** haproxy pid 文件中的进程是否存活。
+#                   不使用 pidof：同机多 netns/容器时 pidof 会误判。
+#   notify.sh:      把 master/backup/fault 状态追加到 state.log。
+#   幂等：内容不变 → changed=0。
+# =============================================================================
+
+- name: "keepalived:scripts | 创建脚本目录"
+  ansible.builtin.file:
+    path: "{{ keepalived_script_dir }}"
+    state: directory
+    mode: "0755"
+  tags: ["keepalived", "keepalived:scripts"]
+
+- name: "keepalived:scripts | 渲染 chk_haproxy.sh"
+  ansible.builtin.template:
+    src: chk_haproxy.sh.j2
+    dest: "{{ keepalived_check_script }}"
+    mode: "{{ keepalived_script_mode }}"
+  notify: "keepalived:restart"
+  tags: ["keepalived", "keepalived:scripts"]
+
+- name: "keepalived:scripts | 渲染 notify.sh"
+  ansible.builtin.template:
+    src: notify.sh.j2
+    dest: "{{ keepalived_notify_script }}"
+    mode: "{{ keepalived_script_mode }}"
+  notify: "keepalived:restart"
+  tags: ["keepalived", "keepalived:scripts"]

@@ -1,0 +1,79 @@
+---
+# =============================================================================
+# roles/keepalived — 控制面 VIP（默认 keepalived/VRRP；可切 kube-vip）
+#
+# 设计要点：
+#   1) VIP / 网卡 / master 分组来自全局变量（k8s_vip / k8s_vip_interface /
+#      k8s_master），role 内禁止硬编码地址或主机名。
+#   2) priority 可按 inventory 顺序推导（base - index*step），也可用 host var
+#      显式覆盖；advert_int / virtual_router_id / auth 全部可配。
+#   3) track_script 检查**本机** haproxy 的 pid 文件（不像 pidof 会看到其它
+#      netns/主机上的进程），haproxy 挂掉时本机进入 FAULT，不再持有 VIP。
+#   4) notify_master/backup/fault 写入状态日志，便于运维审计。
+#   5) `ha_mode=kube-vip` 只做配置渲染 + 前置校验；真实漂移/选主未在本任务验证
+#      （见 docs/harness/state/contracts/T006.md §5）。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试用；生产保持空串）---------------------------------------
+keepalived_root_prefix: ""
+
+# --- 模式 -------------------------------------------------------------------
+ha_mode: "{{ k8s_ha_mode | default('keepalived') }}"
+
+# --- VIP / 网卡 --------------------------------------------------------------
+keepalived_vip: "{{ k8s_vip | default('') }}"
+keepalived_vip_prefix: 32
+keepalived_interface: "{{ k8s_vip_interface | default('') }}"
+
+# --- VRRP 实例 ---------------------------------------------------------------
+keepalived_instance_name: k8s_apiserver
+keepalived_virtual_router_id: 51
+keepalived_state: BACKUP
+keepalived_advert_int: 1
+keepalived_auth_type: PASS
+keepalived_auth_pass: "k8s-ha"
+keepalived_nopreempt: false
+keepalived_garp_master_delay: 5
+
+# --- 优先级：base - inventory 序号 * step（host var 可显式覆盖）-------------
+keepalived_master_group: "{{ k8s_master_group | default('k8s_master') }}"
+keepalived_priority_base: 150
+keepalived_priority_step: 10
+keepalived_host_index: >-
+  {{ (groups[keepalived_master_group] | default([])).index(inventory_hostname)
+     if inventory_hostname in (groups[keepalived_master_group] | default([])) else 0 }}
+keepalived_priority: "{{ (keepalived_priority_base | int) - (keepalived_host_index | int) * (keepalived_priority_step | int) }}"
+
+# --- track_script / notify --------------------------------------------------
+keepalived_check_interval: 2
+keepalived_check_timeout: 2
+keepalived_check_fall: 2
+keepalived_check_rise: 2
+keepalived_haproxy_pid_file: "{{ haproxy_pid_file | default('/run/haproxy.pid') }}"
+
+# --- 落盘路径（可重定向）-----------------------------------------------------
+keepalived_config_dir: "{{ keepalived_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/keepalived"
+keepalived_config_file: "{{ keepalived_config_dir }}/keepalived.conf"
+keepalived_config_mode: "0644"
+keepalived_script_dir: "{{ keepalived_config_dir }}/scripts"
+keepalived_check_script: "{{ keepalived_script_dir }}/chk_haproxy.sh"
+keepalived_notify_script: "{{ keepalived_script_dir }}/notify.sh"
+keepalived_state_log: "{{ keepalived_config_dir }}/state.log"
+keepalived_script_mode: "0755"
+keepalived_pid_file: "/run/keepalived.pid"
+
+# --- kube-vip 分支（仅配置渲染；镜像/清单路径可配）--------------------------
+kube_vip_image: "ghcr.io/kube-vip/kube-vip:v0.8.0"
+kube_vip_manifest_dir: "{{ keepalived_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}/manifests"
+kube_vip_manifest_file: "{{ kube_vip_manifest_dir }}/kube-vip.yaml"
+kube_vip_config_map_name: kube-vip
+kube_vip_cp_enable: true
+kube_vip_leaderelection: true
+
+# --- 安装 / 服务（生产 true；共享开发机测试必须 false）-----------------------
+keepalived_manage_package: true
+keepalived_package_name: keepalived
+keepalived_binary: /usr/sbin/keepalived
+keepalived_manage_service: true
+keepalived_service_name: keepalived
+keepalived_service_enabled: true
