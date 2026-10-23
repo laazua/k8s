@@ -1,0 +1,91 @@
+---
+# =============================================================================
+# roles/kube-controller-manager — 默认变量
+#
+# 设计要点：
+#   1) kubeconfig 由 kube-apiserver role 的引导阶段生成
+#      （/etc/kubernetes/controller-manager.conf，CN=system:kube-controller-manager）；
+#      本 role 只消费并 fail-fast。
+#   2) 全量变量化：版本/URL/sha256/端口/地址/路径/flag。
+#   3) 安全默认：kubeconfig 客户端身份 + delegated authentication/authorization + leader election。
+#   4) systemd 副作用由 `kube_controller_manager_manage_service` 控制。
+# =============================================================================
+
+# --- 沙箱前缀 ---------------------------------------------------------------
+kube_controller_manager_root_prefix: ""
+
+# --- 版本 / 制品 ------------------------------------------------------------
+kube_controller_manager_version: "{{ k8s_version | default('1.31.0') }}"
+kube_controller_manager_arch: "{{ k8s_arch | default('amd64') }}"
+kube_controller_manager_download_url_base: "https://dl.k8s.io"
+kube_controller_manager_download_url: >-
+  {{ kube_controller_manager_download_url_base }}/v{{ kube_controller_manager_version }}/bin/linux/{{ kube_controller_manager_arch }}/kube-controller-manager
+kube_controller_manager_known_sha256:
+  "1.31.0": "9cf02d0ebf704ffdc727d0ad02e64bc5621f8013c4034b568bf7c939fe150490"
+kube_controller_manager_sha256: "{{ kube_controller_manager_known_sha256[kube_controller_manager_version] | default('') }}"
+kube_controller_manager_checksum_timeout: 30
+kube_controller_manager_artifact_dir: "{{ kube_controller_manager_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+kube_controller_manager_artifact_path: "{{ kube_controller_manager_artifact_dir }}/kube-controller-manager"
+kube_controller_manager_bin_dir: "{{ kube_controller_manager_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+kube_controller_manager_binary: "{{ kube_controller_manager_bin_dir }}/kube-controller-manager"
+kube_controller_manager_bin_mode: "0755"
+kube_controller_manager_root_owner: root
+kube_controller_manager_root_group: root
+kube_controller_manager_download_timeout: 120
+kube_controller_manager_download_retries: 3
+kube_controller_manager_download_retry_delay: 2
+
+# --- 目录 / unit ------------------------------------------------------------
+kube_controller_manager_config_dir: >-
+  {{ kube_controller_manager_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}
+kube_controller_manager_pki_dir: "{{ kube_controller_manager_config_dir }}/pki"
+kube_controller_manager_unit_dir: >-
+  {{ kube_controller_manager_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}
+kube_controller_manager_unit_name: kube-controller-manager.service
+kube_controller_manager_unit_path: >-
+  {{ kube_controller_manager_unit_dir }}/{{ kube_controller_manager_unit_name }}
+kube_controller_manager_unit_mode: "0644"
+
+# --- kubeconfig / 认证 ------------------------------------------------------
+kube_controller_manager_kubeconfig: "{{ kube_controller_manager_config_dir }}/controller-manager.conf"
+kube_controller_manager_client_ca_file: "{{ kube_controller_manager_pki_dir }}/ca.crt"
+kube_controller_manager_front_proxy_ca_file: "{{ kube_controller_manager_pki_dir }}/front-proxy-ca.crt"
+kube_controller_manager_requestheader_allowed_names: front-proxy-client
+kube_controller_manager_requestheader_extra_headers_prefix: X-Remote-Extra-
+kube_controller_manager_requestheader_group_headers: X-Remote-Group
+kube_controller_manager_requestheader_username_headers: X-Remote-User
+
+# --- 控制器配置 -------------------------------------------------------------
+kube_controller_manager_service_account_private_key_file: "{{ kube_controller_manager_pki_dir }}/sa.key"
+kube_controller_manager_root_ca_file: "{{ kube_controller_manager_pki_dir }}/ca.crt"
+kube_controller_manager_cluster_signing_cert_file: "{{ kube_controller_manager_pki_dir }}/ca.crt"
+kube_controller_manager_cluster_signing_key_file: "{{ kube_controller_manager_pki_dir }}/ca.key"
+kube_controller_manager_use_service_account_credentials: true
+kube_controller_manager_allocate_node_cidrs: false
+kube_controller_manager_leader_elect: true
+kube_controller_manager_bind_address: "127.0.0.1"
+kube_controller_manager_secure_port: 10257
+kube_controller_manager_profiling: false
+kube_controller_manager_log_level: 2
+kube_controller_manager_extra_args: []
+
+# --- 服务管理 ---------------------------------------------------------------
+kube_controller_manager_manage_service: true
+kube_controller_manager_service_enabled: true
+kube_controller_manager_service_state: started
+kube_controller_manager_service_type: simple
+kube_controller_manager_user: root
+kube_controller_manager_group: root
+kube_controller_manager_restart_sec: 5
+kube_controller_manager_limit_nofile: 65536
+kube_controller_manager_check_port_conflict: true
+
+# --- 必需文件清单（validate 用）--------------------------------------------
+kube_controller_manager_required_files:
+  - "{{ kube_controller_manager_kubeconfig }}"
+  - "{{ kube_controller_manager_client_ca_file }}"
+  - "{{ kube_controller_manager_front_proxy_ca_file }}"
+  - "{{ kube_controller_manager_service_account_private_key_file }}"
+  - "{{ kube_controller_manager_root_ca_file }}"
+  - "{{ kube_controller_manager_cluster_signing_cert_file }}"
+  - "{{ kube_controller_manager_cluster_signing_key_file }}"

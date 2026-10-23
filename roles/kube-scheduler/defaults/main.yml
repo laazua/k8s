@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# roles/kube-scheduler — 默认变量
+#
+# 设计要点：
+#   1) kubeconfig 由 kube-apiserver role 引导生成
+#      （/etc/kubernetes/scheduler.conf，CN=system:kube-scheduler）；本 role 只消费。
+#   2) 全量变量化：版本/URL/sha256/端口/地址/路径/flag。
+#   3) 安全默认：kubeconfig 客户端身份 + delegated authentication/authorization + leader election。
+#   4) systemd 副作用由 `kube_scheduler_manage_service` 控制。
+# =============================================================================
+
+# --- 沙箱前缀 ---------------------------------------------------------------
+kube_scheduler_root_prefix: ""
+
+# --- 版本 / 制品 ------------------------------------------------------------
+kube_scheduler_version: "{{ k8s_version | default('1.31.0') }}"
+kube_scheduler_arch: "{{ k8s_arch | default('amd64') }}"
+kube_scheduler_download_url_base: "https://dl.k8s.io"
+kube_scheduler_download_url: >-
+  {{ kube_scheduler_download_url_base }}/v{{ kube_scheduler_version }}/bin/linux/{{ kube_scheduler_arch }}/kube-scheduler
+kube_scheduler_known_sha256:
+  "1.31.0": "1e519991d41389bb885df59c19389afe847dad511992d009ff766bc7f3992f89"
+kube_scheduler_sha256: "{{ kube_scheduler_known_sha256[kube_scheduler_version] | default('') }}"
+kube_scheduler_checksum_timeout: 30
+kube_scheduler_artifact_dir: "{{ kube_scheduler_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+kube_scheduler_artifact_path: "{{ kube_scheduler_artifact_dir }}/kube-scheduler"
+kube_scheduler_bin_dir: "{{ kube_scheduler_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+kube_scheduler_binary: "{{ kube_scheduler_bin_dir }}/kube-scheduler"
+kube_scheduler_bin_mode: "0755"
+kube_scheduler_root_owner: root
+kube_scheduler_root_group: root
+kube_scheduler_download_timeout: 120
+kube_scheduler_download_retries: 3
+kube_scheduler_download_retry_delay: 2
+
+# --- 目录 / unit ------------------------------------------------------------
+kube_scheduler_config_dir: "{{ kube_scheduler_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}"
+kube_scheduler_pki_dir: "{{ kube_scheduler_config_dir }}/pki"
+kube_scheduler_unit_dir: "{{ kube_scheduler_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}"
+kube_scheduler_unit_name: kube-scheduler.service
+kube_scheduler_unit_path: "{{ kube_scheduler_unit_dir }}/{{ kube_scheduler_unit_name }}"
+kube_scheduler_unit_mode: "0644"
+
+# --- kubeconfig / 认证 ------------------------------------------------------
+kube_scheduler_kubeconfig: "{{ kube_scheduler_config_dir }}/scheduler.conf"
+kube_scheduler_client_ca_file: "{{ kube_scheduler_pki_dir }}/ca.crt"
+kube_scheduler_front_proxy_ca_file: "{{ kube_scheduler_pki_dir }}/front-proxy-ca.crt"
+kube_scheduler_requestheader_allowed_names: front-proxy-client
+kube_scheduler_requestheader_extra_headers_prefix: X-Remote-Extra-
+kube_scheduler_requestheader_group_headers: X-Remote-Group
+kube_scheduler_requestheader_username_headers: X-Remote-User
+
+# --- 调度器配置 -------------------------------------------------------------
+kube_scheduler_leader_elect: true
+kube_scheduler_bind_address: "127.0.0.1"
+kube_scheduler_secure_port: 10259
+kube_scheduler_profiling: false
+kube_scheduler_log_level: 2
+kube_scheduler_extra_args: []
+
+# --- 服务管理 ---------------------------------------------------------------
+kube_scheduler_manage_service: true
+kube_scheduler_service_enabled: true
+kube_scheduler_service_state: started
+kube_scheduler_service_type: simple
+kube_scheduler_user: root
+kube_scheduler_group: root
+kube_scheduler_restart_sec: 5
+kube_scheduler_limit_nofile: 65536
+kube_scheduler_check_port_conflict: true
+
+# --- 必需文件清单（validate 用）--------------------------------------------
+kube_scheduler_required_files:
+  - "{{ kube_scheduler_kubeconfig }}"
+  - "{{ kube_scheduler_client_ca_file }}"
+  - "{{ kube_scheduler_front_proxy_ca_file }}"

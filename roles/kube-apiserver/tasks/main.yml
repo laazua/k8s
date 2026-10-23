@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# roles/kube-apiserver — 入口
+#   facts      → 推导 etcd endpoints 与完整 flag 列表（无副作用）
+#   validate   → 地址/端口/安全默认/证书/SA/etcd/sha256/端口冲突（fail fast）
+#   binary     → download role 取官方二进制 + sha256 + 版本断言
+#   kubeconfigs→ 签发控制面客户端证书 + 渲染 admin/cm/scheduler kubeconfig
+#   config     → 渲染 systemd unit
+#   service    → 启用/启动（生产；测试 manage_service=false）
+# =============================================================================
+
+- name: "kube-apiserver:facts | 推导 endpoint 与启动参数"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["kube-apiserver", "kube-apiserver:facts"]
+
+- name: "kube-apiserver:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:binary | 安装官方二进制"
+  ansible.builtin.import_tasks: binary.yml
+  tags: ["kube-apiserver", "kube-apiserver:binary"]
+
+- name: "kube-apiserver:kubeconfigs | 控制面客户端证书与 kubeconfig"
+  ansible.builtin.import_tasks: kubeconfigs.yml
+  when: kube_apiserver_manage_kubeconfigs | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:config | systemd unit"
+  ansible.builtin.import_tasks: config.yml
+  tags: ["kube-apiserver", "kube-apiserver:config"]
+
+- name: "kube-apiserver:service | 启用并启动"
+  ansible.builtin.import_tasks: service.yml
+  tags: ["kube-apiserver", "kube-apiserver:service"]

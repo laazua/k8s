@@ -1,0 +1,18 @@
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ kube_controller_manager_service_type }}
+User={{ kube_controller_manager_user }}
+Group={{ kube_controller_manager_group }}
+ExecStart={{ kube_controller_manager_binary }} {{ kube_controller_manager_args | join(' ') }}
+Restart=always
+RestartSec={{ kube_controller_manager_restart_sec }}
+LimitNOFILE={{ kube_controller_manager_limit_nofile }}
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

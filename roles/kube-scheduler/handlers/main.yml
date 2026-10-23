@@ -1,0 +1,12 @@
+---
+# =============================================================================
+# roles/kube-scheduler — handlers
+# =============================================================================
+
+- name: "kube-scheduler:restart"
+  ansible.builtin.systemd:
+    name: "{{ kube_scheduler_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: kube_scheduler_manage_service | bool
+  tags: ["kube-scheduler", "kube-scheduler:service"]

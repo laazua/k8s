@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/kube-apiserver — handlers
+#   仅在 unit / 二进制变化时通知；`manage_service=false` 时 systemd 动作跳过。
+# =============================================================================
+
+- name: "kube-apiserver:restart"
+  ansible.builtin.systemd:
+    name: "{{ kube_apiserver_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: kube_apiserver_manage_service | bool
+  tags: ["kube-apiserver", "kube-apiserver:service"]

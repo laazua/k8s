@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# roles/kube-scheduler — 入口
+#   facts → validate → binary → config → service
+# =============================================================================
+
+- name: "kube-scheduler:facts | 推导启动参数"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["kube-scheduler", "kube-scheduler:facts"]
+
+- name: "kube-scheduler:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["kube-scheduler", "kube-scheduler:validate"]
+
+- name: "kube-scheduler:binary | 安装官方二进制"
+  ansible.builtin.import_tasks: binary.yml
+  tags: ["kube-scheduler", "kube-scheduler:binary"]
+
+- name: "kube-scheduler:config | systemd unit"
+  ansible.builtin.import_tasks: config.yml
+  tags: ["kube-scheduler", "kube-scheduler:config"]
+
+- name: "kube-scheduler:service | 启用并启动"
+  ansible.builtin.import_tasks: service.yml
+  tags: ["kube-scheduler", "kube-scheduler:service"]

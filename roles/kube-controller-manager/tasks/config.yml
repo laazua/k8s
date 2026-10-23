@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# kube-controller-manager:config — 渲染 systemd unit（内容不变 → changed=0）
+# =============================================================================
+
+- name: "kube-controller-manager:config | 确保 systemd unit 目录存在"
+  ansible.builtin.file:
+    path: "{{ kube_controller_manager_unit_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ kube_controller_manager_root_owner }}"
+    group: "{{ kube_controller_manager_root_group }}"
+  tags: ["kube-controller-manager", "kube-controller-manager:config"]
+
+- name: "kube-controller-manager:config | 渲染 {{ kube_controller_manager_unit_name }}"
+  ansible.builtin.template:
+    src: kube-controller-manager.service.j2
+    dest: "{{ kube_controller_manager_unit_path }}"
+    mode: "{{ kube_controller_manager_unit_mode }}"
+    owner: "{{ kube_controller_manager_root_owner }}"
+    group: "{{ kube_controller_manager_root_group }}"
+  notify: "kube-controller-manager:restart"
+  tags: ["kube-controller-manager", "kube-controller-manager:config"]

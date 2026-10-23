@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# kube-scheduler:config — 渲染 systemd unit（内容不变 → changed=0）
+# =============================================================================
+
+- name: "kube-scheduler:config | 确保 systemd unit 目录存在"
+  ansible.builtin.file:
+    path: "{{ kube_scheduler_unit_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ kube_scheduler_root_owner }}"
+    group: "{{ kube_scheduler_root_group }}"
+  tags: ["kube-scheduler", "kube-scheduler:config"]
+
+- name: "kube-scheduler:config | 渲染 {{ kube_scheduler_unit_name }}"
+  ansible.builtin.template:
+    src: kube-scheduler.service.j2
+    dest: "{{ kube_scheduler_unit_path }}"
+    mode: "{{ kube_scheduler_unit_mode }}"
+    owner: "{{ kube_scheduler_root_owner }}"
+    group: "{{ kube_scheduler_root_group }}"
+  notify: "kube-scheduler:restart"
+  tags: ["kube-scheduler", "kube-scheduler:config"]

@@ -1,0 +1,92 @@
+---
+# =============================================================================
+# kube-apiserver:facts — 唯一的参数推导处（无副作用）
+#   产出：
+#     kube_apiserver_etcd_endpoint_list  : 实际 etcd URL 列表
+#     kube_apiserver_resolved_sha256     : 制品 sha256（固定值或空 → binary 阶段拉侧车）
+#     kube_apiserver_args                : 渲染进 unit 的完整 flag 列表
+#   所有地址/端口/路径均来自变量；本文件不出现硬编码业务值。
+# =============================================================================
+
+- name: "kube-apiserver:facts | 初始化 etcd endpoint 容器"
+  ansible.builtin.set_fact:
+    kube_apiserver_etcd_derived: []
+    kube_apiserver_etcd_source: >-
+      {{ kube_apiserver_etcd_members if (kube_apiserver_etcd_members | length > 0)
+         else (groups[kube_apiserver_etcd_group] | default([])) }}
+  tags: ["kube-apiserver", "kube-apiserver:facts"]
+
+- name: "kube-apiserver:facts | 从 inventory / 显式成员推导 etcd endpoint"
+  ansible.builtin.set_fact:
+    kube_apiserver_etcd_derived: "{{ kube_apiserver_etcd_derived + [ _url ] }}"
+  vars:
+    _name: "{{ kube_apiserver_etcd_member.name | default(kube_apiserver_etcd_member) }}"
+    _hostvars: "{{ hostvars[_name] | default({}) }}"
+    _address: "{{ kube_apiserver_etcd_member.address | default(_hostvars.ansible_host | default(_name)) }}"
+    _port: >-
+      {{ kube_apiserver_etcd_member.client_port
+         | default(_hostvars.etcd_client_port | default(kube_apiserver_etcd_port)) }}
+    _url: "{{ kube_apiserver_etcd_scheme }}://{{ _address }}:{{ _port }}"
+  loop: "{{ kube_apiserver_etcd_source }}"
+  loop_control:
+    loop_var: kube_apiserver_etcd_member
+    label: "{{ kube_apiserver_etcd_member.name | default(kube_apiserver_etcd_member) }}"
+  tags: ["kube-apiserver", "kube-apiserver:facts"]
+
+- name: "kube-apiserver:facts | 汇总 etcd endpoint（显式 servers 优先）"
+  ansible.builtin.set_fact:
+    kube_apiserver_etcd_endpoint_list: >-
+      {{ kube_apiserver_etcd_servers if (kube_apiserver_etcd_servers | length > 0)
+         else kube_apiserver_etcd_derived }}
+    kube_apiserver_resolved_sha256: "{{ kube_apiserver_sha256 | default('') | string | trim | lower }}"
+  tags: ["kube-apiserver", "kube-apiserver:facts"]
+
+- name: "kube-apiserver:facts | 构建启动参数（基础集）"
+  ansible.builtin.set_fact:
+    kube_apiserver_args:
+      - "--advertise-address={{ kube_apiserver_advertise_address }}"
+      - "--bind-address={{ kube_apiserver_bind_address }}"
+      - "--secure-port={{ kube_apiserver_secure_port }}"
+      - "--etcd-servers={{ kube_apiserver_etcd_endpoint_list | join(',') }}"
+      - "--etcd-prefix={{ kube_apiserver_etcd_prefix }}"
+      - "--etcd-cafile={{ kube_apiserver_etcd_ca_file }}"
+      - "--etcd-certfile={{ kube_apiserver_etcd_cert_file }}"
+      - "--etcd-keyfile={{ kube_apiserver_etcd_key_file }}"
+      - "--tls-cert-file={{ kube_apiserver_tls_cert_file }}"
+      - "--tls-private-key-file={{ kube_apiserver_tls_private_key_file }}"
+      - "--client-ca-file={{ kube_apiserver_client_ca_file }}"
+      - "--kubelet-client-certificate={{ kube_apiserver_kubelet_client_certificate }}"
+      - "--kubelet-client-key={{ kube_apiserver_kubelet_client_key }}"
+      - "--kubelet-preferred-address-types={{ kube_apiserver_kubelet_preferred_address_types }}"
+      - "--authorization-mode={{ kube_apiserver_authorization_mode }}"
+      - "--anonymous-auth={{ kube_apiserver_anonymous_auth | bool | lower }}"
+      - "--service-account-key-file={{ kube_apiserver_service_account_key_file }}"
+      - "--service-account-signing-key-file={{ kube_apiserver_service_account_signing_key_file }}"
+      - "--service-account-issuer={{ kube_apiserver_service_account_issuer }}"
+      - "--service-account-max-token-expiration={{ kube_apiserver_service_account_max_token_expiration }}"
+      - "--service-cluster-ip-range={{ kube_apiserver_service_cluster_ip_range }}"
+      - "--allow-privileged={{ kube_apiserver_allow_privileged | bool | lower }}"
+      - "--requestheader-client-ca-file={{ kube_apiserver_requestheader_client_ca_file }}"
+      - "--requestheader-allowed-names={{ kube_apiserver_requestheader_allowed_names }}"
+      - "--requestheader-extra-headers-prefix={{ kube_apiserver_requestheader_extra_headers_prefix }}"
+      - "--requestheader-group-headers={{ kube_apiserver_requestheader_group_headers }}"
+      - "--requestheader-username-headers={{ kube_apiserver_requestheader_username_headers }}"
+      - "--proxy-client-cert-file={{ kube_apiserver_proxy_client_cert_file }}"
+      - "--proxy-client-key-file={{ kube_apiserver_proxy_client_key_file }}"
+      - "--profiling={{ kube_apiserver_profiling | bool | lower }}"
+      - "--v={{ kube_apiserver_log_level }}"
+  tags: ["kube-apiserver", "kube-apiserver:facts"]
+
+- name: "kube-apiserver:facts | 追加准入 / 审计 / 扩展参数"
+  ansible.builtin.set_fact:
+    kube_apiserver_args: >-
+      {{ kube_apiserver_args
+         + (['--enable-admission-plugins=' ~ (kube_apiserver_enable_admission_plugins | join(','))]
+            if (kube_apiserver_enable_admission_plugins | length > 0) else [])
+         + (['--disable-admission-plugins=' ~ (kube_apiserver_disable_admission_plugins | join(','))]
+            if (kube_apiserver_disable_admission_plugins | length > 0) else [])
+         + (['--enable-bootstrap-token-auth=true'] if kube_apiserver_enable_bootstrap_token_auth | bool else [])
+         + (['--audit-log-path=' ~ kube_apiserver_audit_log_path]
+            if (kube_apiserver_audit_log_path | string | length > 0) else [])
+         + kube_apiserver_extra_args }}
+  tags: ["kube-apiserver", "kube-apiserver:facts"]

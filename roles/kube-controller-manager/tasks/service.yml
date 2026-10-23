@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# kube-controller-manager:service — 生产服务管理（沙箱/共享开发机跳过）
+# =============================================================================
+
+- name: "kube-controller-manager:service | 启用并启动 {{ kube_controller_manager_unit_name }}"
+  ansible.builtin.systemd:
+    name: "{{ kube_controller_manager_unit_name }}"
+    enabled: "{{ kube_controller_manager_service_enabled }}"
+    state: "{{ kube_controller_manager_service_state }}"
+    daemon_reload: true
+  when: kube_controller_manager_manage_service | bool
+  tags: ["kube-controller-manager", "kube-controller-manager:service"]

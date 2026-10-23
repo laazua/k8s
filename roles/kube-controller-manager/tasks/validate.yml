@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# kube-controller-manager:validate — fail fast（只读）
+#   1) kubeconfig / CA / SA / 签名证书齐全（由 kube-apiserver role 引导生成）
+#   2) 端口合法 + 未被其它进程占用（本组件自身进程视为幂等）
+# =============================================================================
+
+- name: "kube-controller-manager:validate | 断言地址/端口合法"
+  ansible.builtin.assert:
+    that:
+      - kube_controller_manager_bind_address | string | length > 0
+      - kube_controller_manager_secure_port | int >= 1
+      - kube_controller_manager_secure_port | int <= 65535
+    fail_msg: >-
+      kube-controller-manager 地址/端口非法：bind={{ kube_controller_manager_bind_address | default('(空)') }}，
+      secure-port={{ kube_controller_manager_secure_port | default('(空)') }}。
+    quiet: true
+  tags: ["kube-controller-manager", "kube-controller-manager:validate"]
+
+- name: "kube-controller-manager:validate | 检查 kubeconfig/证书/密钥"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ kube_controller_manager_required_files }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kube_controller_manager_required_stat
+  tags: ["kube-controller-manager", "kube-controller-manager:validate"]
+
+- name: "kube-controller-manager:validate | 断言依赖文件齐全"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      缺少 kube-controller-manager 依赖文件：{{ item.item }}。
+      需要 kube-apiserver role 先渲染 kubeconfig（CN=system:kube-controller-manager）
+      以及 T004 PKI 的 CA/SA 文件。
+    quiet: true
+  loop: "{{ kube_controller_manager_required_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["kube-controller-manager", "kube-controller-manager:validate"]
+
+- name: "kube-controller-manager:validate | 检查 secure-port 占用（识别本组件自身进程）"
+  ansible.builtin.shell: |
+    set -o pipefail
+    port={{ kube_controller_manager_secure_port }}
+    listening=$(ss -ltnH "sport = :${port}" 2>/dev/null | wc -l)
+    if [ "$listening" -eq 0 ]; then echo FREE; exit 0; fi
+    pids=$(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+    if [ -z "$pids" ]; then echo "UNKNOWN"; exit 0; fi
+    out=""
+    for p in $pids; do
+      cmd=$(tr '\0' ' ' <"/proc/${p}/cmdline" 2>/dev/null || true)
+      case "$cmd" in
+        *{{ kube_controller_manager_binary }}*) out="${out}OURS:${p} " ;;
+        *) out="${out}FOREIGN:${p}:${cmd} " ;;
+      esac
+    done
+    echo "$out"
+  args:
+    executable: /bin/bash
+  register: kube_controller_manager_port_state
+  changed_when: false
+  check_mode: false
+  when: kube_controller_manager_check_port_conflict | bool
+  tags: ["kube-controller-manager", "kube-controller-manager:validate"]
+
+- name: "kube-controller-manager:validate | 断言 secure-port 未被其它进程占用"
+  ansible.builtin.assert:
+    that:
+      - "'FOREIGN' not in kube_controller_manager_port_state.stdout"
+      - "'UNKNOWN' not in kube_controller_manager_port_state.stdout"
+    fail_msg: >-
+      secure-port {{ kube_controller_manager_secure_port }} 已被其它进程占用：
+      {{ kube_controller_manager_port_state.stdout | default('') | trim }}。
+    quiet: true
+  when: kube_controller_manager_check_port_conflict | bool
+  tags: ["kube-controller-manager", "kube-controller-manager:validate"]

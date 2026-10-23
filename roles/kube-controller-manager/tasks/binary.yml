@@ -1,0 +1,123 @@
+---
+# =============================================================================
+# kube-controller-manager:binary — 官方二进制（强制 sha256 / 复用 download role）
+# =============================================================================
+
+- name: "kube-controller-manager:binary | 创建制品与安装目录"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ kube_controller_manager_root_owner }}"
+    group: "{{ kube_controller_manager_root_group }}"
+  loop:
+    - "{{ kube_controller_manager_artifact_dir }}"
+    - "{{ kube_controller_manager_bin_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 检查既有制品"
+  ansible.builtin.stat:
+    path: "{{ kube_controller_manager_artifact_path }}"
+  register: kube_controller_manager_artifact_stat
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 初始化已解析 sha256"
+  ansible.builtin.set_fact:
+    kube_resolved_sha256: "{{ kube_controller_manager_sha256 | default('') | string | trim | lower }}"
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 断言既有制品必须显式固定 sha256"
+  ansible.builtin.assert:
+    that:
+      - kube_resolved_sha256 | length == 64
+    fail_msg: >-
+      制品 {{ kube_controller_manager_artifact_path }} 已存在，但未提供 kube_controller_manager_sha256。
+      离线部署必须显式固定哈希；请设置 kube_controller_manager_sha256 或使用已知版本。
+    quiet: true
+  when:
+    - kube_resolved_sha256 | length == 0
+    - kube_controller_manager_artifact_stat.stat.exists
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 读取官方 sha256 侧车（未固定且制品缺失时）"
+  ansible.builtin.uri:
+    url: "{{ kube_controller_manager_download_url }}.sha256"
+    return_content: true
+    status_code: 200
+    timeout: "{{ kube_controller_manager_checksum_timeout }}"
+  register: kube_controller_manager_checksum_response
+  when:
+    - kube_resolved_sha256 | length == 0
+    - not kube_controller_manager_artifact_stat.stat.exists
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 解析并校验官方 sha256"
+  ansible.builtin.set_fact:
+    kube_resolved_sha256: "{{ (kube_controller_manager_checksum_response.content | default('') | trim | lower).split(' ')[0] }}"
+  when:
+    - kube_resolved_sha256 | length == 0
+    - not kube_controller_manager_artifact_stat.stat.exists
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 断言 sha256 合法"
+  ansible.builtin.assert:
+    that:
+      - kube_resolved_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      无法获取合法 sha256（'{{ kube_resolved_sha256 }}'）。
+      请显式设置 kube_controller_manager_sha256。
+    quiet: true
+  when: kube_resolved_sha256 | length > 0
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 下载官方二进制"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ kube_controller_manager_root_prefix }}"
+    download_cache_dir: "{{ kube_controller_manager_artifact_dir }}"
+    download_file_owner: "{{ kube_controller_manager_root_owner }}"
+    download_file_group: "{{ kube_controller_manager_root_group }}"
+    download_timeout: "{{ kube_controller_manager_download_timeout }}"
+    download_retries: "{{ kube_controller_manager_download_retries }}"
+    download_retry_delay: "{{ kube_controller_manager_download_retry_delay }}"
+    download_items:
+      - name: kube-controller-manager
+        url: "{{ kube_controller_manager_download_url }}"
+        sha256: "{{ kube_resolved_sha256 }}"
+        dest: "{{ kube_controller_manager_artifact_path }}"
+        mode: "0644"
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 安装二进制"
+  ansible.builtin.copy:
+    src: "{{ kube_controller_manager_artifact_path }}"
+    dest: "{{ kube_controller_manager_binary }}"
+    remote_src: true
+    mode: "{{ kube_controller_manager_bin_mode }}"
+    owner: "{{ kube_controller_manager_root_owner }}"
+    group: "{{ kube_controller_manager_root_group }}"
+  notify: "kube-controller-manager:restart"
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 读取已安装版本"
+  ansible.builtin.command:
+    cmd: "{{ kube_controller_manager_binary }} --version"
+  register: kube_controller_manager_version_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]
+
+- name: "kube-controller-manager:binary | 断言版本一致"
+  ansible.builtin.assert:
+    that:
+      - kube_controller_manager_version_check.rc == 0
+      - ("v" ~ kube_controller_manager_version) in (kube_controller_manager_version_check.stdout | default(''))
+    fail_msg: >-
+      已安装 kube-controller-manager 版本与 kube_controller_manager_version={{ kube_controller_manager_version }}
+      不一致：{{ kube_controller_manager_version_check.stdout | default(kube_controller_manager_version_check.stderr | default('(无法执行 --version)')) }}。
+    quiet: true
+  tags: ["kube-controller-manager", "kube-controller-manager:binary"]

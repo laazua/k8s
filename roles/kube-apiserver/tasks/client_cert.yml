@@ -1,0 +1,149 @@
+---
+# =============================================================================
+# kube-apiserver:client_cert — 签发一张控制面客户端证书（kubernetes-ca）
+#   输入：kube_apiserver_client_cert { name, common_name, organization, cert, key }
+#   幂等：证书有效（不在续期窗口）且与私钥匹配 → 全部 skip（changed=0）
+#   自愈：缺失 / 损坏 / 进入续期窗口 / 证书与私钥不匹配 → 重建（不匹配时同时轮换私钥）
+#   原子性：先签进构建目录，再 copy 到最终路径（失败不破坏既有证书）
+# =============================================================================
+
+- name: "kube-apiserver:client_cert | 检查 {{ kube_apiserver_client_cert.name }} 证书/私钥"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kube_apiserver_client_cert.cert }}"
+    - "{{ kube_apiserver_client_cert.key }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kube_apiserver_client_cert_stat
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 校验 {{ kube_apiserver_client_cert.name }} 证书有效期"
+  ansible.builtin.command:
+    cmd: >-
+      openssl x509 -in {{ kube_apiserver_client_cert.cert }} -noout
+      -checkend {{ kube_apiserver_client_cert_renew_before_seconds }}
+  register: kube_apiserver_client_cert_validity
+  changed_when: false
+  failed_when: false
+  when: kube_apiserver_client_cert_stat.results[0].stat.exists
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 读取 {{ kube_apiserver_client_cert.name }} 证书公钥"
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ kube_apiserver_client_cert.cert }} -noout -pubkey"
+  register: kube_apiserver_client_cert_pubkey
+  changed_when: false
+  failed_when: false
+  when:
+    - kube_apiserver_client_cert_stat.results[0].stat.exists
+    - kube_apiserver_client_cert_stat.results[1].stat.exists
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 读取 {{ kube_apiserver_client_cert.name }} 私钥公钥"
+  ansible.builtin.command:
+    cmd: "openssl pkey -in {{ kube_apiserver_client_cert.key }} -pubout"
+  register: kube_apiserver_client_cert_key_pubkey
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - kube_apiserver_client_cert_stat.results[0].stat.exists
+    - kube_apiserver_client_cert_stat.results[1].stat.exists
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 判定 {{ kube_apiserver_client_cert.name }} 重建需求"
+  ansible.builtin.set_fact:
+    kube_apiserver_client_cert_needs_key: >-
+      {{ not kube_apiserver_client_cert_stat.results[1].stat.exists
+         or ((kube_apiserver_client_cert_pubkey.rc | default(1)) == 0
+             and (kube_apiserver_client_cert_key_pubkey.rc | default(1)) == 0
+             and (kube_apiserver_client_cert_pubkey.stdout | default('') | trim)
+                 != (kube_apiserver_client_cert_key_pubkey.stdout | default('') | trim)) }}
+    kube_apiserver_client_cert_needs_issue: >-
+      {{ not kube_apiserver_client_cert_stat.results[0].stat.exists
+         or not kube_apiserver_client_cert_stat.results[1].stat.exists
+         or (kube_apiserver_client_cert_validity.rc | default(1)) != 0
+         or (kube_apiserver_client_cert_stat.results[0].stat.exists
+             and kube_apiserver_client_cert_stat.results[1].stat.exists
+             and ((kube_apiserver_client_cert_pubkey.rc | default(1)) != 0
+                  or (kube_apiserver_client_cert_key_pubkey.rc | default(1)) != 0
+                  or (kube_apiserver_client_cert_pubkey.stdout | default('') | trim)
+                     != (kube_apiserver_client_cert_key_pubkey.stdout | default('') | trim))) }}
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 准备构建目录（{{ kube_apiserver_client_cert_build_dir }}）"
+  ansible.builtin.file:
+    path: "{{ kube_apiserver_client_cert_build_dir }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ kube_apiserver_root_owner }}"
+    group: "{{ kube_apiserver_root_group }}"
+  when: (kube_apiserver_client_cert_needs_key | bool) or (kube_apiserver_client_cert_needs_issue | bool)
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 生成 {{ kube_apiserver_client_cert.name }} 私钥"
+  ansible.builtin.command:
+    cmd: >-
+      openssl genpkey -algorithm {{ kube_apiserver_key_algorithm }}
+      -pkeyopt {{ kube_apiserver_key_generation_opt }}
+      -out {{ kube_apiserver_client_cert.key }}
+  when: kube_apiserver_client_cert_needs_key | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 强制 {{ kube_apiserver_client_cert.name }} 私钥权限 {{ kube_apiserver_key_mode }}"
+  ansible.builtin.file:
+    path: "{{ kube_apiserver_client_cert.key }}"
+    mode: "{{ kube_apiserver_key_mode }}"
+    owner: "{{ kube_apiserver_root_owner }}"
+    group: "{{ kube_apiserver_root_group }}"
+  when: kube_apiserver_client_cert_needs_key | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 渲染 {{ kube_apiserver_client_cert.name }} X.509 扩展"
+  ansible.builtin.copy:
+    dest: "{{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.ext"
+    content: |
+      [v3_ext]
+      basicConstraints = critical,CA:FALSE
+      keyUsage = critical,digitalSignature,keyEncipherment
+      extendedKeyUsage = clientAuth
+    mode: "0600"
+  when: kube_apiserver_client_cert_needs_issue | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 生成 {{ kube_apiserver_client_cert.name }} CSR"
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -new -key {{ kube_apiserver_client_cert.key }}
+      -out {{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.csr
+      -subj "/CN={{ kube_apiserver_client_cert.common_name }}/O={{ kube_apiserver_client_cert.organization }}"
+      -{{ kube_apiserver_digest }}
+  when: kube_apiserver_client_cert_needs_issue | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 由 kubernetes-ca 签发 {{ kube_apiserver_client_cert.name }}"
+  ansible.builtin.command:
+    cmd: >-
+      openssl x509 -req
+      -in {{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.csr
+      -CA {{ kube_apiserver_ca_file }} -CAkey {{ kube_apiserver_ca_key_file }}
+      -CAcreateserial -CAserial {{ kube_apiserver_client_cert_build_dir }}/kubernetes-ca.srl
+      -out {{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.crt
+      -days {{ kube_apiserver_client_cert_days }}
+      -{{ kube_apiserver_digest }}
+      -extfile {{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.ext
+      -extensions v3_ext
+  when: kube_apiserver_client_cert_needs_issue | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]
+
+- name: "kube-apiserver:client_cert | 安装 {{ kube_apiserver_client_cert.name }} 证书（{{ kube_apiserver_cert_mode }}）"
+  ansible.builtin.copy:
+    src: "{{ kube_apiserver_client_cert_build_dir }}/{{ kube_apiserver_client_cert.name }}.crt"
+    dest: "{{ kube_apiserver_client_cert.cert }}"
+    remote_src: true
+    mode: "{{ kube_apiserver_cert_mode }}"
+    owner: "{{ kube_apiserver_root_owner }}"
+    group: "{{ kube_apiserver_root_group }}"
+  when: kube_apiserver_client_cert_needs_issue | bool
+  tags: ["kube-apiserver", "kube-apiserver:kubeconfig"]

@@ -1,0 +1,195 @@
+---
+# =============================================================================
+# roles/kube-apiserver — 默认变量
+#
+# 设计要点：
+#   1) 版本/架构/URL/sha256/端口/地址/路径/flag 全部可配置；tasks/templates 禁止硬编码。
+#   2) 制品复用 download role（URL + 强制 sha256 + 代理 + 本地缓存）。
+#   3) 安全默认：--anonymous-auth=false、--authorization-mode=RBAC,Node、
+#      TLS 双向客户端 CA、ServiceAccount 签名密钥。
+#   4) 控制面引导：签发 controller-manager / scheduler / kubelet-client 客户端证书，
+#      并渲染 admin/controller-manager/scheduler 三份 kubeconfig（T004 README 划归 T007）。
+#   5) 沙箱前缀 `kube_apiserver_root_prefix`（生产留空）把 unit/配置/二进制整体重定向。
+#   6) systemd 副作用由 `kube_apiserver_manage_service` 控制；共享开发机/测试置 false。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+kube_apiserver_root_prefix: ""
+
+# --- 版本 / 架构 / 官方制品 ---------------------------------------------------
+kube_apiserver_version: "{{ k8s_version | default('1.31.0') }}"
+kube_apiserver_arch: "{{ k8s_arch | default('amd64') }}"
+kube_apiserver_download_url_base: "https://dl.k8s.io"
+kube_apiserver_download_url: >-
+  {{ kube_apiserver_download_url_base }}/v{{ kube_apiserver_version }}/bin/linux/{{ kube_apiserver_arch }}/kube-apiserver
+# 已知版本的官方 sha256（离线/可复现）；换版本时若为空则自动读取官方 .sha256 侧车。
+kube_apiserver_known_sha256:
+  "1.31.0": "9016f6048ff9827ef58934e98f28a8026634c10b4e6fcc1df49451038a23a9aa"
+kube_apiserver_sha256: "{{ kube_apiserver_known_sha256[kube_apiserver_version] | default('') }}"
+kube_apiserver_checksum_timeout: 30
+kube_apiserver_artifact_dir: "{{ kube_apiserver_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+kube_apiserver_artifact_path: "{{ kube_apiserver_artifact_dir }}/kube-apiserver"
+kube_apiserver_bin_dir: "{{ kube_apiserver_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+kube_apiserver_binary: "{{ kube_apiserver_bin_dir }}/kube-apiserver"
+kube_apiserver_bin_mode: "0755"
+kube_apiserver_root_owner: root
+kube_apiserver_root_group: root
+kube_apiserver_download_timeout: 120
+kube_apiserver_download_retries: 3
+kube_apiserver_download_retry_delay: 2
+
+# --- 目录 / unit -------------------------------------------------------------
+kube_apiserver_config_dir: "{{ kube_apiserver_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}"
+kube_apiserver_pki_dir: "{{ kube_apiserver_config_dir }}/pki"
+kube_apiserver_unit_dir: "{{ kube_apiserver_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}"
+kube_apiserver_unit_name: kube-apiserver.service
+kube_apiserver_unit_path: "{{ kube_apiserver_unit_dir }}/{{ kube_apiserver_unit_name }}"
+kube_apiserver_unit_mode: "0644"
+kube_apiserver_config_dir_mode: "0755"
+
+# --- 监听 / 对外地址 ---------------------------------------------------------
+kube_apiserver_bind_address: "0.0.0.0"
+# 生产必须可从 inventory 推导；无法推导时 fail-fast（validate）
+kube_apiserver_advertise_address: >-
+  {{ ansible_host | default(ansible_default_ipv4.address | default('')) }}
+kube_apiserver_secure_port: "{{ k8s_apiserver_port | default(6443) }}"
+# kubeconfig 的 server：默认走 VIP（HA 前置 LB）；单机可覆盖
+kube_apiserver_kubeconfig_server: >-
+  https://{{ k8s_vip if (k8s_vip | default('') | string | length > 0) else kube_apiserver_advertise_address }}:{{ k8s_apiserver_port | default(kube_apiserver_secure_port) }}
+kube_apiserver_kubeconfig_cluster_name: kubernetes
+
+# --- etcd 连接（唯一来源：显式 servers > inventory 分组 + 每主机端口）---------
+kube_apiserver_etcd_group: etcd
+kube_apiserver_etcd_scheme: https
+kube_apiserver_etcd_port: "{{ etcd_port_client | default(2379) }}"
+kube_apiserver_etcd_servers: []       # 显式完整 URL 列表（优先）
+kube_apiserver_etcd_members: []       # 显式成员名/地址列表（其次）；空 = 取 inventory 分组
+kube_apiserver_etcd_prefix: /registry
+kube_apiserver_etcd_ca_file: "{{ kube_apiserver_pki_dir }}/etcd/ca.crt"
+kube_apiserver_etcd_cert_file: "{{ kube_apiserver_pki_dir }}/apiserver-etcd-client.crt"
+kube_apiserver_etcd_key_file: "{{ kube_apiserver_pki_dir }}/apiserver-etcd-client.key"
+
+# --- TLS / 认证 --------------------------------------------------------------
+kube_apiserver_tls_cert_file: "{{ kube_apiserver_pki_dir }}/apiserver.crt"
+kube_apiserver_tls_private_key_file: "{{ kube_apiserver_pki_dir }}/apiserver.key"
+kube_apiserver_client_ca_file: "{{ kube_apiserver_pki_dir }}/ca.crt"
+kube_apiserver_kubelet_client_certificate: "{{ kube_apiserver_pki_dir }}/apiserver-kubelet-client.crt"
+kube_apiserver_kubelet_client_key: "{{ kube_apiserver_pki_dir }}/apiserver-kubelet-client.key"
+kube_apiserver_kubelet_preferred_address_types: "InternalIP,ExternalIP,Hostname"
+# 聚合层 / 前端代理（T004 产出 front-proxy-ca 与 front-proxy-client）
+kube_apiserver_front_proxy_ca_file: "{{ kube_apiserver_pki_dir }}/front-proxy-ca.crt"
+kube_apiserver_proxy_client_cert_file: "{{ kube_apiserver_pki_dir }}/front-proxy-client.crt"
+kube_apiserver_proxy_client_key_file: "{{ kube_apiserver_pki_dir }}/front-proxy-client.key"
+kube_apiserver_requestheader_client_ca_file: "{{ kube_apiserver_front_proxy_ca_file }}"
+kube_apiserver_requestheader_allowed_names: front-proxy-client
+kube_apiserver_requestheader_extra_headers_prefix: X-Remote-Extra-
+kube_apiserver_requestheader_group_headers: X-Remote-Group
+kube_apiserver_requestheader_username_headers: X-Remote-User
+
+# --- 授权 / 准入 / 安全默认 --------------------------------------------------
+kube_apiserver_authorization_mode: "RBAC,Node"
+kube_apiserver_anonymous_auth: false
+# 强制安全默认：开启时 validate 拒绝「不含 RBAC」或「匿名认证=true」的配置
+kube_apiserver_require_secure_defaults: true
+kube_apiserver_profiling: false
+kube_apiserver_enable_admission_plugins: ["NodeRestriction"]
+kube_apiserver_disable_admission_plugins: []
+kube_apiserver_enable_bootstrap_token_auth: true
+
+# --- ServiceAccount 签名 -----------------------------------------------------
+kube_apiserver_service_account_key_file: "{{ kube_apiserver_pki_dir }}/sa.pub"
+kube_apiserver_service_account_signing_key_file: "{{ kube_apiserver_pki_dir }}/sa.key"
+kube_apiserver_service_account_issuer: "https://kubernetes.default.svc.{{ k8s_dns_domain | default('cluster.local') }}"
+# 注意：该 flag 是 time.Duration，必须带单位（8760h = 365 天）
+kube_apiserver_service_account_max_token_expiration: "8760h"
+
+# --- 网络 / 其他参数 ---------------------------------------------------------
+kube_apiserver_service_cluster_ip_range: "{{ k8s_service_cidr | default('10.96.0.0/12') }}"
+kube_apiserver_allow_privileged: true
+kube_apiserver_log_level: 2
+kube_apiserver_audit_log_path: ""
+kube_apiserver_extra_args: []
+
+# --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
+kube_apiserver_manage_service: true
+kube_apiserver_service_enabled: true
+kube_apiserver_service_state: started
+kube_apiserver_service_type: simple
+kube_apiserver_user: root
+kube_apiserver_group: root
+kube_apiserver_restart_sec: 5
+kube_apiserver_limit_nofile: 65536
+kube_apiserver_check_port_conflict: true
+
+# --- 控制面客户端证书（T004 README：控制面组件客户端证书由 T007 负责）--------
+kube_apiserver_manage_kubeconfigs: true
+kube_apiserver_client_cert_build_dir: "{{ kube_apiserver_root_prefix }}/var/cache/kubernetes-kubeconfig"
+kube_apiserver_client_cert_cleanup_build_dir: true
+kube_apiserver_client_cert_days: 3650
+kube_apiserver_client_cert_renew_before_seconds: 2592000
+kube_apiserver_key_type: "{{ pki_key_type | default('RSA') }}"
+kube_apiserver_key_size: "{{ pki_key_size | default(2048) }}"
+kube_apiserver_key_algorithm: "{{ pki_key_algorithm | default('RSA') }}"
+kube_apiserver_key_generation_opt: "{{ pki_key_generation_opt | default('rsa_keygen_bits:2048') }}"
+kube_apiserver_digest: "{{ pki_digest | default('sha256') }}"
+kube_apiserver_ca_file: "{{ kube_apiserver_pki_dir }}/ca.crt"
+kube_apiserver_ca_key_file: "{{ kube_apiserver_pki_dir }}/ca.key"
+kube_apiserver_key_mode: "0600"
+kube_apiserver_cert_mode: "0644"
+
+kube_apiserver_client_certs:
+  - name: kube-controller-manager
+    common_name: system:kube-controller-manager
+    organization: system:kube-controller-manager
+    cert: "{{ kube_apiserver_pki_dir }}/kube-controller-manager.crt"
+    key: "{{ kube_apiserver_pki_dir }}/kube-controller-manager.key"
+  - name: kube-scheduler
+    common_name: system:kube-scheduler
+    organization: system:kube-scheduler
+    cert: "{{ kube_apiserver_pki_dir }}/kube-scheduler.crt"
+    key: "{{ kube_apiserver_pki_dir }}/kube-scheduler.key"
+  - name: apiserver-kubelet-client
+    common_name: kube-apiserver-kubelet-client
+    organization: system:masters
+    cert: "{{ kube_apiserver_pki_dir }}/apiserver-kubelet-client.crt"
+    key: "{{ kube_apiserver_pki_dir }}/apiserver-kubelet-client.key"
+
+# --- kubeconfig 清单 ---------------------------------------------------------
+kube_apiserver_admin_kubeconfig: "{{ kube_apiserver_config_dir }}/admin.conf"
+kube_apiserver_controller_manager_kubeconfig: "{{ kube_apiserver_config_dir }}/controller-manager.conf"
+kube_apiserver_scheduler_kubeconfig: "{{ kube_apiserver_config_dir }}/scheduler.conf"
+kube_apiserver_kubeconfig_mode: "0600"
+kube_apiserver_kubeconfig_owner: "{{ kube_apiserver_root_owner }}"
+kube_apiserver_kubeconfig_group: "{{ kube_apiserver_root_group }}"
+kube_apiserver_kubeconfigs:
+  - name: admin
+    user: "{{ pki_admin_common_name | default('kubernetes-admin') }}"
+    path: "{{ kube_apiserver_admin_kubeconfig }}"
+    cert: "{{ kube_apiserver_pki_dir }}/admin.crt"
+    key: "{{ kube_apiserver_pki_dir }}/admin.key"
+  - name: controller-manager
+    user: system:kube-controller-manager
+    path: "{{ kube_apiserver_controller_manager_kubeconfig }}"
+    cert: "{{ kube_apiserver_pki_dir }}/kube-controller-manager.crt"
+    key: "{{ kube_apiserver_pki_dir }}/kube-controller-manager.key"
+  - name: scheduler
+    user: system:kube-scheduler
+    path: "{{ kube_apiserver_scheduler_kubeconfig }}"
+    cert: "{{ kube_apiserver_pki_dir }}/kube-scheduler.crt"
+    key: "{{ kube_apiserver_pki_dir }}/kube-scheduler.key"
+
+# --- 必需文件清单（validate 用；全部来自变量，不写死）-----------------------
+kube_apiserver_required_files:
+  - "{{ kube_apiserver_tls_cert_file }}"
+  - "{{ kube_apiserver_tls_private_key_file }}"
+  - "{{ kube_apiserver_client_ca_file }}"
+  - "{{ kube_apiserver_etcd_ca_file }}"
+  - "{{ kube_apiserver_etcd_cert_file }}"
+  - "{{ kube_apiserver_etcd_key_file }}"
+  - "{{ kube_apiserver_service_account_key_file }}"
+  - "{{ kube_apiserver_service_account_signing_key_file }}"
+  - "{{ kube_apiserver_front_proxy_ca_file }}"
+  - "{{ kube_apiserver_proxy_client_cert_file }}"
+  - "{{ kube_apiserver_proxy_client_key_file }}"
+  - "{{ kube_apiserver_ca_file }}"
+  - "{{ kube_apiserver_ca_key_file }}"

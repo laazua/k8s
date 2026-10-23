@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# kube-controller-manager:facts — 参数推导（无副作用）
+# =============================================================================
+
+- name: "kube-controller-manager:facts | 构建启动参数"
+  ansible.builtin.set_fact:
+    kube_controller_manager_args: "{{ _base + kube_controller_manager_extra_args }}"
+  vars:
+    _base:
+      - "--kubeconfig={{ kube_controller_manager_kubeconfig }}"
+      - "--authentication-kubeconfig={{ kube_controller_manager_kubeconfig }}"
+      - "--authorization-kubeconfig={{ kube_controller_manager_kubeconfig }}"
+      - "--client-ca-file={{ kube_controller_manager_client_ca_file }}"
+      - "--requestheader-client-ca-file={{ kube_controller_manager_front_proxy_ca_file }}"
+      - "--requestheader-allowed-names={{ kube_controller_manager_requestheader_allowed_names }}"
+      - "--requestheader-extra-headers-prefix={{ kube_controller_manager_requestheader_extra_headers_prefix }}"
+      - "--requestheader-group-headers={{ kube_controller_manager_requestheader_group_headers }}"
+      - "--requestheader-username-headers={{ kube_controller_manager_requestheader_username_headers }}"
+      - "--service-account-private-key-file={{ kube_controller_manager_service_account_private_key_file }}"
+      - "--root-ca-file={{ kube_controller_manager_root_ca_file }}"
+      - "--cluster-signing-cert-file={{ kube_controller_manager_cluster_signing_cert_file }}"
+      - "--cluster-signing-key-file={{ kube_controller_manager_cluster_signing_key_file }}"
+      - "--use-service-account-credentials={{ kube_controller_manager_use_service_account_credentials | bool | lower }}"
+      - "--allocate-node-cidrs={{ kube_controller_manager_allocate_node_cidrs | bool | lower }}"
+      - "--leader-elect={{ kube_controller_manager_leader_elect | bool | lower }}"
+      - "--bind-address={{ kube_controller_manager_bind_address }}"
+      - "--secure-port={{ kube_controller_manager_secure_port }}"
+      - "--profiling={{ kube_controller_manager_profiling | bool | lower }}"
+      - "--v={{ kube_controller_manager_log_level }}"
+  tags: ["kube-controller-manager", "kube-controller-manager:facts"]

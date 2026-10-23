@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# kube-apiserver:config — 渲染 systemd unit（内容不变 → changed=0，不重启）
+#   unit 目录/文件名/模板全部变量化；生产即 systemd unit 目录。
+# =============================================================================
+
+- name: "kube-apiserver:config | 确保 systemd unit 目录存在"
+  ansible.builtin.file:
+    path: "{{ kube_apiserver_unit_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ kube_apiserver_root_owner }}"
+    group: "{{ kube_apiserver_root_group }}"
+  tags: ["kube-apiserver", "kube-apiserver:config"]
+
+- name: "kube-apiserver:config | 渲染 {{ kube_apiserver_unit_name }}"
+  ansible.builtin.template:
+    src: kube-apiserver.service.j2
+    dest: "{{ kube_apiserver_unit_path }}"
+    mode: "{{ kube_apiserver_unit_mode }}"
+    owner: "{{ kube_apiserver_root_owner }}"
+    group: "{{ kube_apiserver_root_group }}"
+  notify: "kube-apiserver:restart"
+  tags: ["kube-apiserver", "kube-apiserver:config"]

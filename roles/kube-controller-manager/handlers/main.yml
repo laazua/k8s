@@ -1,0 +1,12 @@
+---
+# =============================================================================
+# roles/kube-controller-manager — handlers
+# =============================================================================
+
+- name: "kube-controller-manager:restart"
+  ansible.builtin.systemd:
+    name: "{{ kube_controller_manager_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: kube_controller_manager_manage_service | bool
+  tags: ["kube-controller-manager", "kube-controller-manager:service"]

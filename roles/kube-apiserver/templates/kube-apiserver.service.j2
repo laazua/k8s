@@ -1,0 +1,18 @@
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ kube_apiserver_service_type }}
+User={{ kube_apiserver_user }}
+Group={{ kube_apiserver_group }}
+ExecStart={{ kube_apiserver_binary }} {{ kube_apiserver_args | join(' ') }}
+Restart=always
+RestartSec={{ kube_apiserver_restart_sec }}
+LimitNOFILE={{ kube_apiserver_limit_nofile }}
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

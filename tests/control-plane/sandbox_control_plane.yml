@@ -1,0 +1,32 @@
+---
+# =============================================================================
+#  T007 沙箱控制面 role 渲染
+#    - 三 role 全部写沙箱（unit/配置/二进制/kubeconfig）；
+#    - manage_service=false：不触碰宿主 systemd；
+#    - kubeconfig server = https://127.0.0.1:16443（inventory 的 VIP:port）；
+#    - etcd endpoint 从 inventory [etcd] 自动推导（12379）。
+# =============================================================================
+- name: T007 control plane roles sandbox
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_apiserver_root_prefix: "{{ sandbox_root }}"
+    kube_controller_manager_root_prefix: "{{ sandbox_root }}"
+    kube_scheduler_root_prefix: "{{ sandbox_root }}"
+    kube_apiserver_manage_service: false
+    kube_controller_manager_manage_service: false
+    kube_scheduler_manage_service: false
+    kube_apiserver_bind_address: 127.0.0.1
+    kube_apiserver_advertise_address: 127.0.0.1
+    kube_apiserver_secure_port: 16443
+    kube_apiserver_kubeconfig_server: "https://127.0.0.1:16443"
+    kube_controller_manager_bind_address: 127.0.0.1
+    kube_controller_manager_secure_port: 20257
+    kube_scheduler_bind_address: 127.0.0.1
+    kube_scheduler_secure_port: 20259
+  roles:
+    - role: kube-apiserver
+    - role: kube-controller-manager
+    - role: kube-scheduler

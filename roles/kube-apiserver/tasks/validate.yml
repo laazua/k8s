@@ -1,0 +1,134 @@
+---
+# =============================================================================
+# kube-apiserver:validate — fail fast（只读，发生在任何落盘/服务动作之前）
+#   1) 监听地址 / 端口合法
+#   2) 安全默认：authorization-mode 必须含 RBAC；anonymous-auth 必须 false
+#   3) etcd endpoint 非空且为 URL
+#   4) PKI / ServiceAccount / front-proxy 证书与私钥齐全
+#   5) sha256 格式（若已固定）
+#   6) secure-port 未被其它进程占用（本组件自身进程视为幂等）
+# =============================================================================
+
+- name: "kube-apiserver:validate | 断言地址与端口合法"
+  ansible.builtin.assert:
+    that:
+      - kube_apiserver_advertise_address | string | length > 0
+      - kube_apiserver_bind_address | string | length > 0
+      - kube_apiserver_secure_port | int >= 1
+      - kube_apiserver_secure_port | int <= 65535
+    fail_msg: >-
+      kube-apiserver 地址/端口非法：advertise={{ kube_apiserver_advertise_address | default('(空)') }}，
+      bind={{ kube_apiserver_bind_address | default('(空)') }}，
+      secure-port={{ kube_apiserver_secure_port | default('(空)') }}。
+      请在 inventory/group_vars 中设置 ansible_host 或显式覆盖 kube_apiserver_advertise_address。
+    quiet: true
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言安全默认（RBAC + 禁用匿名）"
+  ansible.builtin.assert:
+    that:
+      - (not (kube_apiserver_require_secure_defaults | bool))
+        or ('RBAC' in kube_apiserver_authorization_mode)
+      - (not (kube_apiserver_require_secure_defaults | bool))
+        or (not (kube_apiserver_anonymous_auth | bool))
+    fail_msg: >-
+      拒绝不安全配置：authorization-mode='{{ kube_apiserver_authorization_mode }}'，
+      anonymous-auth={{ kube_apiserver_anonymous_auth }}。
+      apiserver 必须启用 RBAC 且关闭匿名认证（kube_apiserver_require_secure_defaults=true 时强制）。
+    quiet: true
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言 etcd endpoint 非空"
+  ansible.builtin.assert:
+    that:
+      - kube_apiserver_etcd_endpoint_list | length > 0
+    fail_msg: >-
+      etcd endpoint 为空：请提供 kube_apiserver_etcd_servers，
+      或确保 inventory 分组 '{{ kube_apiserver_etcd_group }}' 非空
+      （成员需有 ansible_host，可用 etcd_client_port 覆盖端口）。
+    quiet: true
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言每个 etcd endpoint 为 URL"
+  ansible.builtin.assert:
+    that:
+      - item is match('^https?://[^/]+')
+    fail_msg: >-
+      etcd endpoint 非法：'{{ item }}'（必须以 http 或 https 协议开头并包含主机）。
+    quiet: true
+  loop: "{{ kube_apiserver_etcd_endpoint_list }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言 sha256 格式（若已固定）"
+  ansible.builtin.assert:
+    that:
+      - (kube_apiserver_resolved_sha256 | length == 0)
+        or (kube_apiserver_resolved_sha256 is match('^[0-9a-f]{64}$'))
+    fail_msg: >-
+      kube_apiserver_sha256 非法：'{{ kube_apiserver_resolved_sha256 }}'
+      （必须为 64 位小写 hex；可留空以读取官方 .sha256 侧车）。
+    quiet: true
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 检查必需证书/密钥/SA 文件"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ kube_apiserver_required_files }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kube_apiserver_required_stat
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言证书/密钥/SA 文件齐全"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      缺少控制面所需证书/密钥：{{ item.item }}。
+      kube-apiserver 依赖 T004 pki 产物（apiserver/admin/etcd-client/sa/front-proxy）与
+      CA 私钥（用于签发 cm/scheduler/kubelet-client 证书）；请先运行 pki role。
+    quiet: true
+  loop: "{{ kube_apiserver_required_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 检查 secure-port 占用（识别本组件自身进程）"
+  ansible.builtin.shell: |
+    set -o pipefail
+    port={{ kube_apiserver_secure_port }}
+    listening=$(ss -ltnH "sport = :${port}" 2>/dev/null | wc -l)
+    if [ "$listening" -eq 0 ]; then echo FREE; exit 0; fi
+    pids=$(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+    if [ -z "$pids" ]; then echo "UNKNOWN"; exit 0; fi
+    out=""
+    for p in $pids; do
+      cmd=$(tr '\0' ' ' <"/proc/${p}/cmdline" 2>/dev/null || true)
+      case "$cmd" in
+        *{{ kube_apiserver_binary }}*) out="${out}OURS:${p} " ;;
+        *) out="${out}FOREIGN:${p}:${cmd} " ;;
+      esac
+    done
+    echo "$out"
+  args:
+    executable: /bin/bash
+  register: kube_apiserver_port_state
+  changed_when: false
+  check_mode: false
+  when: kube_apiserver_check_port_conflict | bool
+  tags: ["kube-apiserver", "kube-apiserver:validate"]
+
+- name: "kube-apiserver:validate | 断言 secure-port 未被其它进程占用"
+  ansible.builtin.assert:
+    that:
+      - "'FOREIGN' not in kube_apiserver_port_state.stdout"
+      - "'UNKNOWN' not in kube_apiserver_port_state.stdout"
+    fail_msg: >-
+      secure-port {{ kube_apiserver_secure_port }} 已被其它进程占用：
+      {{ kube_apiserver_port_state.stdout | default('') | trim }}。
+      请更换 kube_apiserver_secure_port 或停止占用进程（本组件自身进程不会被误判）。
+    quiet: true
+  when: kube_apiserver_check_port_conflict | bool
+  tags: ["kube-apiserver", "kube-apiserver:validate"]

@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: kube_scheduler
+  author: harness-generator
+  description: Kubernetes Scheduler（官方二进制 + systemd；delegated authn/authz + leader election）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - control-plane
+    - scheduler
+
+dependencies: []

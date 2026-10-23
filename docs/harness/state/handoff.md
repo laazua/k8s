@@ -5,6 +5,70 @@
 
 ---
 
+## [2026-10-23] Generator · T007 → ready_for_eval（build）
+
+- 时间：2026-10-23
+- 角色：Generator（harness-generator；只做 T007，**不自判 PASS**）
+- 任务：`T007` 控制平面组件 role（`kube-apiserver` / `kube-controller-manager` / `kube-scheduler`）
+- **做了什么**
+  1. 三个 role：官方二进制 + sha256 + 版本断言 → 安全默认 unit（`--anonymous-auth=false`、
+     `--authorization-mode=RBAC,Node`、TLS client CA、SA 签名、NodeRestriction）→ systemd 接线。
+  2. 控制面引导集中在 `kube-apiserver`：用 kubernetes-ca 签发 cm / scheduler /
+     `apiserver-kubelet-client` 三张客户端证书，渲染 `admin.conf` / `controller-manager.conf` /
+     `scheduler.conf`（证书内嵌、0600 root:root、server 默认 `https://<VIP>:<port>`）。
+  3. fail-fast：地址/端口、安全默认、etcd endpoint、PKI/SA 文件、sha256、端口冲突、版本不匹配；
+     cm/scheduler 缺失 kubeconfig 即失败（只消费不签发）。
+  4. 测试 `tests/control-plane/`：真实 pki + 单成员 TLS etcd + 从 unit ExecStart 真实拉起三进程
+     （高位端口 16443/20257/20259），覆盖 healthz/readyz/ns/匿名 401/身份/leader lease/
+     幂等/fail-fast 矩阵/宿主零污染；`Makefile` 增加 `test-control-plane` 并挂入 `make test`。
+- **改了哪些文件**
+  - `roles/kube-apiserver/`（含 README）、`roles/kube-controller-manager/`、`roles/kube-scheduler/`
+  - `tests/control-plane/{inventory.ini,sandbox_stack.yml,sandbox_control_plane.yml,test_control_plane_roles.sh}`
+  - `Makefile`、`docs/harness/state/contracts/T007.md`、`state.yaml`、`roadmap.md`、本文件
+- **怎么验证（给下一位）**
+  ```bash
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK tests/control-plane/test_control_plane_roles.sh
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test   # 连跑两次
+  ```
+- **测试/幂等结果**：红 `PASS=15 FAIL=123`（role 移走）→ 绿 `PASS=269 FAIL=0`；
+  运行中重跑 `changed=0`、无 handler、PID/starttime/unit/kubeconfig 哈希不变；
+  fail-fast 6/6 且 unit 不变。全量门禁两次 exit 0：`27/39/59/100/225/186/269`，`FAIL=0`。
+- **遗留问题 / 风险 / 待办**
+  - systemd `active+enabled` 未在宿主真实执行（共享机限制）；已静态断言 + 用 unit ExecStart
+    真实起进程，真机复验命令见契约 §5.1。
+  - 未动态验证多 master / 经 VIP 串联（T010/T012/T014）；kubelet 侧认证属 T008。
+  - 测试沙箱以此前不存在的 `$SB/var`、`$SB/etc` 预创建 0755（否则 uid 65534 的 etcd 与
+    非 root 读 unit 会失败），属测试基座而非 role 逻辑。
+  - 观察到 apiserver 对 loopback advertise-address 的 `kubernetes` Endpoints 报
+    `may not be in the loopback range`；不影响 healthz/readyz/ns（测试端口/地址使然）。
+- **下一步建议（`state.yaml.next_action`）**：`eval T007`
+
+---
+
+## [2026-10-23] Evaluator · T006 r2 PASS（eval）
+
+- 时间：2026-10-23
+- 角色：Evaluator（独立评估；未改代码/测试/契约）
+- 任务：`T006` 第 2 轮（被测 `6b619ce`，r1=`4e6c503` FAIL）
+- **结论：PASS**（功能 5 / 幂等 5 / 可配置 4 / 测试 5 / 结构 4 / 安全 4 / 完整度 4）
+- B1 复核：默认路径 `/etc/haproxy/haproxy.cfg`、`/etc/keepalived/keepalived.conf`；
+  沙箱重定向下 `渲染 == drop-in ExecStart -f == Environment CONFIG` 三方相等，且与解包发行版 unit
+  (`Type=notify`、haproxy `CONFIG=/etc/haproxy/haproxy.cfg`、keepalived `--dont-fork`) 对齐；
+  反证（drop-in 改 `/etc/haproxy/wrong.cfg`）→ `PASS=167 FAIL=19`，断言精确命中。
+- M1 复核：kube-vip manifest 含 `manager`、`hostNetwork`、`system-node-critical`、`NET_ADMIN/NET_RAW`、
+  kubeconfig hostPath、`vip_nodename`；契约 §5.3 / README 均声明「仅渲染、未验证真实漂移」。
+- 独立动态（自建 netns/inventory，直接启动 role 渲染产物）：**70/70 PASS**；VIP 初始 e1、停持有者漂移、
+  preempt 回切、track_script 摘除、LB 12/12（6/6）、后端摘除 8/8、运行中重跑 `changed=0` 且 PID/sha 不变。
+- 全量门禁：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` 两次 exit 0，计数一致
+  `27/39/59/100/225/186`（636），`FAIL=0`；T001–T005 无回退。
+- 牙齿 6/6：路径不一致 / 删 `-f` / VIP 写死 / 去 `check` / 强制 changed / 删 `NET_RAW`，全部 rc=1。
+- 非阻塞项：keepalived drop-in 可补清空 `ExecStartPre/ExecReload`；`haproxy_config_dir` 未由
+  `haproxy_config_file` 派生；测试固定 netns 名；systemd 运行需真机/T007 复验。
+- 宿主零污染：无 netns/veth/进程/端口/`/run` 残留；无 `/etc/{haproxy,keepalived,kubernetes}`；主工作区 clean。
+- 下一步：`build T007`（控制平面编排；注意 §5.4 端口协调、T005 的 etcd `serial: 1`）。
+
+---
+
 ## [2026-10-22] Generator · T006 修复轮 r1 → ready_for_eval（build）
 
 - 时间：2026-10-22

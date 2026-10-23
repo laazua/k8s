@@ -1,0 +1,18 @@
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-scheduler/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ kube_scheduler_service_type }}
+User={{ kube_scheduler_user }}
+Group={{ kube_scheduler_group }}
+ExecStart={{ kube_scheduler_binary }} {{ kube_scheduler_args | join(' ') }}
+Restart=always
+RestartSec={{ kube_scheduler_restart_sec }}
+LimitNOFILE={{ kube_scheduler_limit_nofile }}
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# kube-scheduler:facts — 参数推导（无副作用）
+# =============================================================================
+
+- name: "kube-scheduler:facts | 构建启动参数"
+  ansible.builtin.set_fact:
+    kube_scheduler_args: "{{ _base + kube_scheduler_extra_args }}"
+  vars:
+    _base:
+      - "--kubeconfig={{ kube_scheduler_kubeconfig }}"
+      - "--authentication-kubeconfig={{ kube_scheduler_kubeconfig }}"
+      - "--authorization-kubeconfig={{ kube_scheduler_kubeconfig }}"
+      - "--client-ca-file={{ kube_scheduler_client_ca_file }}"
+      - "--requestheader-client-ca-file={{ kube_scheduler_front_proxy_ca_file }}"
+      - "--requestheader-allowed-names={{ kube_scheduler_requestheader_allowed_names }}"
+      - "--requestheader-extra-headers-prefix={{ kube_scheduler_requestheader_extra_headers_prefix }}"
+      - "--requestheader-group-headers={{ kube_scheduler_requestheader_group_headers }}"
+      - "--requestheader-username-headers={{ kube_scheduler_requestheader_username_headers }}"
+      - "--leader-elect={{ kube_scheduler_leader_elect | bool | lower }}"
+      - "--bind-address={{ kube_scheduler_bind_address }}"
+      - "--secure-port={{ kube_scheduler_secure_port }}"
+      - "--profiling={{ kube_scheduler_profiling | bool | lower }}"
+      - "--v={{ kube_scheduler_log_level }}"
+  tags: ["kube-scheduler", "kube-scheduler:facts"]

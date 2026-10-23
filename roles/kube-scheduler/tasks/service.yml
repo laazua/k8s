@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# kube-scheduler:service — 生产服务管理（沙箱/共享开发机跳过）
+# =============================================================================
+
+- name: "kube-scheduler:service | 启用并启动 {{ kube_scheduler_unit_name }}"
+  ansible.builtin.systemd:
+    name: "{{ kube_scheduler_unit_name }}"
+    enabled: "{{ kube_scheduler_service_enabled }}"
+    state: "{{ kube_scheduler_service_state }}"
+    daemon_reload: true
+  when: kube_scheduler_manage_service | bool
+  tags: ["kube-scheduler", "kube-scheduler:service"]
