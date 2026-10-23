@@ -73,8 +73,27 @@ check "存在 $ROLE_CM/templates/kube-controller-manager.service.j2" \
   "[[ -f '$ROLE_CM/templates/kube-controller-manager.service.j2' ]]"
 check "存在 $ROLE_SCHED/templates/kube-scheduler.service.j2" \
   "[[ -f '$ROLE_SCHED/templates/kube-scheduler.service.j2' ]]"
-check "存在 $ROLE_APISERVER/templates/kubeconfig.j2" \
-  "[[ -f '$ROLE_APISERVER/templates/kubeconfig.j2' ]]"
+# role 引用的模板必须**同时**存在于工作区且已入库（防止 .gitignore 吞掉交付资产）。
+# 注：模板名不叫 kubeconfig.j2 —— 该名字被 .gitignore 的 `kubeconfig.*` 规则忽略（T007 r1 B1）；
+# 无 .git 的 `git archive` 检出无法做跟踪断言，跳过（此时归档内容即真相）。
+role_template_sources() {
+  grep -rhoE '^[[:space:]]*src:[[:space:]]*[A-Za-z0-9_.-]+\.j2' "$1"/tasks \
+    | sed -E 's/^[[:space:]]*src:[[:space:]]*//' | sort -u
+}
+templates_tracked() {
+  local r="$1" s
+  while IFS= read -r s; do
+    [[ -n "$s" ]] || continue
+    [[ -f "$r/templates/$s" ]] || return 1
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      git ls-files --error-unmatch "$r/templates/$s" >/dev/null 2>&1 || return 1
+    fi
+  done < <(role_template_sources "$r")
+  return 0
+}
+check "存在 $ROLE_APISERVER/templates/kubeconfig_file.j2 且三 role 模板均已入库" \
+  "[[ -f '$ROLE_APISERVER/templates/kubeconfig_file.j2' ]] && \
+   templates_tracked '$ROLE_APISERVER' && templates_tracked '$ROLE_CM' && templates_tracked '$ROLE_SCHED'"
 for f in "$PLAY_STACK" "$PLAY_CP" "$INV" "$UNIT_EXEC"; do
   check "存在 $f" "[[ -f '$f' ]]"
 done
@@ -170,8 +189,8 @@ check "A5 签发 scheduler 客户端证书" \
 check "A5 签发 apiserver-kubelet-client 证书" \
   "grep -q 'kube-apiserver-kubelet-client' '$ROLE_APISERVER/defaults/main.yml'"
 check "A5 渲染 kubeconfig（内嵌证书/私钥）" \
-  "grep -q 'client-certificate-data' '$ROLE_APISERVER/templates/kubeconfig.j2' && \
-   grep -q 'client-key-data' '$ROLE_APISERVER/templates/kubeconfig.j2'"
+  "grep -q 'client-certificate-data' '$ROLE_APISERVER/templates/kubeconfig_file.j2' && \
+   grep -q 'client-key-data' '$ROLE_APISERVER/templates/kubeconfig_file.j2'"
 check "A5 kubeconfig 0600" \
   "grep -qE '^kube_apiserver_kubeconfig_mode:[[:space:]]*\"0600\"' '$ROLE_APISERVER/defaults/main.yml'"
 
@@ -213,10 +232,12 @@ if have_ansible; then
   else
     bad "$PLAY_STACK --syntax-check 失败（见 /tmp/opencode/t007_syntax_stack.log）"
   fi
-  if "$ANSIBLE_PLAYBOOK" -i "$INV" --syntax-check "$PLAY_CP" >/tmp/opencode/t007_syntax_cp.log 2>&1; then
-    ok "$PLAY_CP --syntax-check 通过"
+  if "$ANSIBLE_PLAYBOOK" -i "$INV" --syntax-check "$PLAY_CP" >/tmp/opencode/t007_syntax_cp.log 2>&1 &&
+    "$ANSIBLE_PLAYBOOK" -i "$INV" --syntax-check tests/control-plane/real_services.yml \
+      >>/tmp/opencode/t007_syntax_cp.log 2>&1; then
+    ok "$PLAY_CP + real_services.yml --syntax-check 通过（真机复验 playbook 可执行）"
   else
-    bad "$PLAY_CP --syntax-check 失败（见 /tmp/opencode/t007_syntax_cp.log）"
+    bad "$PLAY_CP / real_services.yml --syntax-check 失败（见 /tmp/opencode/t007_syntax_cp.log）"
   fi
 else
   bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
@@ -650,11 +671,11 @@ check "B6 scheduler 日志显示成功获取 leader lease" \
 
 echo "-- B7 安全默认（真实请求）"
 ANON_CODE="$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1:16443/api 2>/dev/null)"
-check "B7 匿名访问 /api 被拒（401/403，实际 $ANON_CODE）" \
-  "[[ '$ANON_CODE' == '401' || '$ANON_CODE' == '403' ]]"
+check "B7 匿名访问 /api 被拒（严格 401，实际 $ANON_CODE）" \
+  "[[ '$ANON_CODE' == '401' ]]"
 ANON_NS="$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1:16443/api/v1/namespaces 2>/dev/null)"
-check "B7 匿名访问 namespaces 被拒（401/403，实际 $ANON_NS）" \
-  "[[ '$ANON_NS' == '401' || '$ANON_NS' == '403' ]]"
+check "B7 匿名访问 namespaces 被拒（严格 401，实际 $ANON_NS）" \
+  "[[ '$ANON_NS' == '401' ]]"
 check "B7 管理员 kubeconfig 可正常访问（对照）" "kctl get --raw /version >/dev/null 2>&1"
 check "B7 apiserver 进程参数含 --anonymous-auth=false" \
   "tr '\\0' '\\n' <'/proc/${PID[kube-apiserver]:-0}/cmdline' | grep -qx -- '--anonymous-auth=false'"
@@ -747,24 +768,25 @@ check "B9 版本不匹配 → 错误给出实际版本" \
   "grep -q '版本与 kube_apiserver_version=1.30.0 不一致' /tmp/opencode/t007_ff_version.log && \
    grep -q 'v1.31.0' /tmp/opencode/t007_ff_version.log"
 check "B9 版本不匹配 → unit 未变" "[[ \"\$(unit_hash_now)\" == '$UNIT_HASH_NOW' ]]"
-# 端口冲突（外部 python 监听）
-python3 - <<'PY' >"$SB/dummy-listener.log" 2>&1 &
-import socket, time
+# 端口冲突（外部 python 监听）；端口可用 T007_TEST_CONFLICT_PORT 覆盖，避免并行跑套件互相抢占
+CONFLICT_PORT="${T007_TEST_CONFLICT_PORT:-17443}"
+python3 - "$CONFLICT_PORT" <<'PY' >"$SB/dummy-listener.log" 2>&1 &
+import socket, sys, time
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", 17443))
+s.bind(("127.0.0.1", int(sys.argv[1])))
 s.listen(5)
 time.sleep(60)
 PY
 DUMMY_PID=$!
 sleep 0.5
 rc=0
-run_ff /tmp/opencode/t007_ff_port.log "{\"kube_apiserver_secure_port\":17443}" || rc=$?
+run_ff /tmp/opencode/t007_ff_port.log "{\"kube_apiserver_secure_port\":$CONFLICT_PORT}" || rc=$?
 kill "$DUMMY_PID" 2>/dev/null || true
 wait "$DUMMY_PID" 2>/dev/null || true
 check "B9 端口冲突 → exit≠0" "[[ $rc -ne 0 ]]"
 check "B9 端口冲突 → 错误提及 secure-port/占用" \
-  "grep -qE 'secure-port 17443 已被其它进程占用' /tmp/opencode/t007_ff_port.log"
+  "grep -qE 'secure-port $CONFLICT_PORT 已被其它进程占用' /tmp/opencode/t007_ff_port.log"
 check "B9 端口冲突 → unit 未变" "[[ \"\$(unit_hash_now)\" == '$UNIT_HASH_NOW' ]]"
 
 echo "-- B10 清理与宿主零污染"

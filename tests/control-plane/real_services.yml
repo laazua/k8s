@@ -1,0 +1,48 @@
+---
+# =============================================================================
+#  T007 · 真机复验 playbook（systemd active+enabled 受限项的唯一可执行路径）
+#
+#  为什么需要它：`playbooks/control-plane.yml` 目前仍是骨架占位（编排属 T012），
+#  直接对它 `--tags kube-apiserver` 不会执行任何 role。本 playbook 只做一件事：
+#  在**目标真机**上真实应用三个控制平面 role（真实路径 + 真实 systemd）。
+#
+#  前置（必须已在本机完成）：
+#    1) PKI（T004）：`/etc/kubernetes/pki` 下 CA/apiserver/admin/sa/front-proxy/etcd 证书齐全；
+#    2) etcd（T005）：inventory 中 etcd 集群 healthy（https://<etcd>:2379）；
+#    3) inventory 含 `[k8s_master]`/`[etcd]`，且 `k8s_vip`、`k8s_apiserver_port` 正确；
+#    4) 目标机 PID1=systemd，执行用户可 sudo（`become: true`）。
+#
+#  运行：
+#    ansible-playbook -i inventory/hosts.ini tests/control-plane/real_services.yml
+#    ansible-playbook -i inventory/hosts.ini tests/control-plane/real_services.yml --tags kube-apiserver
+#
+#  期望（复验命令与期望输出见 docs/harness/state/contracts/T007.md §5.1）：
+#    * 三个 role **真实执行**（不是 debug 占位）：安装二进制、渲染 unit 与 kubeconfig、
+#      `daemon_reload` + `enabled` + `started`；
+#    * `systemctl is-enabled/is-active` 三组件均为 `enabled`/`active`；
+#    * `kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /healthz` 与 `/readyz` → `ok`；
+#    * 匿名 `curl -k https://<VIP>:6443/api` → `401`。
+#
+#  安全：本 playbook 会写 `/etc/systemd/system` 并 enable/start 服务 —— **只允许在目标真机执行**；
+#        共享开发机请用 `tests/control-plane/test_control_plane_roles.sh`
+#        （`manage_service=false`，宿主零污染）。不改 `playbooks/control-plane.yml`（编排属 T012）。
+# =============================================================================
+- name: T007 真机复验 · 控制平面三组件（真实 systemd）
+  hosts: k8s_master
+  become: true
+  gather_facts: true
+  vars:
+    # 显式声明为 true：真机复验必须走 systemd 真实路径（role 默认也是 true，这里只是自证）。
+    kube_apiserver_manage_service: true
+    kube_apiserver_service_enabled: true
+    kube_apiserver_service_state: started
+    kube_controller_manager_manage_service: true
+    kube_controller_manager_service_enabled: true
+    kube_controller_manager_service_state: started
+    kube_scheduler_manage_service: true
+    kube_scheduler_service_enabled: true
+    kube_scheduler_service_state: started
+  roles:
+    - role: kube-apiserver
+    - role: kube-controller-manager
+    - role: kube-scheduler

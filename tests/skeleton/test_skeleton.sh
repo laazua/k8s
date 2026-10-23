@@ -86,7 +86,11 @@ else
   bad "make help 未列出 lint/syntax/test"
 fi
 
-echo "-- 密钥未入库（行为断言，非子串匹配）"
+echo "-- 密钥未入库（行为断言 + 探针自检，非子串匹配）"
+# 只匹配「真实密钥/凭据产物」。任务/模板文件名里带 kubeconfig 子串的 .yml/.j2 不是凭据
+# （历史缺陷：宽泛的 `kubeconfig` 子串把 tasks/kubeconfig_one.yml、tasks/kubeconfigs.yml 误报成密钥）。
+SECRET_RE='(^|/)kubeconfig$|(^|/)kubeconfig\.(ya?ml|json|conf)$|\.kubeconfig$|\.key$|\.pem$|(^|/)vault[-_]?pass[^/]*$'
+secret_hits() { grep -iE "$SECRET_RE" || true; }
 if git rev-parse --git-dir >/dev/null 2>&1; then
   ignore_ok=1
   for probe in secret.key secret.pem kubeconfig vault-password.txt inventory/hosts.ini; do
@@ -96,10 +100,58 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     fi
   done
   [[ $ignore_ok -eq 1 ]] && ok "密钥类探针均被 .gitignore 忽略"
-  if git ls-files | grep -qiE '(\.key$|\.pem$|kubeconfig|vault[-_]?pass)'; then
-    bad "git 跟踪了密钥类文件"
+
+  # 探针自检（防「收紧正则」变成「保护失效」）：
+  #   正例：真实 kubeconfig（无扩展名 / 带扩展名 / *.kubeconfig）与 *.key / *.pem / vault 密码必须命中；
+  #   负例：任务/模板/文档文件名（仅含 kubeconfig 子串）不得误报。
+  self_fail=""
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    printf '%s\n' "$p" | grep -qiE "$SECRET_RE" || self_fail+="漏报:$p "
+  done <<'PATHS'
+kubeconfig
+etc/kubernetes/kubeconfig
+admin.kubeconfig
+secrets/server.key
+secrets/server.pem
+vault-password.txt
+vault_pass
+roles/x/files/vault_password_file
+PATHS
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    printf '%s\n' "$p" | grep -qiE "$SECRET_RE" && self_fail+="误报:$p "
+  done <<'PATHS'
+roles/kube-apiserver/tasks/kubeconfig_one.yml
+roles/kube-apiserver/tasks/kubeconfigs.yml
+roles/kube-apiserver/templates/kubeconfig_file.j2
+tests/control-plane/sandbox_control_plane.yml
+docs/harness/state/contracts/T007.md
+tasks/kubeconfig_one.yml
+PATHS
+
+  # 端到端负例：临时 git 仓库 + 真实 `kubeconfig`（无扩展名，已 `git add -f`）必须仍被判为「已跟踪」，
+  # 证明收紧正则没有削弱对真实凭据的保护（临时仓库用后即删，主仓库 index 不受影响）。
+  probe_repo="$(mktemp -d /tmp/opencode/t001_probe.XXXXXX)"
+  if git -C "$probe_repo" init -q 2>/dev/null; then
+    printf 'apiVersion: v1\nkind: Config\n' >"$probe_repo/kubeconfig"
+    if git -C "$probe_repo" add -f -- kubeconfig 2>/dev/null &&
+      git -C "$probe_repo" ls-files | grep -qiE "$SECRET_RE"; then
+      :
+    else
+      self_fail+="端到端漏报:临时仓库 kubeconfig "
+    fi
   else
-    ok "git 未跟踪密钥类文件"
+    self_fail+="无法创建临时 git 仓库 "
+  fi
+  rm -rf "$probe_repo"
+
+  if [[ -n "$self_fail" ]]; then
+    bad "密钥探针自检失败（$self_fail）"
+  elif hits="$(git ls-files | secret_hits)" && [[ -n "$hits" ]]; then
+    bad "git 跟踪了真实密钥/凭据文件: $(tr '\n' ' ' <<<"$hits")"
+  else
+    ok "git 未跟踪真实密钥/凭据（探针自检：真实 kubeconfig 仍会被判为跟踪）"
   fi
 else
   bad "非 git 仓库：无法做忽略行为断言（请先 git init）"

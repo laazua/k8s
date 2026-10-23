@@ -21,7 +21,8 @@
     kube_apiserver_bind_address: 127.0.0.1
     kube_apiserver_advertise_address: 127.0.0.1
     kube_apiserver_secure_port: 16443
-    kube_apiserver_kubeconfig_server: "https://127.0.0.1:16443"
+    # 不显式覆盖 kube_apiserver_kubeconfig_server：由 inventory 的 k8s_vip:k8s_apiserver_port
+    # 派生（A11 断言 https://127.0.0.1:16443，覆盖默认 VIP 派生路径，见 T007 r1 M3）。
     kube_controller_manager_bind_address: 127.0.0.1
     kube_controller_manager_secure_port: 20257
     kube_scheduler_bind_address: 127.0.0.1

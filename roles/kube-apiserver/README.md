@@ -27,7 +27,7 @@
 | `tasks/config.yml` | 渲染 systemd unit |
 | `tasks/service.yml` / `handlers/main.yml` | `systemd` 启用/启动/重启（生产） |
 | `templates/kube-apiserver.service.j2` | unit 模板 |
-| `templates/kubeconfig.j2` | kubeconfig 模板 |
+| `templates/kubeconfig_file.j2` | kubeconfig 模板（文件名不含 `kubeconfig.` 前缀，避免被 `.gitignore` 的 `kubeconfig.*` 吞掉） |
 
 ## 关键变量（全部可在 `group_vars`/`host_vars` 覆盖）
 
@@ -60,12 +60,13 @@ yamllint -c .yamllint roles/kube-apiserver
 tests/control-plane/test_control_plane_roles.sh
 make test-control-plane
 
-# 真机（systemd active+enabled 的受限项复验）
-ansible-playbook -i inventory/hosts.ini playbooks/control-plane.yml --tags kube-apiserver
-systemctl is-enabled kube-apiserver && systemctl is-active kube-apiserver
+# 真机（systemd active+enabled 的受限项复验；playbooks/control-plane.yml 仍是骨架占位，属 T012）
+ansible-playbook -i inventory/hosts.ini tests/control-plane/real_services.yml
+systemctl is-enabled kube-apiserver kube-controller-manager kube-scheduler   # enabled
+systemctl is-active  kube-apiserver kube-controller-manager kube-scheduler   # active
 kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /healthz   # ok
 kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz    # ok
-curl -k -s -o /dev/null -w '%{http_code}\n' https://<VIP>:6443/api   # 401/403
+curl -k -s -o /dev/null -w '%{http_code}\n' https://<VIP>:6443/api   # 401
 ```
 
 > **systemd 受限**：共享开发机不写 `/etc/systemd/system`、不执行 `systemctl`。测试只渲染

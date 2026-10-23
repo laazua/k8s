@@ -21,6 +21,10 @@ env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test
 免密 `sudo`（以 root 应用生产属主模型并从 unit 拉起进程）、网络可访问 `dl.k8s.io`
 （制品已缓存时离线可跑）。
 
+> **必须跑在「已跟踪文件的干净检出」里**（`git archive HEAD` 或 `git worktree add --detach`）：
+> 套件会断言 role 引用的模板已 `git ls-files` 跟踪（防 `.gitignore` 吞掉交付资产）。
+> 开发工作区可用，但只有干净检出才能证明「提交本身可复现」。
+
 ## 拓扑（全部 127.0.0.1，高位端口）
 
 | 组件 | 端口 | 说明 |
@@ -37,13 +41,14 @@ env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test
 | `inventory.ini` | 单机 inventory：`[k8s_master]`/`[etcd]` + VIP/端口/版本 |
 | `sandbox_stack.yml` | kubectl（测试用）+ pki（真实签发）+ 单成员 TLS etcd |
 | `sandbox_control_plane.yml` | 三 role 渲染（`manage_service=false`，全部写沙箱） |
+| `real_services.yml` | **真机**复验 playbook（真实 systemd；`manage_service=true`，勿在共享开发机跑） |
 | `test_control_plane_roles.sh` | 静态 A1–A9 + 动态 B1–B10 断言，输出 `PASS/FAIL` 汇总 |
 
 ## 断言分组
 
 - **A1–A9**：结构/变量化/unit 模板/安全默认/引导 kubeconfig/systemd 接线/文档/范围/语法风格。
 - **B1–B5**：真实 pki+etcd、首跑渲染、unit 关键 flag、kubeconfig 身份与签发链。
-- **B6–B7**：真实进程存活、`/healthz`、`/readyz`、`kubectl get ns`、匿名 401、进程参数。
+- **B6–B7**：真实进程存活、`/healthz`、`/readyz`、`kubectl get ns`、匿名 **严格 401**、进程参数。
 - **B8**：运行中重跑 `changed=0`、无 handler、PID/starttime/文件哈希不变。
 - **B9**：fail-fast 矩阵（缺证书 / 缺 etcd endpoint / 缺 SA key / cm 缺 kubeconfig /
   版本不匹配 / 端口冲突），全部要求 unit 不变。
