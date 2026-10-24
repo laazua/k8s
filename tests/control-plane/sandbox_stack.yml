@@ -1,7 +1,10 @@
 ---
 # =============================================================================
 #  T007 沙箱 stack：kubectl + pki + 单成员 TLS etcd
-#    - kubectl 仅用于测试断言（生产分发属 T011）；走 download role + sha256。
+#    - kubectl 仅用于测试断言（生产分发属 T011）：走 download role + sha256，
+#      先落到制品缓存（download_cache_dir），再从缓存复制到沙箱 bin。
+#      **不得**把下载项的 dest 直接指向 usr/local/bin —— 那会绕过缓存，
+#      每次首跑都直连 dl.k8s.io（T007 r2 M4：CDN 限速时门禁第二次必红）。
 #    - pki：真实签发 CA/apiserver/admin/etcd-client/sa/front-proxy 证书。
 #    - etcd：复用 T005 role 渲染单成员 TLS unit；进程由测试脚本以 uid 65534 拉起。
 #    - 所有落盘由 sandbox_root 重定向；不调用 systemctl。
@@ -15,13 +18,28 @@
     download_root_prefix: "{{ sandbox_root }}"
     download_cache_dir: "{{ sandbox_root }}/opt/k8s/artifacts"
     download_items:
+      # 不写显式 dest → 落 download_cache_dir（{{ sandbox_root }}/opt/k8s/artifacts/kubectl）。
+      # 制品已存在且 sha256 相符时 get_url 直接跳过，**不发任何网络请求**（离线/限速可复现）。
       - name: kubectl
         url: "{{ kubectl_url }}"
         sha256: "{{ kubectl_sha256 }}"
-        dest: "{{ sandbox_root }}/usr/local/bin/kubectl"
         mode: "0755"
   roles:
     - role: download
+  post_tasks:
+    - name: "T007 sandbox kubectl | 确保沙箱 bin 目录存在"
+      ansible.builtin.file:
+        path: "{{ sandbox_root }}/usr/local/bin"
+        state: directory
+        mode: "0755"
+    - name: "T007 sandbox kubectl | 从制品缓存安装到沙箱 bin（缓存命中 → 零网络）"
+      ansible.builtin.copy:
+        src: "{{ download_cache_dir }}/kubectl"
+        dest: "{{ sandbox_root }}/usr/local/bin/kubectl"
+        remote_src: true
+        mode: "0755"
+        owner: root
+        group: root
 
 - name: T007 sandbox pki
   hosts: localhost

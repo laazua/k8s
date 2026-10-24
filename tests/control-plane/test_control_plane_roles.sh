@@ -291,6 +291,82 @@ for b in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
 done
 ok "4 个官方制品缓存可用（sha256 与 defaults 一致）"
 
+# etcd 发行包同样走本地缓存：stack playbook 的 etcd play 需要它，
+# 不预置的话每次首跑都会从 storage.googleapis.com 重下（同 M4 的非密闭缺陷）。
+ETCD_TARBALL="etcd-v3.5.16-linux-amd64.tar.gz"
+ETCD_TARBALL_SHA=b414b27a5ad05f7cb01395c447c85d3227e3fb1c176e51757a283b817f645ccc
+ensure_etcd_tarball() {
+  local p="$CACHE/$ETCD_TARBALL" seed="${ETCD_TEST_CACHE:-/tmp/opencode/etcd-cache}/$ETCD_TARBALL"
+  [[ -f "$p" && "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]] && return 0
+  if [[ -f "$seed" && "$(sha_of "$seed")" == "$ETCD_TARBALL_SHA" ]]; then
+    cp "$seed" "$p" && return 0
+  fi
+  printf '  （首次运行：缓存 etcd 发行包 %s）\n' "$ETCD_TARBALL"
+  curl -fL --retry 3 --connect-timeout 20 -o "$p.tmp" \
+    "https://storage.googleapis.com/etcd/v3.5.16/$ETCD_TARBALL" || return 1
+  mv "$p.tmp" "$p"
+  [[ "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]]
+}
+if ! ensure_etcd_tarball; then
+  bad "无法获取/校验 etcd 发行包 $ETCD_TARBALL"
+  echo
+  echo "== 汇总: PASS=$pass_count FAIL=$fail =="
+  exit 1
+fi
+printf '  （etcd 发行包缓存就绪：%s）\n' "$ETCD_TARBALL"
+
+# --- B0 密闭性门禁（不计入既有断言基线；失败即套件失败）--------------------
+# 缺陷背景（T007 r2 M4）：kubectl 曾用显式 dest 直指 usr/local/bin，绕过 download
+# role 的制品缓存，每次首跑都直连 dl.k8s.io；CDN 限速时全量门禁第二次必红。
+# 该门禁把「测试不依赖外网」变成硬约束：
+#   静态：stack playbook 的 kubectl 下载项必须落制品缓存，不得直写 bin；
+#   动态：缓存已就位 + kubectl_url 指向不可达地址（可用时再叠加 unshare -n 真断网，
+#         新 netns 仅 lo、无默认路由），stack 仍须 exit 0 且装出的 kubectl sha256 正确。
+#         缓存命中时 get_url 不发请求，因此任何真实网络依赖都会在此立即失败。
+stack_uses_cache() {
+  # 下载项必须落制品缓存（download_items 内不写显式 dest → 默认 download_cache_dir），
+  # 且沙箱 bin 只能由「从缓存 copy」产生（不允许下载项直写 usr/local/bin）。
+  local block
+  block="$(sed -n '/^    download_items:/,/^  roles:/p' "$PLAY_STACK")"
+  grep -qE 'src:[[:space:]]*"\{\{ download_cache_dir \}\}/kubectl"' "$PLAY_STACK" &&
+    ! grep -qE '^[[:space:]]+dest:' <<<"$block"
+}
+stack_offline_ok() {  # stack_offline_ok <sandbox> <log>
+  local sb="$1" log="$2" inner rc
+  local json="{\"sandbox_root\":\"$sb\",\"kubectl_url\":\"http://127.0.0.1:1/kubectl\"}"
+  if sudo -n unshare -n true >/dev/null 2>&1; then
+    # 真断网：新 netns 仅 lo、无默认路由（等价 unshare -rn；保留 root 以便 become）
+    inner="ip link set lo up; cd $(printf '%q' "$PWD") && timeout 300 $(printf '%q' "$ANSIBLE_PLAYBOOK") -i $(printf '%q' "$INV") $(printf '%q' "$PLAY_STACK") -e $(printf '%q' "$json")"
+    sudo -n env PYTHONPATH="${PYTHONPATH:-}" unshare -n bash -c "$inner" >"$log" 2>&1
+    rc=$?
+  else
+    timeout 300 "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_STACK" -e "$json" >"$log" 2>&1
+    rc=$?
+  fi
+  return $rc
+}
+OFF_SB="$(mktemp -d /tmp/opencode/t007off.XXXXXX)"
+chmod 0755 "$OFF_SB"
+mkdir -p "$OFF_SB/opt/k8s/artifacts" "$OFF_SB/etc" "$OFF_SB/var"
+chmod 0755 "$OFF_SB/etc" "$OFF_SB/var"
+cp "$CACHE/kubectl" "$OFF_SB/opt/k8s/artifacts/kubectl"
+cp "$CACHE/$ETCD_TARBALL" "$OFF_SB/opt/k8s/artifacts/$ETCD_TARBALL"
+chmod 0644 "$OFF_SB"/opt/k8s/artifacts/*
+OFF_SHA=""
+if stack_uses_cache && stack_offline_ok "$OFF_SB" /tmp/opencode/t007_offline_stack.log; then
+  OFF_SHA="$(sha_of "$OFF_SB/usr/local/bin/kubectl")"
+fi
+if [[ "$OFF_SHA" == "$KUBECTL_SHA" ]]; then
+  if sudo -n unshare -n true >/dev/null 2>&1; then
+    printf '  \033[32mOK\033[0m   B0 密闭性：kubectl 从制品缓存安装（unshare -n 断网 + 不可达 URL 下 stack exit 0）\n'
+  else
+    printf '  \033[32mOK\033[0m   B0 密闭性：kubectl 从制品缓存安装（不可达 URL 下 stack exit 0）\n'
+  fi
+else
+  bad "B0 密闭性失败：kubectl 未命中本地制品缓存（不可达 URL 下 stack 未 exit 0；见 /tmp/opencode/t007_offline_stack.log）"
+fi
+sudo -n rm -rf "$OFF_SB"
+
 # 宿主零污染快照
 PRE_HOST_UNITS="$(ls /etc/systemd/system/kube-*.service 2>/dev/null | sort | tr '\n' ' ')"
 PRE_ETC_K8S="$(snapshot_path /etc/kubernetes)"
@@ -349,7 +425,7 @@ SB="$(mktemp -d /tmp/opencode/t007.XXXXXX)"
 chmod 0755 "$SB"
 mkdir -p "$SB/opt/k8s/artifacts" "$SB/logs" "$SB/client" "$SB/kubectl-cache" "$SB/etc" "$SB/var"
 chmod 0755 "$SB/etc" "$SB/var"
-for b in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
+for b in kube-apiserver kube-controller-manager kube-scheduler kubectl "$ETCD_TARBALL"; do
   cp "$CACHE/$b" "$SB/opt/k8s/artifacts/$b"
 done
 chmod 0644 "$SB"/opt/k8s/artifacts/*
