@@ -5,6 +5,99 @@
 
 ---
 
+## [2026-10-24] Generator · T007 r1 修复 → ready_for_eval（build）
+
+- 时间：2026-10-24
+- 角色：Generator（独立复跑；未自判 PASS）
+- 任务：`T007`（修复 r1 FAIL；被测代码提交 `056364f`）
+- 本次做了什么：
+  1. **B1**：`roles/kube-apiserver/templates/kubeconfig.j2` **重命名**为 `kubeconfig_file.j2` 并入库
+     （`.gitignore` 一字未改，真实 kubeconfig/私钥忽略规则未放宽）；`tasks/kubeconfig_one.yml`、
+     README、测试断言同步；套件新增 `templates_tracked()`（role 引用的每个 `src: *.j2` 必须
+     `git ls-files --error-unmatch` 通过）。
+  2. **B2**：`tests/skeleton/test_skeleton.sh` 密钥探针收紧为
+     `(^|/)kubeconfig$|(^|/)kubeconfig\.(ya?ml|json|conf)$|\.kubeconfig$|\.key$|\.pem$|(^|/)vault[-_]?pass[^/]*$`，
+     并加正例/负例自检 + 临时 git 仓库「真实 `kubeconfig` 必须仍被判为已跟踪」端到端负例。
+  3. **M2**：B7 匿名断言改**严格 401**（`/api`、`/api/v1/namespaces`），契约 A9 同步。
+  4. **M1**：新增 `tests/control-plane/real_services.yml`（三 role + `*_manage_service: true`），
+     契约 §5.1 改为可执行命令（含 `cp inventory/hosts.example inventory/hosts.ini` 前置、
+     期望输出、回滚），并声明 `playbooks/control-plane.yml` 仍是 T012 占位、不得用于复验。
+  5. **M3/N2**：删 kubeconfig server 显式覆盖（改验默认 VIP 派生）；端口冲突端口可配
+     `T007_TEST_CONFLICT_PORT`。**N1** 缓期至 T008（kubelet serving CA 未就绪）。**N3** 说明。
+- 改了哪些文件（代码提交 `056364f`）：`roles/kube-apiserver/{README.md,tasks/kubeconfig_one.yml,
+  templates/kubeconfig_file.j2}`、`tests/control-plane/{README.md,real_services.yml,
+  sandbox_control_plane.yml,test_control_plane_roles.sh}`、`tests/skeleton/test_skeleton.sh`；
+  本提交另含 `docs/harness/state/{contracts/T007.md,handoff.md,state.yaml,reports/T007-r1.md}`。
+- 怎么验证（给下一位）：
+  ```bash
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test              # 主工作区，期望 rc=0
+  # 干净归档（证明提交自包含）：
+  git archive 056364f | tar -x -C /tmp/opencode/t007fix/archive
+  cd /tmp/opencode/t007fix/archive && git init -q && git add -A && git commit -qm archive
+  env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test              # 期望 rc=0
+  ```
+- 测试结果（红→绿）：
+  - 红：`afd7338` 归档跑 T007 `PASS=179 FAIL=88`（rc=1，`kubeconfig.j2` 缺失）；同提交 T001
+    `PASS=26 FAIL=1`（rc=1，误报 `tasks/kubeconfig_one.yml`）。
+  - 绿：主工作区 `make test` ×2 → rc=0（1857s/1867s），T001 **27**/T002 39/T003 59/T004 100/
+    T005 225/T006 186/T007 **269**，`FAIL=0`；干净归档 `056364f` ×2 → rc=0（1872s/1866s），计数一致。
+  - 匿名：两次复跑均 `严格 401，实际 401`。
+  - 牙齿：旧宽泛正则 → T001 自检红（26/1）；删 `--anonymous-auth` → B7 两条 `实际 403` FAIL（264/5）。
+  - 探针独立核验：正例 7/7、负例 5/5、临时仓库真实 `kubeconfig` 端到端命中。
+- 遗留问题 / 风险 / 待办：
+  - N1 `--kubelet-certificate-authority` 待 T008（kubelet serving CA 就绪后打开）。
+  - systemd `active+enabled`、多主/VIP 串联、kubelet 侧仍未在真机动态验证（契约 §5.1–§5.3 已声明）；
+    真机复验路径 `tests/control-plane/real_services.yml` 已可执行（`--syntax-check` exit 0）。
+  - 纯 `git archive` 无 `.git`，T001 会报「非 git 仓库」（25/1，归档目录固有属性）。
+- 收尾：无残留进程/端口/沙箱；宿主无 `kube-*.service`、无 `/etc/kubernetes`、无 `/var/lib/kubelet`；
+  `git ls-files` 无真实密钥/证书/kubeconfig。
+- 下一步建议（`state.yaml.next_action`）：`eval T007 (r2)`
+
+---
+
+## [2026-10-23] Evaluator · T007 r1 → FAIL（eval）
+
+- 时间：2026-10-23
+- 角色：Evaluator（独立只读评审；未改代码/测试/契约）
+- 任务：`T007`（被测提交 `afd7338`，父 `6b619ce`）
+- **结论：FAIL**（报告 `reports/T007-r1.md`）；六项硬指标 功能 **2** / 幂等 5 / 可配置 4 /
+  测试 **3** / 结构 4 / 安全 4；产品完整度 3。2 BLOCKER + 2 MAJOR。
+- **B1（BLOCKER）**：`roles/kube-apiserver/templates/kubeconfig.j2` 被 `.gitignore:7` 的 `kubeconfig.*`
+  规则忽略、**未入库**（`git ls-tree afd7338` 只有 service.j2）。干净 worktree 跑 T007 套件：静态
+  `FAIL 存在 templates/kubeconfig.j2`、`FAIL A5 渲染 kubeconfig`，首跑 fatal `Could not find or access
+  'kubeconfig.j2'`；T1/T2/T3 干净检出分别为 `179/90`、`176/93`、`181/88`，**269/269 不可复现**。
+- **B2（BLOCKER）**：`make test` 两次均 **rc=2**、T001 `PASS=26 FAIL=1`「git 跟踪了密钥类文件」——
+  `tests/skeleton/test_skeleton.sh:99` 的 `kubeconfig` 宽泛正则命中新任务文件
+  `tasks/kubeconfig_one.yml` / `tasks/kubeconfigs.yml`；父提交 T001=27/0。Generator 声称的
+  「全量门禁 ×2 绿」在提交后不成立（开发期这两个文件尚未被 git 跟踪，`git ls-files` 看不到）。
+- 复现：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` ×2（均 rc=2）；主工作区单套件
+  `PASS=269 FAIL=0`（6m26s，但依赖未跟踪文件）。
+- **真实控制面独立核验（开发树）**：三进程真实存活；`/healthz`=`ok`、`/readyz`=`ok`；`get ns` 含
+  default/kube-system；cm/scheduler lease 存在且被持有；匿名 `/api`、`/api/v1/namespaces` 均 **401**；
+  三份 kubeconfig `0600 root:root`，身份 `kubernetes-admin/system:masters`、
+  `system:kube-controller-manager`、`system:kube-scheduler`；进程参数实测
+  `--anonymous-auth=false`、`--authorization-mode=RBAC,Node`、`NodeRestriction`、SA/TLS flags。
+  默认 VIP 派生独立验证：`k8s_vip=10.0.0.100:19443` → server `https://10.0.0.100:19443`；
+  第二次运行 `changed=0`，`--check` `changed=0`。
+- **牙齿 5/5 被捕获**（独立 worktree，主工作区 clean；均先补回未入库模板）：T1 删 anon flag
+  `263/6`（但 HTTP 匿名断言仍 PASS，实际 403 → M2）；T2 AlwaysAllow `266/3`；T3 scheduler 用 admin
+  证书 `268/1`（命中身份断言）；T4 etcd 指向 12399 `253/16`（healthz/readyz/ns 明确 FAIL）；
+  T5 强制 changed `267/2`（changed=0 + handler 断言）。
+- **M1（MAJOR）**：契约 §5.1「真机复验（必做）」命令指向 `playbooks/control-plane.yml`，但该 playbook
+  仍是占位 debug（0 个 role 任务），命令 exit 0 却什么也不部署；A6 受限项无可执行复验路径。
+- **M2（MAJOR）**：B7 匿名断言接受 401 或 403，删 `--anonymous-auth=false` 后 `/api` 返回 403 仍被判
+  PASS；应改断言 401 或改用 `/healthz`。
+- 收尾：无残留进程/端口/沙箱；宿主无 `kube-*.service`、无 `/etc/kubernetes`、无 `/var/lib/kubelet`；
+  `git ls-files` 无 `.key/.crt/.pem`；主工作区 clean。其余套件单跑全绿：T002 `39/0`、T003 `59/0`、
+  T004 `100/0`、T005 `225/0`、T006 `186/0`、T007 `269/0`（开发树）——唯一红的是 T001（B2）。
+- 变更：`reports/T007-r1.md`（新增）、`state.yaml`（`changes_requested` / `eval_round: 1` /
+  `active_task: T007` / `next_action: "build T007 (fix r1)"` / `phase: BUILDING` / blockers）、本文件。
+  `roadmap.md` T007 保持 `in-progress`（FAIL 不勾选）。
+- 下一步：`build T007 (fix r1)`——先 B1（模板入库 + 干净检出复跑 269）、再 B2（收紧 T001 探针）、
+  M2（严格 401）、M1（可执行真机复验 playbook），重跑 `make test` ×2 与干净 worktree 套件后交 r2。
+
+---
+
 ## [2026-10-23] Generator · T007 → ready_for_eval（build）
 
 - 时间：2026-10-23
