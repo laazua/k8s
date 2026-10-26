@@ -18,8 +18,21 @@ env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test
 ```
 
 依赖：`ansible-playbook`、`yamllint`、`python3`(+PyYAML)、`openssl`、`curl`、`ss`、
-免密 `sudo`（以 root 应用生产属主模型并从 unit 拉起进程）、网络可访问 `dl.k8s.io`
-（制品已缓存时离线可跑）。
+免密 `sudo`（以 root 应用生产属主模型并从 unit 拉起进程）。**网络只在首次填充缓存时需要**
+（4 个官方二进制 + etcd 发行包，均 sha256 强校验）；缓存就位后套件完全离线可跑。
+
+> **密闭性（T007 r2 M4）**：套件启动时会自动 `re-exec` 进独立网络命名空间
+> （`sudo unshare -n`：仅 `lo`、无默认路由），并在 B0 门禁里自证「外网不可达」。
+> 因此任何绕过 `roles/download` 制品缓存的网络依赖都会当场失败，而不是在 CDN 限速时
+> 变成「第二次门禁红」。缓存缺失时会在**进入 netns 之前**一次性填充（首次运行）。
+> 用 `unshare -n` 而非 `unshare -rn`：本机 user namespace 只映射 uid 0→1000，
+> 套件需 `chown 65534`（etcd）与 ansible `become`，userns 内会 `EINVAL`；网络隔离语义相同。
+
+手动断网复跑（等价于套件的自动行为；`T007_IN_NETNS=1` 避免二次 re-exec）：
+
+```bash
+sudo unshare -n bash -c 'ip link set lo up; cd <repo> && T007_IN_NETNS=1 tests/control-plane/test_control_plane_roles.sh'
+```
 
 > **必须跑在「已跟踪文件的干净检出」里**（`git archive HEAD` 或 `git worktree add --detach`）：
 > 套件会断言 role 引用的模板已 `git ls-files` 跟踪（防 `.gitignore` 吞掉交付资产）。

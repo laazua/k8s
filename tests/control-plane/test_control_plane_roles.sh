@@ -33,11 +33,35 @@ snapshot_ports() {
 
 # --- Ansible 探测 -----------------------------------------------------------
 ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-$(command -v ansible-playbook 2>/dev/null || echo "$HOME/ansible/bin/ansible-playbook")}"
+# root 直跑（`sudo unshare -n ...`，如手动断网复验）时 $HOME=/root：回落到调用者的安装。
+if [[ ! -x "$ANSIBLE_PLAYBOOK" && -n "${SUDO_USER:-}" ]]; then
+  _sudo_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+  if [[ -n "$_sudo_home" && -x "$_sudo_home/ansible/bin/ansible-playbook" ]]; then
+    ANSIBLE_PLAYBOOK="$_sudo_home/ansible/bin/ansible-playbook"
+  fi
+fi
 if [[ "$ANSIBLE_PLAYBOOK" == */ansible/bin/ansible-playbook ]]; then
   export PYTHONPATH="$(dirname "$(dirname "$ANSIBLE_PLAYBOOK")"):${PYTHONPATH:-}"
 fi
 have_ansible() { command -v "$ANSIBLE_PLAYBOOK" >/dev/null 2>&1 || [[ -x "$ANSIBLE_PLAYBOOK" ]]; }
 YAMLLINT="${YAMLLINT:-yamllint}"
+# 解析为绝对路径：套件会 re-exec 进 sudo（root 的 PATH 不含用户 ~/.local/bin）；
+# 若以 root 直接运行（如 `sudo unshare -n ...`），用 $SUDO_USER 兜底。
+if [[ "$YAMLLINT" != /* ]]; then
+  YAMLLINT="$(command -v "$YAMLLINT" 2>/dev/null || true)"
+  if [[ -z "$YAMLLINT" && -n "${SUDO_USER:-}" && -x "/home/$SUDO_USER/.local/bin/yamllint" ]]; then
+    YAMLLINT="/home/$SUDO_USER/.local/bin/yamllint"
+  fi
+  [[ -n "$YAMLLINT" ]] || YAMLLINT="yamllint"
+fi
+# 用户级 pip 安装（yamllint）位于 user site-packages，root 的 python 默认不加载 → 显式带上。
+USER_SITE="$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || true)"
+if [[ -n "${SUDO_USER:-}" ]]; then
+  _pyver="$(python3 -c 'import sys; print("python%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+  if [[ -n "$_pyver" && -d "/home/$SUDO_USER/.local/lib/$_pyver/site-packages" ]]; then
+    USER_SITE="/home/$SUDO_USER/.local/lib/$_pyver/site-packages"
+  fi
+fi
 
 ROLE_APISERVER=roles/kube-apiserver
 ROLE_CM=roles/kube-controller-manager
@@ -56,6 +80,30 @@ declare -A ART_SHA=(
   [kube-scheduler]=1e519991d41389bb885df59c19389afe847dad511992d009ff766bc7f3992f89
   [kubectl]="$KUBECTL_SHA"
 )
+
+# 密闭性模式：suite = 已在独立 netns（仅 lo）内；none = 未隔离（由文件头 re-exec 置位）。
+NETNS_MODE="none"
+
+# --- 密闭性：整个套件在独立 netns（仅 lo、无默认路由）中执行 -------------------
+# T007 r2 M4：kubectl 曾绕过制品缓存直连 dl.k8s.io，CDN 限速时门禁第二次必红。
+# 现在**每次运行**都自动 re-exec 进独立 netns：缓存命中 → 零外网请求；任何残留的
+# 网络依赖都会立即失败（离线/限速环境可复现）。
+# 用 `sudo unshare -n`（真 root + 独立 netns）而非 `unshare -rn`：本机 user namespace
+# 只映射 uid 0→1000，套件需 chown 65534（etcd）与 ansible become，userns 内会 EINVAL；
+# 网络隔离语义相同（新 netns 仅有 lo、无默认路由）。T007_IN_NETNS=1 为内部递归保护。
+if [[ "${T007_IN_NETNS:-0}" == "1" ]]; then
+  NETNS_MODE="suite"
+elif sudo -n true 2>/dev/null &&
+  sudo -n unshare -n bash -c 'ip link set lo up >/dev/null 2>&1; ! ip route show default | grep -q .' >/dev/null 2>&1; then
+  exec sudo -n env T007_IN_NETNS=1 \
+    PYTHONPATH="${PYTHONPATH:-}${USER_SITE:+:${USER_SITE}}" \
+    ANSIBLE_PLAYBOOK="$ANSIBLE_PLAYBOOK" \
+    T007_TEST_CACHE="$CACHE" \
+    ETCD_TEST_CACHE="${ETCD_TEST_CACHE:-}" \
+    YAMLLINT="$YAMLLINT" \
+    T007_TEST_CONFLICT_PORT="${T007_TEST_CONFLICT_PORT:-}" \
+    unshare -n bash -c 'ip link set lo up; exec "$@"' _ bash "$(readlink -f "$0")"
+fi
 
 echo "== T007 控制平面组件 role 验收 =="
 
@@ -242,8 +290,8 @@ if have_ansible; then
 else
   bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
 fi
-if command -v "$YAMLLINT" >/dev/null 2>&1; then
-  if "$YAMLLINT" -c .yamllint "$ROLE_APISERVER" "$ROLE_CM" "$ROLE_SCHED" tests/control-plane \
+if [[ -x "$YAMLLINT" ]] || command -v "$YAMLLINT" >/dev/null 2>&1; then
+  if PYTHONPATH="${USER_SITE:+$USER_SITE:}${PYTHONPATH:-}" "$YAMLLINT" -c .yamllint "$ROLE_APISERVER" "$ROLE_CM" "$ROLE_SCHED" tests/control-plane \
     >/tmp/opencode/t007_yamllint.log 2>&1; then
     ok "yamllint（roles/kube-*, tests/control-plane）无 error"
   else
@@ -319,10 +367,23 @@ printf '  （etcd 发行包缓存就绪：%s）\n' "$ETCD_TARBALL"
 # 缺陷背景（T007 r2 M4）：kubectl 曾用显式 dest 直指 usr/local/bin，绕过 download
 # role 的制品缓存，每次首跑都直连 dl.k8s.io；CDN 限速时全量门禁第二次必红。
 # 该门禁把「测试不依赖外网」变成硬约束：
-#   静态：stack playbook 的 kubectl 下载项必须落制品缓存，不得直写 bin；
-#   动态：缓存已就位 + kubectl_url 指向不可达地址（可用时再叠加 unshare -n 真断网，
-#         新 netns 仅 lo、无默认路由），stack 仍须 exit 0 且装出的 kubectl sha256 正确。
-#         缓存命中时 get_url 不发请求，因此任何真实网络依赖都会在此立即失败。
+#   1) 套件**自身**在独立 netns（仅 lo、无默认路由）中执行（见文件头 re-exec），
+#      此处自证隔离生效且外部地址不可达（断网验证固化进测试）；
+#   2) 静态：stack playbook 的 kubectl 下载项必须落制品缓存，不得直写 bin；
+#   3) 动态：缓存已就位 + kubectl_url 指向不可达地址时 stack 仍须 exit 0 且装出的
+#      kubectl sha256 正确 → 证明走的是 roles/download 的缓存命中路径（零网络请求）。
+if [[ "$NETNS_MODE" == "suite" ]]; then
+  if [[ -z "$(ip route show default 2>/dev/null)" ]] &&
+    ! timeout 3 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' >/dev/null 2>&1; then
+    printf '  \033[32mOK\033[0m   B0 密闭性：套件运行于独立 netns（仅 lo、无默认路由，外网不可达）\n'
+  else
+    bad "B0 密闭性失败：netns 内存在默认路由或外网仍可达（断网验证失效）"
+  fi
+elif sudo -n unshare -n true >/dev/null 2>&1; then
+  bad "B0 密闭性失败：unshare 可用但套件未在隔离 netns 中运行（re-exec 未生效）"
+else
+  printf '  （WARN 无 unshare 权限：无法启用断网自证，仅做不可达 URL 校验）\n'
+fi
 stack_uses_cache() {
   # 下载项必须落制品缓存（download_items 内不写显式 dest → 默认 download_cache_dir），
   # 且沙箱 bin 只能由「从缓存 copy」产生（不允许下载项直写 usr/local/bin）。
@@ -332,18 +393,10 @@ stack_uses_cache() {
     ! grep -qE '^[[:space:]]+dest:' <<<"$block"
 }
 stack_offline_ok() {  # stack_offline_ok <sandbox> <log>
-  local sb="$1" log="$2" inner rc
+  # 套件已在 netns 内（无外网）时直接跑；无 unshare 时仍用不可达 URL 兜底。
+  local sb="$1" log="$2"
   local json="{\"sandbox_root\":\"$sb\",\"kubectl_url\":\"http://127.0.0.1:1/kubectl\"}"
-  if sudo -n unshare -n true >/dev/null 2>&1; then
-    # 真断网：新 netns 仅 lo、无默认路由（等价 unshare -rn；保留 root 以便 become）
-    inner="ip link set lo up; cd $(printf '%q' "$PWD") && timeout 300 $(printf '%q' "$ANSIBLE_PLAYBOOK") -i $(printf '%q' "$INV") $(printf '%q' "$PLAY_STACK") -e $(printf '%q' "$json")"
-    sudo -n env PYTHONPATH="${PYTHONPATH:-}" unshare -n bash -c "$inner" >"$log" 2>&1
-    rc=$?
-  else
-    timeout 300 "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_STACK" -e "$json" >"$log" 2>&1
-    rc=$?
-  fi
-  return $rc
+  timeout 300 "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_STACK" -e "$json" >"$log" 2>&1
 }
 OFF_SB="$(mktemp -d /tmp/opencode/t007off.XXXXXX)"
 chmod 0755 "$OFF_SB"
@@ -357,11 +410,7 @@ if stack_uses_cache && stack_offline_ok "$OFF_SB" /tmp/opencode/t007_offline_sta
   OFF_SHA="$(sha_of "$OFF_SB/usr/local/bin/kubectl")"
 fi
 if [[ "$OFF_SHA" == "$KUBECTL_SHA" ]]; then
-  if sudo -n unshare -n true >/dev/null 2>&1; then
-    printf '  \033[32mOK\033[0m   B0 密闭性：kubectl 从制品缓存安装（unshare -n 断网 + 不可达 URL 下 stack exit 0）\n'
-  else
-    printf '  \033[32mOK\033[0m   B0 密闭性：kubectl 从制品缓存安装（不可达 URL 下 stack exit 0）\n'
-  fi
+  printf '  \033[32mOK\033[0m   B0 密闭性：kubectl 从制品缓存安装（不可达 URL 下 stack exit 0，sha256 一致）\n'
 else
   bad "B0 密闭性失败：kubectl 未命中本地制品缓存（不可达 URL 下 stack 未 exit 0；见 /tmp/opencode/t007_offline_stack.log）"
 fi
