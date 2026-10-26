@@ -5,6 +5,81 @@
 
 ---
 
+## [2026-10-26] Generator · T007 r2 修复 → ready_for_eval（build）
+
+- 时间：2026-10-26（UTC 01:4xZ）
+- 角色：Generator（实现 + 自测；**未自判 PASS**）
+- 任务：`T007`（r2 FAIL 修复；被测基线 `1f38548` / 评估报告 `reports/T007-r2.md`）
+- 输入缺陷：**M4（MAJOR/BLOCKER）** T007 套件非密闭（kubectl 绕过制品缓存每次重下，
+  CDN 限速时 A22 第二次门禁红）；**M5（MINOR）** 密钥探针漏 `my-kubeconfig`/`admin.conf` 等变体。
+
+### 做了什么（只改测试接线/探针，未改产品 role、未放宽断言、未改 .gitignore）
+
+1. **M4-a 缓存接线**（`tests/control-plane/sandbox_stack.yml`，提交 `8b13aeb`）：
+   kubectl 删除显式 `dest: .../usr/local/bin/kubectl` → 落 `download_cache_dir`
+   （`$SB/opt/k8s/artifacts`）；post_tasks 从缓存 `copy` 到沙箱 `usr/local/bin`（0755）。
+   测试预置 etcd 发行包（固定 sha256）到缓存 → stack 的 etcd play 也走缓存命中。
+2. **M4-b 断网固化**（`tests/control-plane/test_control_plane_roles.sh`，提交 `9117601`）：
+   套件启动即 `exec` 进 `sudo unshare -n`（新 netns **仅 lo、无默认路由**）；B0 门禁自证
+   ①无默认路由 ②`1.1.1.1:443` 不可达 ③`kubectl_url` 不可达时 stack 仍 exit 0 且 kubectl
+   sha256 正确。缓存缺失才在**进入 netns 前**一次性填充；此后每次运行零外网。
+   > 用 `sudo unshare -n` 而非 `unshare -rn`：本机 userns 只映射 uid 0→1000，
+   > 套件需 `chown 65534`（etcd）与 ansible `become`，userns 内实测 `EINVAL`/sudo 不可用；
+   > 网络隔离语义相同。
+   同时把 `YAMLLINT` 解析为绝对路径、把 user site-packages 加入 `PYTHONPATH`（root 下可用）。
+3. **M5 探针**（`tests/skeleton/test_skeleton.sh`，提交 `8b13aeb`）：扩 `SECRET_RE` +
+   统一 `is_secret_path()`；正例新增 `my-kubeconfig`/`kubeconfig-old`/`config.kubeconfig.bak`/
+   `admin.conf`/`controller-manager.conf`/`scheduler.conf`；端到端临时仓库三文件必须判「已跟踪」。
+   T001 仍 27 条断言。
+
+### 红 → 绿（证据日志）
+
+- **红（原始 M4，确定性）**：`1f38548` 旧代码 + 缓存已就位 + 断网 → stack 仍在
+  `download:fetch` 对 kubectl 发请求失败（`dest=.../usr/local/bin/kubectl`、
+  `url=https://dl.k8s.io/...`、`名称或服务未知`）；整包 `PASS=168 FAIL=101`、rc=1
+  （`/tmp/opencode/t007fix2_red_m4_netns.log`）。
+- **红（本轮新断言，实现前）**：`PASS=269 FAIL=1`，唯一 FAIL = B0「套件未在隔离 netns 中运行」
+  （`/tmp/opencode/t007fix2_red_netns.log`）。
+- **绿（主工作区，自动 netns）**：`PASS=269 FAIL=0`、rc=0；B0 两条 OK
+  （`/tmp/opencode/t007fix2_green_netns3.log`）。
+- **M5 红/牙齿**：旧正则独立探针 5 个变体全 MISS（`t007fix2_red_m5.log`）；
+  新代码回退旧正则 → T001 `26/1`，明确报漏报（`t007fix2_teeth_m5.log`）；当前 T001 `27/0`。
+- **干净归档 ×2**（`git archive 0a9729c` → `/tmp/opencode/t007fix2` + `git init`，197 files）：
+  run1 **rc=0**（1952 s）、run2 **rc=0**（1938 s）；两次计数一致
+  `T001 27 / T002 39 / T003 59 / T004 100 / T005 225 / T006 186 / T007 269`、全部 `FAIL=0`；
+  两次 T007 的 B0 断网自证均 OK。
+- **断网手动复跑**：`sudo unshare -n bash -c 'ip link set lo up; cd /opt/codes/k8s &&
+  T007_IN_NETNS=1 ./tests/control-plane/test_control_plane_roles.sh'` → **269/0**、rc=0；
+  进程内仅 `lo`、无默认路由（`/tmp/opencode/t007fix2_netns_full3.log`）。
+- `unshare -rn` 不可用说明：userns 仅映射 `uid 0→1000`，`chown 65534`/`sudo` 在 userns 内失败
+  （套件需 root + uid 65534）；故以 `sudo unshare -n`（真 root + 独立 netns）固化，隔离语义相同。
+
+### 怎么复验
+
+```bash
+tests/control-plane/test_control_plane_roles.sh            # 269/0（自动断网 netns）
+tests/skeleton/test_skeleton.sh                            # 27/0
+env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test            # ×2，T001–T007 计数不回退
+```
+
+### 改了哪些文件
+
+- `tests/control-plane/sandbox_stack.yml`（kubectl 缓存接线）
+- `tests/control-plane/test_control_plane_roles.sh`（etcd 包缓存 + netns 自证 + root/yamllint 适配）
+- `tests/control-plane/README.md`（密闭性/离线说明）
+- `tests/skeleton/test_skeleton.sh`（M5 探针）
+- `docs/harness/state/contracts/T007.md`（§6.1 更新、§10.8–10.11 修复记录）
+- `docs/harness/state/{state.yaml,handoff.md}`；评估产物 `reports/T007-r2.md`（原样提交）
+
+### 待办 / 风险
+
+- 产品 role 未改；systemd `active+enabled` 等受限项仍按契约 §5 声明（真机复验 playbook 未变）。
+- 断网自证依赖 `unshare` + 免密 sudo（套件本就要求 root）；无 `unshare` 时降级为
+  「不可达 URL」校验并打印 WARN（不计 FAIL）。
+- 全量套件 ~30 min/次；本轮干净归档连跑两次。
+
+---
+
 ## [2026-10-24] Evaluator · T007 r2 → FAIL（eval）
 
 - 时间：2026-10-24（UTC 05:50Z）
