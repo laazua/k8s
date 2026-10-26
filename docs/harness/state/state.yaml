@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T007      # 例如 T001
-contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # 当前任务已评估轮数
-next_action: "eval T007 (r2)"
+contract_status: changes_requested  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 2          # 当前任务已评估轮数
+next_action: "build T007 (fix r2)"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -30,5 +30,6 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # T007 r1 修复完成（红→绿 + 干净归档 ×2 绿）；等 r2 评估
-updated: "2026-10-24T03:20:00Z"   # ISO8601
+blockers:
+  - "T007 r2 FAIL: M4 套件非密闭——kubectl 绕过本地缓存每次从 dl.k8s.io 重下；CDN 限速时 A22 两次门禁红（run2 169/100）。修 sandbox_stack.yml dest / 预置缓存后重跑 make test ×2。"
+updated: "2026-10-24T05:50:00Z"   # ISO8601

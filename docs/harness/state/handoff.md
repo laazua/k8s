@@ -5,6 +5,54 @@
 
 ---
 
+## [2026-10-24] Evaluator · T007 r2 → FAIL（eval）
+
+- 时间：2026-10-24（UTC 05:50Z）
+- 角色：Evaluator（独立只读评审；未改代码/测试/契约）
+- 任务：`T007`（被测 `1f38548`，代码修复 `056364f`；r1 `afd7338` = FAIL）
+- **结论：FAIL**（报告 `reports/T007-r2.md`）；六项硬指标 功能 **5** / 幂等 **5** / 可配置 4 /
+  测试 **3** / 结构 4 / 安全 4；产品完整度 4。**1 MAJOR（M4）+ 1 MINOR（M5）**。
+- **B1/B2/M1/M2 全部真修复**（本轮重点，已独立复核）：
+  - B1：`git ls-files roles/kube-apiserver/templates/` 含 `kubeconfig_file.j2`；`git archive 1f38548`
+    解包 196 文件含该模板；纯归档 T007 套件 **267/0**（无 `.git` 时 A8 两条 git 断言按设计跳过），
+    **首跑无 fatal**；`.gitignore` 与 `afd7338` 逐字节一致。
+  - B2：T001 **27/0**（主工作区 + git-init 归档 run1）；探针独立核验正例 9/9、负例 6/6；
+    临时仓库真实 `kubeconfig`（无扩展名）**DETECTED**；牙齿回退旧正则 → **26/1**。
+  - M2：`/api`、`/api/v1/namespaces` 实测 **401**，代码 `== '401'`；牙齿删 `--anonymous-auth` → 实际 403、断言 **FAIL**。
+  - M1：`tests/control-plane/real_services.yml` 三 role + `*_manage_service: true`，两种 inventory
+    `--syntax-check` rc=0；契约 §5.1 已改为可执行命令 + 回滚，且声明 `playbooks/control-plane.yml` 仍占位。
+- **FAIL 唯一原因 M4（MAJOR，测试缺陷，非产品缺陷）**：T007 套件非密闭——`sandbox_stack.yml:21`
+  给 kubectl 显式 `dest` 覆盖了 `download_cache_dir`，测试 `test_control_plane_roles.sh:352-354`
+  复制到 `$SB/opt/k8s/artifacts` 的缓存**未被使用**；每次首跑都从 `dl.k8s.io` 重下 56 MB。
+  本次评估期间 CDN 吞吐 ~40–55 KB/s → `get_url` 120 s×3 + 套件 600 s 内下不完：
+  - 干净归档 run1 **rc=0**，计数 `27/39/59/100/225/186/269`；
+  - run2 **rc=2**，T007 `169/100`（T001–T006 仍全绿且计数不变）；
+  - 网络恢复窗口内 T007 重跑仍 `169/100`（同一 fetch 卡死）。
+  把 kubectl 预置到沙箱后（牙齿 worktree 仅加预置、不改断言），动态阶段完整可跑（T3 264/5、T4 268/1、T5 267/2），
+  证明产品代码正确、缺陷在缓存接线。**A22「全量门禁 ×2」未达成 → FAIL。**
+- 修复方向（2–3 行，只改测试）：kubectl `dest` 指向 `$SB/opt/k8s/artifacts/kubectl` 再 copy 到
+  `usr/local/bin`，或在 stack playbook 前 `cp "$CACHE/kubectl" "$SB/usr/local/bin/kubectl"`；
+  然后在干净归档 `make test` ×2（建议附加断网/限速验证），交 r3。
+- **真实控制面独立核验**（纯归档 run 期间）：三进程存活；`/healthz`=`ok`、`/readyz`=`ok`；
+  `get ns` 含 default/kube-node-lease/kube-public/kube-system；cm/scheduler lease HOLDER 非空；
+  匿名 `/api`、`/api/v1/namespaces`、`/healthz` 均 **401**；三份 kubeconfig `0600 root:root`、
+  身份 admin/cm/scheduler 正确、server=`https://127.0.0.1:16443`（默认 VIP 派生）。
+- **独立幂等/fail-fast**（自建沙箱）：cp play `changed=30 → 0`、无 handler、unit 哈希不变；
+  缺证书 `rc=2`、报「缺少控制面所需证书/密钥」、unit 哈希不变。
+- **牙齿 5/5 被捕获**（独立 worktree，主工作区 clean）：T1 模板退索引→静态 A1 FAIL；T2 旧正则→T001 26/1；
+  T3 删 anon flag→B7 实际 403 FAIL（264/5）；T4 scheduler 嵌 admin 证书→B5 身份 FAIL（268/1）；
+  T5 `changed_when: true`→B8 changed=0/handler FAIL（267/2）。
+- 收尾：无残留进程/端口/沙箱；宿主无 `kube-*.service`、无 `/etc/kubernetes`、无 `/var/lib/kubelet`；
+  worktree 全部移除；`git ls-files` 无凭据。主工作区有一处**非本会话**并发改动
+  `M docs/harness/state/spec.md`（Planner v1.3，未触碰）。
+- 变更：`reports/T007-r2.md`（新增）、`state.yaml`（`changes_requested` / `eval_round: 2` /
+  `active_task: T007` / `next_action: "build T007 (fix r2)"` / `phase: BUILDING` / blockers M4）、本文件。
+  `roadmap.md` T007 保持 `in-progress`（FAIL 不勾选）。
+- 下一步：`build T007 (fix r2)`——只修 M4（kubectl 缓存接线），重跑干净归档 `make test` ×2 后交 r3；
+  B1/B2/M1/M2 无需再改。
+
+---
+
 ## [2026-10-24] Generator · T007 r1 修复 → ready_for_eval（build）
 
 - 时间：2026-10-24
