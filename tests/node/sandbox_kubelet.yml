@@ -1,0 +1,29 @@
+# =============================================================================
+#  T008 沙箱 kubelet（真实安装/渲染，不调用 systemctl）
+#   - 证书消费 T004 pki 为 [k8s_node] node1 签发的 kubelet 证书；
+#   - runtime endpoint 指向沙箱 containerd socket（必须先启动 containerd）；
+#   - root-dir/cert-dir/kubeconfig 全部落 sandbox_root；
+#   - 高位端口 20250/20248，不占默认 10250/10248；
+#   - failSwapOn=false：共享开发机禁止 swapoff（生产由 base role 关闭 swap）。
+# =============================================================================
+- name: T008 sandbox kubelet
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kubelet_root_prefix: "{{ sandbox_root }}"
+    kubelet_manage_service: false
+    kubelet_cgroup_driver: "{{ container_runtime_cgroup_driver | default('systemd') }}"
+    kubelet_container_runtime_endpoint: "unix://{{ sandbox_root }}/run/containerd/containerd.sock"
+    kubelet_pki_dir: "{{ sandbox_root }}/etc/kubernetes/pki"
+    kubelet_client_ca_file: "{{ kubelet_pki_dir }}/ca.crt"
+    kubelet_client_cert_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.crt"
+    kubelet_client_key_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.key"
+    kubelet_node_ip: 127.0.0.1
+    kubelet_fail_swap_on: false
+    kubelet_address: 127.0.0.1
+    kubelet_port: 20250
+    kubelet_healthz_port: 20248
+  roles:
+    - role: kubelet

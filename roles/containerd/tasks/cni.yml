@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# containerd:cni — 官方 CNI plugins（bridge/host-local/loopback/portmap/tuning）
+#   解包到制品目录后仅复制必需插件到 containerd_cni_bin_dir；
+#   已存在且内容一致 → changed=0。
+# =============================================================================
+
+- name: "containerd:cni | 创建 CNI 解包目录"
+  ansible.builtin.file:
+    path: "{{ cni_plugins_extract_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  tags: ["containerd", "containerd:cni"]
+
+- name: "containerd:cni | 下载官方 CNI plugins（复用 download role）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ containerd_root_prefix }}"
+    download_cache_dir: "{{ containerd_artifact_dir }}"
+    download_file_owner: "{{ containerd_root_owner }}"
+    download_file_group: "{{ containerd_root_group }}"
+    download_timeout: "{{ containerd_download_timeout }}"
+    download_retries: "{{ containerd_download_retries }}"
+    download_retry_delay: "{{ containerd_download_retry_delay }}"
+    download_items:
+      - name: "{{ cni_plugins_tarball_name }}"
+        url: "{{ cni_plugins_download_url }}"
+        sha256: "{{ cni_plugins_sha256 }}"
+        dest: "{{ cni_plugins_artifact_path }}"
+        mode: "0644"
+  tags: ["containerd", "containerd:cni"]
+
+- name: "containerd:cni | 解包 CNI plugins（已解包则跳过）"
+  ansible.builtin.unarchive:
+    src: "{{ cni_plugins_artifact_path }}"
+    dest: "{{ cni_plugins_extract_dir }}"
+    remote_src: true
+    creates: "{{ cni_plugins_extract_dir }}/bridge"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+    mode: "0755"
+  tags: ["containerd", "containerd:cni"]
+
+- name: "containerd:cni | 创建 CNI bin 目录"
+  ansible.builtin.file:
+    path: "{{ containerd_cni_bin_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  tags: ["containerd", "containerd:cni"]
+
+- name: "containerd:cni | 安装必需 CNI 插件"
+  ansible.builtin.copy:
+    src: "{{ cni_plugins_extract_dir }}/{{ item }}"
+    dest: "{{ containerd_cni_bin_dir }}/{{ item }}"
+    remote_src: true
+    mode: "0755"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  loop: "{{ cni_plugins_required }}"
+  loop_control:
+    label: "{{ item }}"
+  notify: "containerd:restart"
+  tags: ["containerd", "containerd:cni"]

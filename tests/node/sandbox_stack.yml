@@ -1,0 +1,7 @@
+# =============================================================================
+#  T008 沙箱 stack：复用 T007 的 kubectl + pki + 单成员 TLS etcd。
+#  与 T007 的差异仅在 inventory：本套件声明 [k8s_node] node1，因此 pki 会为
+#  node1 额外签发 kubelet 客户端/serving 证书（T004 范围，T008 消费）。
+#  所有落盘由 sandbox_root 重定向；不调用 systemctl。
+# =============================================================================
+- import_playbook: ../control-plane/sandbox_stack.yml

@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# roles/containerd — 入口
+#   facts    → 推导 ExecStart 参数（无副作用）
+#   validate → cgroup/制品哈希/runc/CNI 前置校验（fail fast，任何失败都不落盘）
+#   binary   → download role 取官方 containerd 发行包 + sha256 + 版本断言
+#   runc     → 官方 runc 二进制（CRI runtime 依赖）
+#   cni      → 官方 CNI plugins（bridge/host-local/loopback/portmap/tuning）
+#   crictl   → CRI 自检工具（可关闭）
+#   config   → 渲染 config.toml + systemd unit
+#   service  → 启用/启动（生产；测试 manage_service=false）
+#   verify   → 可选：等待 CRI socket 并执行 crictl info
+# =============================================================================
+
+- name: "containerd:facts | 推导启动参数"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["containerd", "containerd:facts"]
+
+- name: "containerd:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:binary | 安装官方 containerd"
+  ansible.builtin.import_tasks: binary.yml
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:runc | 安装 runc"
+  ansible.builtin.import_tasks: runc.yml
+  when: containerd_install_runc | bool
+  tags: ["containerd", "containerd:runc"]
+
+- name: "containerd:cni | 安装 CNI plugins"
+  ansible.builtin.import_tasks: cni.yml
+  when: containerd_install_cni_plugins | bool
+  tags: ["containerd", "containerd:cni"]
+
+- name: "containerd:crictl | 安装 crictl"
+  ansible.builtin.import_tasks: crictl.yml
+  when: containerd_install_crictl | bool
+  tags: ["containerd", "containerd:crictl"]
+
+- name: "containerd:config | config.toml 与 systemd unit"
+  ansible.builtin.import_tasks: config.yml
+  tags: ["containerd", "containerd:config"]
+
+- name: "containerd:service | 启用并启动"
+  ansible.builtin.import_tasks: service.yml
+  tags: ["containerd", "containerd:service"]
+
+- name: "containerd:verify | CRI 端点自检"
+  ansible.builtin.import_tasks: verify.yml
+  tags: ["containerd", "containerd:verify"]

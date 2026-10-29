@@ -1,0 +1,128 @@
+---
+# =============================================================================
+# containerd:validate — 前置校验（fail fast；任何失败都不落盘）
+#   1) cgroup driver 合法 + 默认强制 systemd + 与全局/ kubelet 交叉一致
+#   2) 制品 sha256 可复现（已有制品必须显式固定）
+#   3) 缺 runc / CNI plugins（且要求已存在时）立即失败
+# =============================================================================
+
+- name: "containerd:validate | 校验 cgroup driver 取值"
+  ansible.builtin.assert:
+    that:
+      - containerd_cgroup_driver in ['systemd', 'cgroupfs']
+    fail_msg: >-
+      containerd_cgroup_driver='{{ containerd_cgroup_driver }}' 非法；
+      仅支持 systemd / cgroupfs。
+    quiet: true
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 要求 systemd cgroup driver（默认强制）"
+  ansible.builtin.assert:
+    that:
+      - containerd_cgroup_driver == 'systemd'
+    fail_msg: >-
+      containerd_cgroup_driver='{{ containerd_cgroup_driver }}'，但
+      containerd_require_systemd_cgroup=true。Kubernetes 节点必须与 kubelet 使用
+      systemd cgroup driver；请设置 container_runtime_cgroup_driver=systemd
+      或显式关闭 containerd_require_systemd_cgroup（不推荐）。
+    quiet: true
+  when: containerd_require_systemd_cgroup | bool
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | cgroup driver 与全局单一来源一致"
+  ansible.builtin.assert:
+    that:
+      - containerd_cgroup_driver == (container_runtime_cgroup_driver | default(containerd_cgroup_driver))
+    fail_msg: >-
+      cgroup driver 不一致：containerd='{{ containerd_cgroup_driver }}'，
+      container_runtime_cgroup_driver='{{ container_runtime_cgroup_driver | default('(未设置)') }}'。
+      请统一为 systemd。
+    quiet: true
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | cgroup driver 与 kubelet 交叉一致（变量存在时）"
+  ansible.builtin.assert:
+    that:
+      - kubelet_cgroup_driver == containerd_cgroup_driver
+    fail_msg: >-
+      cgroup driver 不一致：containerd='{{ containerd_cgroup_driver }}'，
+      kubelet='{{ kubelet_cgroup_driver }}'。两者必须同为 systemd，否则节点运行时
+      与 kubelet 的 cgroup 管理会冲突。
+    quiet: true
+  when: kubelet_cgroup_driver is defined
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 检查既有 containerd 制品"
+  ansible.builtin.stat:
+    path: "{{ containerd_artifact_path }}"
+  register: containerd_artifact_stat
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 断言既有制品必须显式固定 sha256（离线可复现）"
+  ansible.builtin.assert:
+    that:
+      - containerd_sha256 | length == 64
+    fail_msg: >-
+      制品 {{ containerd_artifact_path }} 已存在，但未提供 containerd_sha256。
+      离线部署必须显式固定哈希（不可用本地文件自证）；请设置 containerd_sha256
+      或使用已知版本（containerd_known_sha256）。
+    quiet: true
+  when:
+    - containerd_sha256 | length == 0
+    - containerd_artifact_stat.stat.exists
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 检查 runc（不安装时必须已存在）"
+  ansible.builtin.stat:
+    path: "{{ runc_binary }}"
+  register: containerd_runc_stat
+  when:
+    - containerd_require_runc | bool
+    - not (containerd_install_runc | bool)
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 缺 runc → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - containerd_runc_stat.stat.exists
+    fail_msg: >-
+      缺少 runc：{{ runc_binary }} 不存在，且 containerd_install_runc=false。
+      containerd 的 CRI runtime 依赖 runc；请安装 runc 或打开 containerd_install_runc。
+    quiet: true
+  when:
+    - containerd_require_runc | bool
+    - not (containerd_install_runc | bool)
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 检查 CNI plugins（不安装时必须已存在）"
+  ansible.builtin.stat:
+    path: "{{ containerd_cni_bin_dir }}/{{ item }}"
+  loop: "{{ cni_plugins_required }}"
+  register: containerd_cni_stat
+  when:
+    - containerd_require_cni_plugins | bool
+    - not (containerd_install_cni_plugins | bool)
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 缺 CNI plugins → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - containerd_cni_stat.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      缺少 CNI plugins：{{ containerd_cni_bin_dir }} 下缺少
+      {{ containerd_cni_stat.results | selectattr('stat.exists', 'equalto', false)
+         | map(attribute='item') | join(', ') }}，且 containerd_install_cni_plugins=false。
+      请安装 CNI plugins 或打开 containerd_install_cni_plugins。
+    quiet: true
+  when:
+    - containerd_require_cni_plugins | bool
+    - not (containerd_install_cni_plugins | bool)
+  tags: ["containerd", "containerd:validate"]
+
+- name: "containerd:validate | 断言 sandbox image 已配置"
+  ansible.builtin.assert:
+    that:
+      - containerd_sandbox_image | length > 0
+    fail_msg: "containerd_sandbox_image 不能为空（pause 镜像由 CNI/运行时使用）。"
+    quiet: true
+  tags: ["containerd", "containerd:validate"]

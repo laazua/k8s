@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# roles/kubelet — 默认变量
+#
+# 设计要点：
+#   1) 版本/架构/URL/sha256/路径/端口/flag 全部可配置；tasks/templates 禁止硬编码。
+#   2) 制品复用 roles/download（URL + 强制 sha256 + 代理 + 本地缓存）。
+#   3) 证书**只消费** T004 pki 产物（CN=system:node:<node>、O=system:nodes），
+#      并在 validate 阶段强校验身份/链/私钥匹配（不符 fail-fast，不落盘）。
+#   4) cgroup driver 单一来源 container_runtime_cgroup_driver；与 containerd 交叉校验。
+#   5) 沙箱前缀 kubelet_root_prefix（生产留空）把二进制/config/kubeconfig/root/cert/
+#      unit 整体重定向；systemd 副作用由 kubelet_manage_service 控制。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+kubelet_root_prefix: ""
+
+# --- 版本 / 架构 / 官方制品 ---------------------------------------------------
+kubelet_version: "{{ k8s_version | default('1.31.0') }}"
+kubelet_arch: "{{ k8s_arch | default('amd64') }}"
+kubelet_download_url_base: "https://dl.k8s.io"
+kubelet_download_url: >-
+  {{ kubelet_download_url_base }}/v{{ kubelet_version }}/bin/linux/{{ kubelet_arch }}/kubelet
+kubelet_known_sha256:
+  "1.31.0": "39e7f1c61c8389ea7680690f8bd5dd733672fa16875ae598df0fd8c205df57a9"
+kubelet_sha256: "{{ kubelet_known_sha256[kubelet_version] | default('') }}"
+kubelet_checksum_timeout: 30
+kubelet_artifact_dir: "{{ kubelet_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+kubelet_artifact_path: "{{ kubelet_artifact_dir }}/kubelet"
+kubelet_bin_dir: "{{ kubelet_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+kubelet_binary: "{{ kubelet_bin_dir }}/kubelet"
+kubelet_bin_mode: "0755"
+kubelet_root_owner: root
+kubelet_root_group: root
+kubelet_download_timeout: 120
+kubelet_download_retries: 3
+kubelet_download_retry_delay: 2
+
+# --- 目录 / unit -------------------------------------------------------------
+kubelet_config_dir: "{{ kubelet_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}"
+kubelet_pki_dir: "{{ kubelet_config_dir }}/pki"
+kubelet_root_dir: "{{ kubelet_root_prefix }}/var/lib/kubelet"
+kubelet_cert_dir: "{{ kubelet_root_dir }}/pki"
+kubelet_config_path: "{{ kubelet_root_dir }}/config.yaml"
+kubelet_kubeconfig_path: "{{ kubelet_root_dir }}/kubelet.conf"
+kubelet_root_dir_mode: "0750"
+kubelet_config_mode: "0644"
+kubelet_kubeconfig_mode: "0600"
+kubelet_unit_dir: "{{ kubelet_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}"
+kubelet_unit_name: kubelet.service
+kubelet_unit_path: "{{ kubelet_unit_dir }}/{{ kubelet_unit_name }}"
+kubelet_unit_mode: "0644"
+
+# --- 证书（T004 pki 产物；本 role 只消费并强校验）----------------------------
+kubelet_client_ca_file: "{{ kubelet_pki_dir }}/ca.crt"
+kubelet_client_cert_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.crt"
+kubelet_client_key_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.key"
+kubelet_expected_common_name: "system:node:{{ inventory_hostname }}"
+kubelet_expected_organization: system:nodes
+
+# --- 身份 / 接入 -------------------------------------------------------------
+kubelet_hostname_override: "{{ inventory_hostname }}"
+kubelet_node_ip: "{{ ansible_host | default(inventory_hostname) }}"
+kubelet_apiserver_url: >-
+  https://{{ k8s_vip | default(kubelet_node_ip) }}:{{ k8s_apiserver_port | default(6443) }}
+kubelet_cluster_domain: "{{ k8s_dns_domain | default('cluster.local') }}"
+
+# --- 运行时 / cgroup ---------------------------------------------------------
+kubelet_container_runtime_endpoint: "unix:///run/containerd/containerd.sock"
+kubelet_cgroup_driver: "{{ container_runtime_cgroup_driver | default('systemd') }}"
+kubelet_require_systemd_cgroup: true
+kubelet_fail_swap_on: true
+
+# --- 监听 / 端口（全部变量化；测试用高位端口）-------------------------------
+kubelet_address: "0.0.0.0"
+kubelet_port: 10250
+kubelet_healthz_port: 10248
+kubelet_read_only_port: 0
+kubelet_resolv_conf: /etc/resolv.conf
+kubelet_static_pod_path: ""
+kubelet_log_level: 2
+kubelet_extra_args: []
+
+# --- 安全默认 ----------------------------------------------------------------
+kubelet_anonymous_auth: false
+kubelet_authorization_mode: "Webhook"
+kubelet_webhook_auth_enabled: true
+kubelet_rotate_certificates: false
+
+# --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
+kubelet_manage_service: true
+kubelet_service_enabled: true
+kubelet_service_state: started
+kubelet_service_type: simple
+kubelet_user: root
+kubelet_group: root
+kubelet_restart_sec: 10
+kubelet_limit_nofile: 1048576

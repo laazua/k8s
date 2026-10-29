@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# kubelet:facts — 推导启动参数（无副作用）
+#   所有路径/端口/地址均来自变量；本文件不出现硬编码业务值。
+# =============================================================================
+
+- name: "kubelet:facts | 构建启动参数"
+  ansible.builtin.set_fact:
+    kubelet_args: >-
+      {{ [
+           '--config=' ~ kubelet_config_path,
+           '--kubeconfig=' ~ kubelet_kubeconfig_path,
+           '--container-runtime-endpoint=' ~ kubelet_container_runtime_endpoint,
+           '--cgroup-driver=' ~ kubelet_cgroup_driver,
+           '--root-dir=' ~ kubelet_root_dir,
+           '--cert-dir=' ~ kubelet_cert_dir,
+           '--hostname-override=' ~ kubelet_hostname_override,
+           '--node-ip=' ~ kubelet_node_ip,
+           '--address=' ~ kubelet_address,
+           '--port=' ~ (kubelet_port | string),
+           '--read-only-port=' ~ (kubelet_read_only_port | string),
+           '--anonymous-auth=' ~ (kubelet_anonymous_auth | bool | lower),
+           '--authentication-token-webhook=' ~ (kubelet_webhook_auth_enabled | bool | lower),
+           '--authorization-mode=' ~ kubelet_authorization_mode,
+           '--v=' ~ (kubelet_log_level | string)
+         ] + kubelet_extra_args }}
+  tags: ["kubelet", "kubelet:facts"]

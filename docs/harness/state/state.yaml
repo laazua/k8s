@@ -3,14 +3,14 @@
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
 phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T007      # 例如 T001
+active_task: T008      # 例如 T001
 contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 2          # 当前任务已评估轮数
-next_action: "eval T007 (r3)"
+eval_round: 0          # 当前任务已评估轮数（T008 尚未评估）
+next_action: "eval T008"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
-done_tasks: 6
+done_tasks: 7
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,5 +30,5 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # T007 r2 修复完成（M4 密闭性固化 + M5 探针）；等 r3 评估
-updated: "2026-10-26T04:52:37Z"   # ISO8601
+blockers: []          # T008 待评估；T007-r3 的 M6/N5 已在本轮真修并实跑验证
+updated: "2026-10-29T01:19:35Z"   # ISO8601

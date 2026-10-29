@@ -1,0 +1,56 @@
+---
+# =============================================================================
+# containerd:runc — 官方 runc 二进制（CRI runtime 依赖）
+#   版本/URL/sha256 全部变量化；复用 download role 的缓存/代理/强校验。
+# =============================================================================
+
+- name: "containerd:runc | 下载官方 runc（复用 download role）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ containerd_root_prefix }}"
+    download_cache_dir: "{{ containerd_artifact_dir }}"
+    download_file_owner: "{{ containerd_root_owner }}"
+    download_file_group: "{{ containerd_root_group }}"
+    download_timeout: "{{ containerd_download_timeout }}"
+    download_retries: "{{ containerd_download_retries }}"
+    download_retry_delay: "{{ containerd_download_retry_delay }}"
+    download_items:
+      - name: "runc.{{ runc_arch }}"
+        url: "{{ runc_download_url }}"
+        sha256: "{{ runc_sha256 }}"
+        dest: "{{ runc_artifact_path }}"
+        mode: "0755"
+  tags: ["containerd", "containerd:runc"]
+
+- name: "containerd:runc | 安装 runc 到 bin 目录"
+  ansible.builtin.copy:
+    src: "{{ runc_artifact_path }}"
+    dest: "{{ runc_binary }}"
+    remote_src: true
+    mode: "{{ containerd_bin_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  notify: "containerd:restart"
+  tags: ["containerd", "containerd:runc"]
+
+- name: "containerd:runc | 读取已安装版本"
+  ansible.builtin.command:
+    cmd: "{{ runc_binary }} --version"
+  register: containerd_runc_version_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["containerd", "containerd:runc"]
+
+- name: "containerd:runc | 断言实际版本与 runc_version 一致"
+  ansible.builtin.assert:
+    that:
+      - containerd_runc_version_check.rc == 0
+      - runc_version in (containerd_runc_version_check.stdout | default(''))
+    fail_msg: >-
+      已安装 runc 版本与 runc_version={{ runc_version }} 不一致：
+      {{ containerd_runc_version_check.stdout | default(containerd_runc_version_check.stderr | default('(无法执行 --version)')) }}。
+      请检查制品 URL / sha256 是否对应目标版本。
+    quiet: true
+  tags: ["containerd", "containerd:runc"]

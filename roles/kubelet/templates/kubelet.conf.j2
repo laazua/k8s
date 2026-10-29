@@ -1,0 +1,23 @@
+# =============================================================================
+# kubelet kubeconfig（由 roles/kubelet 渲染；证书内嵌，0600 root:root）
+#   身份来自 T004 pki：CN=system:node:{{ inventory_hostname }}，O=system:nodes。
+# =============================================================================
+apiVersion: v1
+kind: Config
+clusters:
+  - name: kubernetes
+    cluster:
+      server: {{ kubelet_apiserver_url }}
+      certificate-authority-data: "{{ kubelet_ca_b64 }}"
+users:
+  - name: "{{ kubelet_expected_common_name }}"
+    user:
+      client-certificate-data: "{{ kubelet_client_cert_b64 }}"
+      client-key-data: "{{ kubelet_client_key_b64 }}"
+contexts:
+  - name: kubelet
+    context:
+      cluster: kubernetes
+      user: "{{ kubelet_expected_common_name }}"
+current-context: kubelet
+preferences: {}

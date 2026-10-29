@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# containerd:crictl — CRI 自检/运维工具（不参与 CRI 运行；可关闭）
+# =============================================================================
+
+- name: "containerd:crictl | 创建 crictl 解包目录"
+  ansible.builtin.file:
+    path: "{{ crictl_extract_dir }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  tags: ["containerd", "containerd:crictl"]
+
+- name: "containerd:crictl | 下载 crictl（复用 download role）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ containerd_root_prefix }}"
+    download_cache_dir: "{{ containerd_artifact_dir }}"
+    download_file_owner: "{{ containerd_root_owner }}"
+    download_file_group: "{{ containerd_root_group }}"
+    download_timeout: "{{ containerd_download_timeout }}"
+    download_retries: "{{ containerd_download_retries }}"
+    download_retry_delay: "{{ containerd_download_retry_delay }}"
+    download_items:
+      - name: "{{ crictl_tarball_name }}"
+        url: "{{ crictl_download_url }}"
+        sha256: "{{ crictl_sha256 }}"
+        dest: "{{ crictl_artifact_path }}"
+        mode: "0644"
+  tags: ["containerd", "containerd:crictl"]
+
+- name: "containerd:crictl | 解包 crictl（已解包则跳过）"
+  ansible.builtin.unarchive:
+    src: "{{ crictl_artifact_path }}"
+    dest: "{{ crictl_extract_dir }}"
+    remote_src: true
+    creates: "{{ crictl_extract_dir }}/crictl"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+    mode: "0755"
+  tags: ["containerd", "containerd:crictl"]
+
+- name: "containerd:crictl | 安装 crictl 到 bin 目录"
+  ansible.builtin.copy:
+    src: "{{ crictl_extract_dir }}/crictl"
+    dest: "{{ crictl_binary }}"
+    remote_src: true
+    mode: "{{ containerd_bin_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  tags: ["containerd", "containerd:crictl"]

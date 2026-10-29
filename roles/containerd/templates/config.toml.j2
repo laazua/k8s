@@ -1,0 +1,41 @@
+# =============================================================================
+# containerd 配置（由 roles/containerd 渲染；禁止手工编辑）
+#   - config version 3（containerd >= 2.0）使用 io.containerd.cri.v1.* 插件命名；
+#   - config version 2（containerd 1.x）使用 io.containerd.grpc.v1.cri；
+#   - 所有路径/镜像/cgroup 选项均来自变量（见 defaults/main.yml）。
+# =============================================================================
+version = {{ containerd_config_version }}
+root = '{{ containerd_root_dir }}'
+state = '{{ containerd_state_dir }}'
+
+[grpc]
+  address = '{{ containerd_socket }}'
+
+{% if containerd_config_version | int >= 3 %}
+[plugins.'io.containerd.cri.v1.images']
+  sandbox_image = '{{ containerd_sandbox_image }}'
+
+[plugins.'io.containerd.cri.v1.runtime']
+  [plugins.'io.containerd.cri.v1.runtime'.containerd]
+    default_runtime_name = '{{ containerd_default_runtime_name }}'
+    [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+      runtime_type = 'io.containerd.runc.v2'
+      [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+        SystemdCgroup = {{ containerd_systemd_cgroup }}
+  [plugins.'io.containerd.cri.v1.runtime'.cni]
+    bin_dir = '{{ containerd_cni_bin_dir }}'
+    conf_dir = '{{ containerd_cni_conf_dir }}'
+{% else %}
+[plugins.'io.containerd.grpc.v1.cri']
+  sandbox_image = '{{ containerd_sandbox_image }}'
+  [plugins.'io.containerd.grpc.v1.cri'.containerd]
+    default_runtime_name = '{{ containerd_default_runtime_name }}'
+    [plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.runc]
+      runtime_type = 'io.containerd.runc.v2'
+      [plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.runc.options]
+        SystemdCgroup = {{ containerd_systemd_cgroup }}
+  [plugins.'io.containerd.grpc.v1.cri'.cni]
+    bin_dir = '{{ containerd_cni_bin_dir }}'
+    conf_dir = '{{ containerd_cni_conf_dir }}'
+{% endif %}
+{{ containerd_config_extra }}

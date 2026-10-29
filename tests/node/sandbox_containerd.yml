@@ -1,0 +1,17 @@
+# =============================================================================
+#  T008 沙箱 containerd（真实安装/渲染，不调用 systemctl）
+#   - 二进制/配置/unit/root/state/socket 全部落 sandbox_root；
+#   - 测试脚本随后从渲染出的 unit ExecStart 拉起真实 containerd；
+#   - crictl 一并安装到沙箱 bin，用于 CRI 端点自检。
+# =============================================================================
+- name: T008 sandbox containerd
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    containerd_root_prefix: "{{ sandbox_root }}"
+    containerd_manage_service: false
+    containerd_verify_endpoint: false
+  roles:
+    - role: containerd

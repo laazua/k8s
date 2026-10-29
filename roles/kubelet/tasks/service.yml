@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# kubelet:service — 生产服务管理
+#   `kubelet_manage_service=false`（共享开发机/沙箱）时不调用 systemctl。
+# =============================================================================
+
+- name: "kubelet:service | 启用并启动 {{ kubelet_unit_name }}"
+  ansible.builtin.systemd:
+    name: "{{ kubelet_unit_name }}"
+    enabled: "{{ kubelet_service_enabled }}"
+    state: "{{ kubelet_service_state }}"
+    daemon_reload: true
+  when: kubelet_manage_service | bool
+  tags: ["kubelet", "kubelet:service"]

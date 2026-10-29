@@ -1,0 +1,131 @@
+---
+# =============================================================================
+# roles/containerd — 默认变量
+#
+# 设计要点：
+#   1) 版本/架构/URL/sha256/路径/端口/flag 全部可配置；tasks/templates 禁止硬编码。
+#   2) 制品复用 roles/download（URL + 强制 sha256 + 代理 + 本地缓存）。
+#   3) CRI cgroup driver 默认 systemd（与 kubelet 单一来源
+#      container_runtime_cgroup_driver 交叉校验，不一致 fail-fast）。
+#   4) 沙箱前缀 containerd_root_prefix（生产留空）把二进制/config/unit/root/state/
+#      socket/CNI 目录整体重定向；systemd 副作用由 containerd_manage_service 控制。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+containerd_root_prefix: ""
+
+# --- 版本 / 架构 / 官方制品 ---------------------------------------------------
+containerd_version: "2.0.0"
+containerd_arch: "{{ k8s_arch | default('amd64') }}"
+containerd_download_url_base: "https://github.com/containerd/containerd/releases/download"
+containerd_tarball_name: "containerd-{{ containerd_version }}-linux-{{ containerd_arch }}.tar.gz"
+containerd_download_url: "{{ containerd_download_url_base }}/v{{ containerd_version }}/{{ containerd_tarball_name }}"
+containerd_checksum_url: "{{ containerd_download_url }}.sha256sum"
+containerd_checksum_timeout: 30
+# 已知版本的官方 sha256（离线/可复现）；换版本时若为空则读取官方 .sha256sum 侧车。
+containerd_known_sha256:
+  "2.0.0": "6f8da716941f7e89315cefaa6e5a8f1ff10b323ff46611313c455df7ab1ebee1"
+containerd_sha256: "{{ containerd_known_sha256[containerd_version] | default('') }}"
+containerd_artifact_dir: "{{ containerd_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+containerd_artifact_path: "{{ containerd_artifact_dir }}/{{ containerd_tarball_name }}"
+containerd_extract_dir: "{{ containerd_artifact_dir }}/containerd-{{ containerd_version }}"
+containerd_bin_dir: "{{ containerd_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+containerd_binary: "{{ containerd_bin_dir }}/containerd"
+containerd_binaries:
+  - containerd
+  - containerd-shim-runc-v2
+  - ctr
+containerd_bin_mode: "0755"
+containerd_root_owner: root
+containerd_root_group: root
+containerd_download_timeout: 120
+containerd_download_retries: 3
+containerd_download_retry_delay: 2
+
+# --- 配置 / unit 路径 --------------------------------------------------------
+containerd_config_dir: "{{ containerd_root_prefix }}/etc/containerd"
+containerd_config_path: "{{ containerd_config_dir }}/config.toml"
+containerd_config_mode: "0644"
+containerd_config_dir_mode: "0755"
+containerd_unit_dir: "{{ containerd_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}"
+containerd_unit_name: containerd.service
+containerd_unit_path: "{{ containerd_unit_dir }}/{{ containerd_unit_name }}"
+containerd_unit_mode: "0644"
+
+# --- 运行时目录 / CRI --------------------------------------------------------
+containerd_root_dir: "{{ containerd_root_prefix }}/var/lib/containerd"
+containerd_state_dir: "{{ containerd_root_prefix }}/run/containerd"
+containerd_socket: "{{ containerd_state_dir }}/containerd.sock"
+containerd_cni_bin_dir: "{{ containerd_root_prefix }}/opt/cni/bin"
+containerd_cni_conf_dir: "{{ containerd_root_prefix }}/etc/cni/net.d"
+containerd_sandbox_image: "registry.k8s.io/pause:3.10"
+# 单一来源：group_vars/all 的 container_runtime_cgroup_driver。
+containerd_cgroup_driver: "{{ container_runtime_cgroup_driver | default('systemd') }}"
+containerd_systemd_cgroup: "{{ 'true' if containerd_cgroup_driver == 'systemd' else 'false' }}"
+containerd_require_systemd_cgroup: true
+# containerd 2.x 用 config version 3；1.x 用 version 2（模板分支）。
+containerd_config_version: "{{ 3 if containerd_version is version('2.0.0', '>=') else 2 }}"
+containerd_default_runtime_name: runc
+containerd_config_extra: ""
+
+# --- runc --------------------------------------------------------------------
+containerd_install_runc: true
+containerd_require_runc: true
+runc_version: "1.2.1"
+runc_arch: "{{ containerd_arch }}"
+runc_download_url_base: "https://github.com/opencontainers/runc/releases/download"
+runc_download_url: "{{ runc_download_url_base }}/v{{ runc_version }}/runc.{{ runc_arch }}"
+runc_known_sha256:
+  "1.2.1": "b106d49c60e688022f5909432a77bd3260f29687199d47213ed87269588af781"
+runc_sha256: "{{ runc_known_sha256[runc_version] | default('') }}"
+runc_artifact_path: "{{ containerd_artifact_dir }}/runc.{{ runc_arch }}"
+runc_binary: "{{ containerd_bin_dir }}/runc"
+
+# --- CNI plugins -------------------------------------------------------------
+containerd_install_cni_plugins: true
+containerd_require_cni_plugins: true
+cni_plugins_version: "1.5.1"
+cni_plugins_download_url_base: "https://github.com/containernetworking/plugins/releases/download"
+cni_plugins_tarball_name: "cni-plugins-linux-{{ containerd_arch }}-v{{ cni_plugins_version }}.tgz"
+cni_plugins_download_url: "{{ cni_plugins_download_url_base }}/v{{ cni_plugins_version }}/{{ cni_plugins_tarball_name }}"
+cni_plugins_known_sha256:
+  "1.5.1": "77baa2f669980a82255ffa2f2717de823992480271ee778aa51a9c60ae89ff9b"
+cni_plugins_sha256: "{{ cni_plugins_known_sha256[cni_plugins_version] | default('') }}"
+cni_plugins_artifact_path: "{{ containerd_artifact_dir }}/{{ cni_plugins_tarball_name }}"
+cni_plugins_extract_dir: "{{ containerd_artifact_dir }}/cni-plugins-{{ cni_plugins_version }}"
+cni_plugins_required:
+  - bridge
+  - host-local
+  - loopback
+  - portmap
+  - tuning
+
+# --- crictl（运维/自检工具；不参与 CRI 运行）---------------------------------
+containerd_install_crictl: true
+crictl_version: "1.31.1"
+crictl_download_url_base: "https://github.com/kubernetes-sigs/cri-tools/releases/download"
+crictl_tarball_name: "crictl-v{{ crictl_version }}-linux-{{ containerd_arch }}.tar.gz"
+crictl_download_url: "{{ crictl_download_url_base }}/v{{ crictl_version }}/{{ crictl_tarball_name }}"
+crictl_known_sha256:
+  "1.31.1": "0a03ba6b1e4c253d63627f8d210b2ea07675a8712587e697657b236d06d7d231"
+crictl_sha256: "{{ crictl_known_sha256[crictl_version] | default('') }}"
+crictl_artifact_path: "{{ containerd_artifact_dir }}/{{ crictl_tarball_name }}"
+crictl_extract_dir: "{{ containerd_artifact_dir }}/crictl-{{ crictl_version }}"
+crictl_binary: "{{ containerd_bin_dir }}/crictl"
+
+# --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
+containerd_manage_service: true
+containerd_service_enabled: true
+containerd_service_state: started
+containerd_service_type: notify
+containerd_user: root
+containerd_group: root
+containerd_restart_sec: 5
+containerd_limit_nofile: 1048576
+containerd_oom_score_adjust: -999
+containerd_exec_args_extra: []
+
+# --- 端点自检（生产 true：CRI 不可用即失败；沙箱可关）----------------------
+containerd_verify_endpoint: "{{ containerd_manage_service }}"
+containerd_verify_retries: 30
+containerd_verify_delay: 1

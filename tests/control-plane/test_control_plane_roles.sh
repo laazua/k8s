@@ -41,7 +41,7 @@ if [[ ! -x "$ANSIBLE_PLAYBOOK" && -n "${SUDO_USER:-}" ]]; then
   fi
 fi
 if [[ "$ANSIBLE_PLAYBOOK" == */ansible/bin/ansible-playbook ]]; then
-  export PYTHONPATH="$(dirname "$(dirname "$ANSIBLE_PLAYBOOK")"):${PYTHONPATH:-}"
+  export PYTHONPATH="$(dirname "$(dirname "$ANSIBLE_PLAYBOOK")")${PYTHONPATH:+:$PYTHONPATH}"
 fi
 have_ansible() { command -v "$ANSIBLE_PLAYBOOK" >/dev/null 2>&1 || [[ -x "$ANSIBLE_PLAYBOOK" ]]; }
 YAMLLINT="${YAMLLINT:-yamllint}"
@@ -62,6 +62,15 @@ if [[ -n "${SUDO_USER:-}" ]]; then
     USER_SITE="/home/$SUDO_USER/.local/lib/$_pyver/site-packages"
   fi
 fi
+# N5：用冒号拼接非空路径，避免空 PYTHONPATH 产生前导/尾随冒号（CWD 进入 sys.path）。
+py_path_join() {
+  local out="" p
+  for p in "$@"; do
+    [[ -n "$p" ]] || continue
+    out="${out:+$out:}$p"
+  done
+  printf '%s' "$out"
+}
 
 ROLE_APISERVER=roles/kube-apiserver
 ROLE_CM=roles/kube-controller-manager
@@ -84,6 +93,51 @@ declare -A ART_SHA=(
 # 密闭性模式：suite = 已在独立 netns（仅 lo）内；none = 未隔离（由文件头 re-exec 置位）。
 NETNS_MODE="none"
 
+# --- 冷缓存自举（M6）：必须在 re-exec 进 netns **之前**在宿主网络填充 -------------
+# 旧实现把 ensure_artifact 放在 re-exec 之后：新主机即使有网也会因 netns 无路由而
+# 无法自举（T007-r3 M6）。现在先预热，再进 netns；netns 内只做 sha256 校验。
+ensure_artifact() {  # ensure_artifact <name> <url> <sha>
+  local p="$CACHE/$1"
+  if [[ -f "$p" && "$(sha_of "$p")" == "$3" ]]; then return 0; fi
+  printf '  （首次运行：缓存官方制品 %s）\n' "$1"
+  curl -fL --retry 3 --connect-timeout 20 -o "$p.tmp" "$2" || return 1
+  mv "$p.tmp" "$p"
+  [[ "$(sha_of "$p")" == "$3" ]]
+}
+for b in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
+  if ! ensure_artifact "$b" "https://dl.k8s.io/v${VERSION}/bin/linux/amd64/$b" "${ART_SHA[$b]}"; then
+    bad "无法获取/校验官方制品 $b"
+    echo
+    echo "== 汇总: PASS=$pass_count FAIL=$fail =="
+    exit 1
+  fi
+done
+ok "4 个官方制品缓存可用（sha256 与 defaults 一致）"
+
+# etcd 发行包同样走本地缓存：stack playbook 的 etcd play 需要它，
+# 不预置的话每次首跑都会从 storage.googleapis.com 重下（同 M4 的非密闭缺陷）。
+ETCD_TARBALL="etcd-v3.5.16-linux-amd64.tar.gz"
+ETCD_TARBALL_SHA=b414b27a5ad05f7cb01395c447c85d3227e3fb1c176e51757a283b817f645ccc
+ensure_etcd_tarball() {
+  local p="$CACHE/$ETCD_TARBALL" seed="${ETCD_TEST_CACHE:-/tmp/opencode/etcd-cache}/$ETCD_TARBALL"
+  [[ -f "$p" && "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]] && return 0
+  if [[ -f "$seed" && "$(sha_of "$seed")" == "$ETCD_TARBALL_SHA" ]]; then
+    cp "$seed" "$p" && return 0
+  fi
+  printf '  （首次运行：缓存 etcd 发行包 %s）\n' "$ETCD_TARBALL"
+  curl -fL --retry 3 --connect-timeout 20 -o "$p.tmp" \
+    "https://storage.googleapis.com/etcd/v3.5.16/$ETCD_TARBALL" || return 1
+  mv "$p.tmp" "$p"
+  [[ "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]]
+}
+if ! ensure_etcd_tarball; then
+  bad "无法获取/校验 etcd 发行包 $ETCD_TARBALL"
+  echo
+  echo "== 汇总: PASS=$pass_count FAIL=$fail =="
+  exit 1
+fi
+printf '  （etcd 发行包缓存就绪：%s）\n' "$ETCD_TARBALL"
+
 # --- 密闭性：整个套件在独立 netns（仅 lo、无默认路由）中执行 -------------------
 # T007 r2 M4：kubectl 曾绕过制品缓存直连 dl.k8s.io，CDN 限速时门禁第二次必红。
 # 现在**每次运行**都自动 re-exec 进独立 netns：缓存命中 → 零外网请求；任何残留的
@@ -96,7 +150,7 @@ if [[ "${T007_IN_NETNS:-0}" == "1" ]]; then
 elif sudo -n true 2>/dev/null &&
   sudo -n unshare -n bash -c 'ip link set lo up >/dev/null 2>&1; ! ip route show default | grep -q .' >/dev/null 2>&1; then
   exec sudo -n env T007_IN_NETNS=1 \
-    PYTHONPATH="${PYTHONPATH:-}${USER_SITE:+:${USER_SITE}}" \
+    PYTHONPATH="$(py_path_join "${PYTHONPATH:-}" "$USER_SITE")" \
     ANSIBLE_PLAYBOOK="$ANSIBLE_PLAYBOOK" \
     T007_TEST_CACHE="$CACHE" \
     ETCD_TEST_CACHE="${ETCD_TEST_CACHE:-}" \
@@ -291,7 +345,7 @@ else
   bad "找不到 ansible-playbook（请设置 ANSIBLE_PLAYBOOK）"
 fi
 if [[ -x "$YAMLLINT" ]] || command -v "$YAMLLINT" >/dev/null 2>&1; then
-  if PYTHONPATH="${USER_SITE:+$USER_SITE:}${PYTHONPATH:-}" "$YAMLLINT" -c .yamllint "$ROLE_APISERVER" "$ROLE_CM" "$ROLE_SCHED" tests/control-plane \
+  if PYTHONPATH="$(py_path_join "$USER_SITE" "${PYTHONPATH:-}")" "$YAMLLINT" -c .yamllint "$ROLE_APISERVER" "$ROLE_CM" "$ROLE_SCHED" tests/control-plane \
     >/tmp/opencode/t007_yamllint.log 2>&1; then
     ok "yamllint（roles/kube-*, tests/control-plane）无 error"
   else
@@ -320,48 +374,6 @@ if ! sudo -n true 2>/dev/null; then
   echo "== 汇总: PASS=$pass_count FAIL=$fail =="
   exit 1
 fi
-
-ensure_artifact() {  # ensure_artifact <name> <url> <sha>
-  local p="$CACHE/$1"
-  if [[ -f "$p" && "$(sha_of "$p")" == "$3" ]]; then return 0; fi
-  printf '  （首次运行：缓存官方制品 %s）\n' "$1"
-  curl -fL --retry 3 --connect-timeout 20 -o "$p.tmp" "$2" || return 1
-  mv "$p.tmp" "$p"
-  [[ "$(sha_of "$p")" == "$3" ]]
-}
-for b in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
-  if ! ensure_artifact "$b" "https://dl.k8s.io/v${VERSION}/bin/linux/amd64/$b" "${ART_SHA[$b]}"; then
-    bad "无法获取/校验官方制品 $b"
-    echo
-    echo "== 汇总: PASS=$pass_count FAIL=$fail =="
-    exit 1
-  fi
-done
-ok "4 个官方制品缓存可用（sha256 与 defaults 一致）"
-
-# etcd 发行包同样走本地缓存：stack playbook 的 etcd play 需要它，
-# 不预置的话每次首跑都会从 storage.googleapis.com 重下（同 M4 的非密闭缺陷）。
-ETCD_TARBALL="etcd-v3.5.16-linux-amd64.tar.gz"
-ETCD_TARBALL_SHA=b414b27a5ad05f7cb01395c447c85d3227e3fb1c176e51757a283b817f645ccc
-ensure_etcd_tarball() {
-  local p="$CACHE/$ETCD_TARBALL" seed="${ETCD_TEST_CACHE:-/tmp/opencode/etcd-cache}/$ETCD_TARBALL"
-  [[ -f "$p" && "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]] && return 0
-  if [[ -f "$seed" && "$(sha_of "$seed")" == "$ETCD_TARBALL_SHA" ]]; then
-    cp "$seed" "$p" && return 0
-  fi
-  printf '  （首次运行：缓存 etcd 发行包 %s）\n' "$ETCD_TARBALL"
-  curl -fL --retry 3 --connect-timeout 20 -o "$p.tmp" \
-    "https://storage.googleapis.com/etcd/v3.5.16/$ETCD_TARBALL" || return 1
-  mv "$p.tmp" "$p"
-  [[ "$(sha_of "$p")" == "$ETCD_TARBALL_SHA" ]]
-}
-if ! ensure_etcd_tarball; then
-  bad "无法获取/校验 etcd 发行包 $ETCD_TARBALL"
-  echo
-  echo "== 汇总: PASS=$pass_count FAIL=$fail =="
-  exit 1
-fi
-printf '  （etcd 发行包缓存就绪：%s）\n' "$ETCD_TARBALL"
 
 # --- B0 密闭性门禁（不计入既有断言基线；失败即套件失败）--------------------
 # 缺陷背景（T007 r2 M4）：kubectl 曾用显式 dest 直指 usr/local/bin，绕过 download

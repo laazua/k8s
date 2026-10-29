@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/containerd — handlers
+#   仅在二进制 / config.toml / unit 变化时通知；`manage_service=false` 时跳过。
+# =============================================================================
+
+- name: "containerd:restart"
+  ansible.builtin.systemd:
+    name: "{{ containerd_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: containerd_manage_service | bool
+  tags: ["containerd", "containerd:service"]

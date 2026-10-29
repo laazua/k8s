@@ -5,6 +5,155 @@
 
 ---
 
+## [2026-10-29] Generator · T008 → ready_for_eval（build · 续跑收尾）
+
+- 时间：2026-10-29（UTC 00:2xZ–01:19Z）
+- 角色：Generator（实现 + 自测；**未自判 PASS**）
+- 任务：`T008` 运行时与节点组件 role（`roles/containerd`、`roles/kubelet` + runc/CNI plugins/crictl）
+- 本轮起点勘误：接手上游「半成品」描述与仓库实际**不一致**——`roles/containerd`（15 文件）、
+  `roles/kubelet`（13 文件）、`tests/node`（8 文件）、`Makefile` 的 `test-node` 与 `make test` 接线
+  均已存在且完整。因此本轮**不重写实现**，改为：逐项核对契约 A1–A10/B1–B12 → 实跑红/绿/门禁 →
+  如实填写契约 §8/§10 → 提交。未发现需要补写的 role 文件。
+
+### 做了什么
+
+1. **核对交付物**：两 role 结构齐全（`defaults/tasks/{facts,validate,binary,config,service,verify,…}`、
+   `handlers`、`meta`、`templates`、`README`）；containerd 含 `runc.yml`/`cni.yml`/`crictl.yml`，
+   kubelet 含 `kubeconfig.yml`；二进制统一经 `roles/download`（URL + 强制 sha256 + 缓存/代理）。
+2. **TDD 红证据**（实现前，`/tmp/opencode/t008_red.log`）：`PASS=11 FAIL=29`、rc=1，
+   11 条 PASS 全是测试资产自身存在，role 目录缺失导致 A2–A10/B1–B12 不可判定。
+3. **红→绿**：`tests/node/test_node_roles.sh` → **PASS=290 FAIL=0、rc=0**。
+4. **契约如实填写**：§8 自测表、§10.1 红阶段、§10.2 M6、§10.3 N5（均含可复跑证据路径）。
+
+### T007-r3 M6/N5 真实状态（逐项复核，非照抄）
+
+- **M6（冷缓存自举）——已真修，且本轮实跑验证**：`tests/control-plane/test_control_plane_roles.sh`
+  的 `ensure_artifact`/`ensure_etcd_tarball`/`prefill_cache` 已整体前移到 netns re-exec **之前**
+  （`git diff` 可见：函数块从原 `:324-340` 移到 `:96-140`，re-exec 在 `:150` 之后）。
+  验证：`T007_TEST_CACHE=/tmp/opencode/t008cold`（**空目录**）首跑 → 先预取 4 个官方制品，
+  再 `B0 密闭性…OK`，最终 **269/0、rc=0**（`/tmp/opencode/t008_m6_coldcache.log`）。
+  README:27 原本就写「进入 netns 之前一次性填充」，现在实现与文档一致（README 无需改）。
+- **N5（PYTHONPATH 前导冒号）——已真修**：`py_path_join()` helper 存在（`:66`），
+  re-exec env（`:153`）与 yamllint（`:348`）两处替换完成；旧形式
+  `${PYTHONPATH:-}${USER_SITE:+:…}` 已无命中。
+  验证：提取 helper 实跑 `"" ""→""`、`/a→/a`、`/a /b→/a:/b`、`/a "" /b→/a:/b`，无前导/尾随/重复冒号。
+- **结论**：契约原 §10.2/§10.3 的声明**成立**（不是不实记录）；本轮把「声称已验证」补成「有日志的实跑验证」。
+- 附带：`make test` 中 T007 仍 **269/0**，说明 M6/N5 改动未造成回退。
+
+### 门禁（spec v1.3 成本约束）
+
+| 项 | 结果 |
+| --- | --- |
+| `tests/node/test_node_roles.sh` ×2 | **290/0 rc=0**、**290/0 rc=0**（计数一致；`t008_run1.log`/`t008_run2.log`） |
+| `make test` 全量 ×1 | **rc=0**；`27/39/59/100/225/186/269/**290**`（合计 1095），`FAIL=0`；T001–T007 无回退（`t008_make1.log`） |
+| `make lint`（syntax-check + yamllint） | 全绿（A9 两条断言 PASS；`t008_syntax_*.log`、`t008_yamllint.log`） |
+
+### 动态验证要点（真实进程，沙箱 `/tmp/opencode/t008.*`）
+
+- containerd：从渲染 unit 的 `ExecStart` 拉起（PID 实测存活）→ CRI socket 建立 →
+  `crictl info` exit 0、`status.conditions[RuntimeReady]=true`、`runtimeHandlers` 含 `runc`、
+  `config.containerd.runtimes.runc.options.SystemdCgroup=true`、`containerdEndpoint` 指向沙箱 socket；
+  `crictl version` = `RuntimeName: containerd` / `RuntimeVersion: v2.0.0`（与 `containerd --version` 一致）。
+- kubelet：真实控制面（真实 etcd + kube-apiserver，16443）就绪后拉起 →
+  `kubectl get nodes` 出现 `node1`，`Ready=False reason=KubeletNotReady`（**CNI 未装，符合契约 §5.2**）；
+  `kubelet.conf` server=`https://127.0.0.1:16443`、`CN=system:node:node1`、`O=system:nodes`、
+  kubernetes-ca 链验证通过、内嵌证书/私钥匹配；serving 证书含 `serverAuth` 与 `DNS:node1`/`IP:127.0.0.1`。
+- cgroup 三方一致：containerd `SystemdCgroup=true` ↔ kubelet `cgroupDriver: systemd` ↔ 进程 `--cgroup-driver=systemd`。
+- 幂等：运行中重跑 containerd/kubelet 各 `changed=0`、无 `RUNNING HANDLER`、PID 与 `/proc` starttime 不变、
+  5 个产物 sha256 不变、`crictl info` 与节点仍在。
+- fail-fast 7/7：cgroup 不一致 / 缺 runc / 缺 CNI plugins / CRI endpoint 不可用 / 缺证书 /
+  kubelet 版本不匹配 / containerd 版本不匹配 → 全部 exit≠0、错误可定位、已渲染 unit 哈希未变。
+- 密闭性：套件自动 `sudo unshare -n`（仅 lo、无默认路由）并自证；空缓存 + 不可达 URL 明确失败；
+  缓存命中 + 不可达 URL 成功且零外网。
+- 清理：trap 杀 kubelet/containerd/apiserver/etcd；无残留进程/socket/端口/沙箱目录；
+  `/etc/systemd/system`、`/etc/containerd`、`/etc/kubernetes`、`/var/lib/containerd`、`/run/containerd`、
+  `/opt/cni/bin` 快照一致；`kernel.panic*` 与 `kubepods*.slice` 已恢复。
+  另：清掉了**上一轮中断会话**遗留的调试 containerd（`/tmp/opencode/probe`，root 进程 + socket），
+  该残留非本套件产物。
+
+### 改了哪些文件（本提交）
+
+- 新增：`roles/containerd/**`（15 文件）、`roles/kubelet/**`（13 文件）、`tests/node/**`（8 文件）、
+  `docs/harness/state/contracts/T008.md`、`docs/harness/state/reports/T007-r3.md`（Evaluator 产物，原样提交）
+- 修改：`Makefile`（`test-node` + 挂入 `make test`）、`tests/control-plane/test_control_plane_roles.sh`（M6/N5）、
+  `docs/harness/state/{state.yaml,roadmap.md,handoff.md}`
+- 未改：`spec.md`、`reports/*`（除原样提交 T007-r3）、已 PASS 的 roles/tests、`playbooks/site.yml`、`.gitignore`
+
+### 怎么复验
+
+```bash
+tests/node/test_node_roles.sh                                  # 期望 290/0
+env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test                 # 期望 rc=0，末段 290/0
+# M6 冷缓存自举：
+rm -rf /tmp/opencode/cold && mkdir -p /tmp/opencode/cold
+T007_TEST_CACHE=/tmp/opencode/cold tests/control-plane/test_control_plane_roles.sh   # 期望 269/0
+```
+
+### 遗留 / 风险
+
+- 节点 `Ready=True` 需 CNI（T010）；`--kubelet-certificate-authority` 默认开启属编排（T012/T014，契约 §5.4）。
+- systemd `enable/start` 未在宿主真实执行（契约 §5.1 受限声明 + §5.5 真机步骤）；测试用 unit 的
+  `ExecStart` 真实拉起进程作为替代证据。
+- containerd 1.x 配置分支已实现但未动态验证（测试固定 2.0.0）。
+- `ansible-lint` 环境不可得，静态门禁仍为 syntax-check + yamllint。
+- 全量 `make test` 约 33 min/次（本轮只跑 1 次，符合 spec v1.3 成本约束）。
+
+### 下一步
+
+`eval T008`（`state.yaml`：`ready_for_eval` / `EVALUATING` / `eval_round: 0`；`roadmap.md` T008 保持 `in-progress`）。
+
+---
+
+## [2026-10-27] Evaluator · T007 r3 → PASS（eval）
+
+- 时间：2026-10-27（UTC 00:53Z–02:46Z）
+- 角色：Evaluator（独立只读评审；未改代码/测试/契约）
+- 任务：`T007`（被测 `6a5fd01`；r2 `1f38548` = FAIL 于 M4）
+- **结论：PASS**（报告 `reports/T007-r3.md`）；六项硬指标 功能 **5** / 幂等 **5** / 可配置 4 /
+  测试 4 / 结构 4 / 安全 4；产品完整度 4。**0 阻塞；1 MINOR（M6）+ 2 NIT（N5/N6）**。
+- **M4（r2 唯一阻塞）真修复**：
+  - 干净检出（`git archive 6a5fd01` + `git init`，197 files）`make test` ×2：**rc=0 / rc=0**
+    （32m23s / 32m31s），计数一致 `27/39/59/100/225/186/269`、全部 `FAIL=0`；
+    两次 T007 的 B0 两行均 `OK`。
+  - **断网**（`sudo unshare -n`，仅 `lo`、无默认路由，`T007_IN_NETNS=1`）跑完整套件：
+    **269/0、rc=0**；运行中独立观测：apiserver 在独立 netns（`net:[4026532619]` ≠ 宿主
+    `net:[4026531840]`）、netns 内仅 `lo` 且无默认路由。
+  - **反证**：移走 `/tmp/opencode/k8s-cache` + 断网 → `rc=1`、`FAIL 无法获取/校验官方制品
+    kube-apiserver`、`PASS=137 FAIL=1`（明确失败，不静默联网）；缓存已还原、sha256 不变。
+  - 代码：`sandbox_stack.yml:20-28` kubectl 走 `download_cache_dir` 再 copy 到 bin；
+    `test_control_plane_roles.sh:94-106` 每次 re-exec 进 netns；`:366-415` B0 三重门禁；
+    `:343-363` 预置 etcd 发行包。
+- **M5 真修复**：T001 干净检出 `27/0`；独立探针正例 **16/16**（含 `my-kubeconfig`/`kubeconfig-old`/
+  `config.kubeconfig.bak`/`admin.conf`）、负例 **6/6** 不误报；临时仓库 3 个真实凭据 **3/3 判已跟踪**；
+  牙齿回退旧正则 → `26/1`（明确报 6 项漏报 + 端到端漏报）。
+- **真实控制面独立核验**（断网运行期间）：三进程存活；`/healthz`=`ok`、`/readyz`=`ok`；
+  `get ns` 四命名空间；cm/scheduler lease HOLDER 非空；匿名 `/api`、`/api/v1/namespaces`、
+  `/healthz` 均 **401**；三份 kubeconfig `0600 root:root`、server=`https://127.0.0.1:16443`。
+- **幂等**：B8 `changed=0`、无 handler、PID 与 `/proc` starttime 不变、unit/kubeconfig 哈希不变；
+  `t007_cp_run2.log` recap `ok=111 changed=0 failed=0`。
+- **牙齿 5/5**（独立 worktree，主工作区 clean）：T1 kubectl 直写 `usr/local/bin` → B0+动态 stack 红
+  （169/101）；T2 删 netns 自证 → B0 红（269/1）；T3 旧正则 → T001 26/1；T4 删
+  `--anonymous-auth=false` → 401 实际 403（264/5）；T5 `changed_when: true` → B8 两条红（267/2）。
+- **回归/安全/收尾**：`1f38548..6a5fd01` 仅 4 个测试文件（含 README）+ 5 个 docs；`roles/**`、`playbooks/**`、
+  `Makefile`、`.gitignore`、T001–T006 资产零改动；无 `kube-*.service`/`/etc/kubernetes`/残留进程/
+  端口/netns；`git ls-files` 无凭据；`.gitignore` 逐字节未变。
+- **非阻塞（给 T008 顺手修）**：
+  - **M6（MINOR）**：冷缓存无法自举——`test_control_plane_roles.sh:94-106` 的 re-exec 在
+    `:324-340` 缓存填充**之前**，新主机即使有网也无法一次跑通；且 `README.md:27` /
+    契约 `§10.9:478` 声称「进入 netns 之前填充」，与实现相反（`coldcache.log` 137/1）。
+    修法：预热移到 re-exec 前，或修正文档并给出 seed 命令。
+  - **N5（NIT）**：`:99` `PYTHONPATH` 空值产生前导冒号（CWD 进入 `sys.path`，root 运行）。
+  - **N6（NIT）**：`:386-395` `stack_uses_cache` 依赖 playbook 文本缩进（动态 B0 仍是主证据）。
+  - 环境备注：`/tmp/opencode/eval-teeth-r3/wt1..5` 是更早会话遗留的 worktree（非本次创建、无进程），
+    建议由属主清理。
+- 变更：`reports/T007-r3.md`（新增）、`state.yaml`（`accepted` / `eval_round: 3` / `done_tasks: 7` /
+  `active_task: T008` / `next_action: "build T008"` / `phase: BUILDING` / `blockers: []`）、
+  `roadmap.md`（T007 → `done`）、本文件。
+- 下一步：`build T008`（containerd/kubelet）。注意 N1 缓期项（kubelet serving CA 就绪后打开
+  `--kubelet-certificate-authority`）与 T005-r2 MINOR（etcd 重启编排必须 `serial: 1`）。
+
+---
+
 ## [2026-10-26] Generator · T007 r2 修复 → ready_for_eval（build）
 
 - 时间：2026-10-26（UTC 01:4xZ）

@@ -1,0 +1,88 @@
+---
+# =============================================================================
+# containerd:binary — 官方发行包获取与安装（强制 sha256）
+#   1) 目录 root:root 0755（制品 / 安装 / 解包）
+#   2) 复用 download role（代理 / 缓存 / sha256 校验）
+#   3) 解包后逐二进制 copy 到 bin 目录（内容不变 → changed=0，不触发重启）
+#   4) 断言 `--version` 与 containerd_version 一致（防缓存/URL 错配）
+# =============================================================================
+
+- name: "containerd:binary | 创建制品/安装/解包目录"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  loop:
+    - "{{ containerd_artifact_dir }}"
+    - "{{ containerd_bin_dir }}"
+    - "{{ containerd_extract_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:binary | 下载官方发行包（复用 download role 的缓存/代理/sha256）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ containerd_root_prefix }}"
+    download_cache_dir: "{{ containerd_artifact_dir }}"
+    download_file_owner: "{{ containerd_root_owner }}"
+    download_file_group: "{{ containerd_root_group }}"
+    download_timeout: "{{ containerd_download_timeout }}"
+    download_retries: "{{ containerd_download_retries }}"
+    download_retry_delay: "{{ containerd_download_retry_delay }}"
+    download_items:
+      - name: "{{ containerd_tarball_name }}"
+        url: "{{ containerd_download_url }}"
+        sha256: "{{ containerd_sha256 }}"
+        dest: "{{ containerd_artifact_path }}"
+        mode: "0644"
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:binary | 解包官方发行包（已解包则跳过）"
+  ansible.builtin.unarchive:
+    src: "{{ containerd_artifact_path }}"
+    dest: "{{ containerd_extract_dir }}"
+    remote_src: true
+    creates: "{{ containerd_extract_dir }}/bin/containerd"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+    mode: "0755"
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:binary | 安装 containerd 运行时二进制"
+  ansible.builtin.copy:
+    src: "{{ containerd_extract_dir }}/bin/{{ item }}"
+    dest: "{{ containerd_bin_dir }}/{{ item }}"
+    remote_src: true
+    mode: "{{ containerd_bin_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  loop: "{{ containerd_binaries }}"
+  loop_control:
+    label: "{{ item }}"
+  notify: "containerd:restart"
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:binary | 读取已安装版本"
+  ansible.builtin.command:
+    cmd: "{{ containerd_binary }} --version"
+  register: containerd_version_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["containerd", "containerd:binary"]
+
+- name: "containerd:binary | 断言实际版本与 containerd_version 一致"
+  ansible.builtin.assert:
+    that:
+      - containerd_version_check.rc == 0
+      - ("v" ~ containerd_version) in (containerd_version_check.stdout | default(''))
+    fail_msg: >-
+      已安装 containerd 版本与 containerd_version={{ containerd_version }} 不一致：
+      {{ containerd_version_check.stdout | default(containerd_version_check.stderr | default('(无法执行 --version)')) }}。
+      请检查制品 URL / sha256 是否对应目标版本。
+    quiet: true
+  tags: ["containerd", "containerd:binary"]

@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/kubelet — handlers
+#   仅在二进制 / config / kubeconfig / unit 变化时通知；`manage_service=false` 时跳过。
+# =============================================================================
+
+- name: "kubelet:restart"
+  ansible.builtin.systemd:
+    name: "{{ kubelet_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: kubelet_manage_service | bool
+  tags: ["kubelet", "kubelet:service"]

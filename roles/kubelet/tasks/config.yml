@@ -1,0 +1,40 @@
+---
+# =============================================================================
+# kubelet:config — 渲染 KubeletConfiguration 与 systemd unit
+#   内容不变 → changed=0，不触发 restart。
+# =============================================================================
+
+- name: "kubelet:config | 创建 root/cert/config/unit 目录"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: "{{ kubelet_root_owner }}"
+    group: "{{ kubelet_root_group }}"
+  loop:
+    - { path: "{{ kubelet_root_dir }}", mode: "{{ kubelet_root_dir_mode }}" }
+    - { path: "{{ kubelet_cert_dir }}", mode: "{{ kubelet_root_dir_mode }}" }
+    - { path: "{{ kubelet_unit_dir }}", mode: "0755" }
+  loop_control:
+    label: "{{ item.path }}"
+  tags: ["kubelet", "kubelet:config"]
+
+- name: "kubelet:config | 渲染 kubelet config.yaml"
+  ansible.builtin.template:
+    src: kubelet-config.yaml.j2
+    dest: "{{ kubelet_config_path }}"
+    mode: "{{ kubelet_config_mode }}"
+    owner: "{{ kubelet_root_owner }}"
+    group: "{{ kubelet_root_group }}"
+  notify: "kubelet:restart"
+  tags: ["kubelet", "kubelet:config"]
+
+- name: "kubelet:config | 渲染 systemd unit"
+  ansible.builtin.template:
+    src: kubelet.service.j2
+    dest: "{{ kubelet_unit_path }}"
+    mode: "{{ kubelet_unit_mode }}"
+    owner: "{{ kubelet_root_owner }}"
+    group: "{{ kubelet_root_group }}"
+  notify: "kubelet:restart"
+  tags: ["kubelet", "kubelet:config"]

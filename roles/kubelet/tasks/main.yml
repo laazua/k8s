@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# roles/kubelet — 入口
+#   facts     → 推导启动参数（无副作用）
+#   validate  → cgroup/证书身份/链/私钥/CRI endpoint（fail fast，不落盘）
+#   binary    → download role 取官方 kubelet + sha256 + 版本断言
+#   kubeconfig→ 证书内嵌渲染 kubelet.conf（0600 root:root）
+#   config    → 渲染 KubeletConfiguration + systemd unit
+#   service   → 启用/启动（生产；测试 manage_service=false）
+#   verify    → 产物与权限自检（只读）
+# =============================================================================
+
+- name: "kubelet:facts | 推导启动参数"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["kubelet", "kubelet:facts"]
+
+- name: "kubelet:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:binary | 安装官方 kubelet"
+  ansible.builtin.import_tasks: binary.yml
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:kubeconfig | 渲染 kubelet.conf"
+  ansible.builtin.import_tasks: kubeconfig_file.yml
+  tags: ["kubelet", "kubelet:kubeconfig"]
+
+- name: "kubelet:config | KubeletConfiguration 与 systemd unit"
+  ansible.builtin.import_tasks: config.yml
+  tags: ["kubelet", "kubelet:config"]
+
+- name: "kubelet:service | 启用并启动"
+  ansible.builtin.import_tasks: service.yml
+  tags: ["kubelet", "kubelet:service"]
+
+- name: "kubelet:verify | 产物自检"
+  ansible.builtin.import_tasks: verify.yml
+  tags: ["kubelet", "kubelet:verify"]

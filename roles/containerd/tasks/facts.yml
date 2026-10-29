@@ -1,0 +1,10 @@
+---
+# =============================================================================
+# containerd:facts — 推导启动参数（无副作用）
+# =============================================================================
+
+- name: "containerd:facts | 推导 ExecStart 参数"
+  ansible.builtin.set_fact:
+    containerd_exec_args: >-
+      {{ ['--config', containerd_config_path] + containerd_exec_args_extra }}
+  tags: ["containerd", "containerd:facts"]

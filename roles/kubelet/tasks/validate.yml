@@ -1,0 +1,160 @@
+---
+# =============================================================================
+# kubelet:validate — 前置校验（fail fast；任何失败都不落盘）
+#   1) cgroup driver 合法 + 强制 systemd + 与全局/containerd 交叉一致
+#   2) 制品 sha256 格式
+#   3) 证书/CA 存在（缺失 → 明确失败）
+#   4) 证书身份 CN=system:node:<node> / O=system:nodes、链、私钥匹配
+#   5) CRI endpoint 为 unix:// 且 socket 存在（不可用 → 明确失败）
+# =============================================================================
+
+- name: "kubelet:validate | 校验 cgroup driver 取值"
+  ansible.builtin.assert:
+    that:
+      - kubelet_cgroup_driver in ['systemd', 'cgroupfs']
+    fail_msg: >-
+      kubelet_cgroup_driver='{{ kubelet_cgroup_driver }}' 非法；
+      仅支持 systemd / cgroupfs。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 要求 systemd cgroup driver（默认强制）"
+  ansible.builtin.assert:
+    that:
+      - kubelet_cgroup_driver == 'systemd'
+    fail_msg: >-
+      cgroup driver 不一致：kubelet='{{ kubelet_cgroup_driver }}'，但
+      kubelet_require_systemd_cgroup=true。kubelet 必须与 containerd 同为 systemd；
+      请设置 container_runtime_cgroup_driver=systemd。
+    quiet: true
+  when: kubelet_require_systemd_cgroup | bool
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | cgroup driver 与全局单一来源一致"
+  ansible.builtin.assert:
+    that:
+      - kubelet_cgroup_driver == (container_runtime_cgroup_driver | default(kubelet_cgroup_driver))
+    fail_msg: >-
+      cgroup driver 不一致：kubelet='{{ kubelet_cgroup_driver }}'，
+      container_runtime_cgroup_driver='{{ container_runtime_cgroup_driver | default('(未设置)') }}'。
+      请统一为 systemd。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | cgroup driver 与 containerd 交叉一致（变量存在时）"
+  ansible.builtin.assert:
+    that:
+      - containerd_cgroup_driver == kubelet_cgroup_driver
+    fail_msg: >-
+      cgroup driver 不一致：containerd='{{ containerd_cgroup_driver }}'，
+      kubelet='{{ kubelet_cgroup_driver }}'。两者必须同为 systemd，否则 cgroup 管理冲突。
+    quiet: true
+  when: containerd_cgroup_driver is defined
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 断言 sha256 格式（若已固定）"
+  ansible.builtin.assert:
+    that:
+      - (kubelet_sha256 | length == 0) or (kubelet_sha256 is match('^[0-9a-fA-F]{64}$'))
+    fail_msg: >-
+      kubelet_sha256 非法：'{{ kubelet_sha256 }}'（必须为 64 位 hex；可留空以读取官方侧车）。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 检查 kubelet 证书/私钥/CA"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kubelet_client_ca_file }}"
+    - "{{ kubelet_client_cert_file }}"
+    - "{{ kubelet_client_key_file }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kubelet_required_stat
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 缺少 kubelet 证书/私钥/CA → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      缺少 kubelet 客户端证书/私钥/CA：{{ item.item }} 不存在。
+      kubelet 证书由 T004 pki 为 [k8s_node] 签发
+      （CN=system:node:<node>、O=system:nodes），请先运行 pki role 并分发。
+    quiet: true
+  loop: "{{ kubelet_required_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 解析 kubelet 客户端证书身份"
+  ansible.builtin.command:
+    cmd: >-
+      openssl x509 -in {{ kubelet_client_cert_file }} -noout
+      -subject -nameopt RFC2253
+  register: kubelet_cert_subject
+  changed_when: false
+  failed_when: kubelet_cert_subject.rc != 0
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 断言证书身份 CN=system:node:<node> / O=system:nodes"
+  ansible.builtin.assert:
+    that:
+      - ("CN=" ~ kubelet_expected_common_name) in (kubelet_cert_subject.stdout | default(''))
+      - ("O=" ~ kubelet_expected_organization) in (kubelet_cert_subject.stdout | default(''))
+    fail_msg: >-
+      kubelet 客户端证书身份不符：期望 CN={{ kubelet_expected_common_name }}、
+      O={{ kubelet_expected_organization }}；实际
+      {{ kubelet_cert_subject.stdout | default('(无法解析)') }}。
+      请使用 T004 pki 为节点签发的证书（不要复用其它组件证书）。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 校验证书链（kubernetes-ca）"
+  ansible.builtin.command:
+    cmd: >-
+      openssl verify -CAfile {{ kubelet_client_ca_file }} {{ kubelet_client_cert_file }}
+  register: kubelet_cert_verify
+  changed_when: false
+  failed_when: kubelet_cert_verify.rc != 0
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 校验证书与私钥匹配"
+  ansible.builtin.shell: |
+    set -o pipefail
+    diff <(openssl x509 -in "{{ kubelet_client_cert_file }}" -noout -pubkey) \
+         <(openssl pkey -in "{{ kubelet_client_key_file }}" -pubout)
+  args:
+    executable: /bin/bash
+  register: kubelet_key_match
+  changed_when: false
+  failed_when: kubelet_key_match.rc != 0
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 断言 CRI endpoint 为 unix socket"
+  ansible.builtin.assert:
+    that:
+      - kubelet_container_runtime_endpoint is match('^unix:///.+')
+    fail_msg: >-
+      CRI endpoint 非法：container-runtime-endpoint='{{ kubelet_container_runtime_endpoint }}'。
+      期望 unix:///path/to/containerd.sock（containerd CRI socket）。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | 检查 CRI endpoint socket 是否存在"
+  ansible.builtin.stat:
+    path: "{{ kubelet_container_runtime_endpoint | regex_replace('^unix://', '') }}"
+  register: kubelet_runtime_socket_stat
+  tags: ["kubelet", "kubelet:validate"]
+
+- name: "kubelet:validate | CRI endpoint 不可用 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - kubelet_runtime_socket_stat.stat.exists
+      - kubelet_runtime_socket_stat.stat.issock | default(false)
+    fail_msg: >-
+      CRI endpoint 不可用：container-runtime-endpoint={{ kubelet_container_runtime_endpoint }}
+      指向的 socket 不存在（或不是 unix socket）。请先启动 containerd，或修正
+      kubelet_container_runtime_endpoint。
+    quiet: true
+  tags: ["kubelet", "kubelet:validate"]

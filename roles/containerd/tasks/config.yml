@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# containerd:config — 渲染 config.toml 与 systemd unit
+#   目录/路径全部来自变量；内容不变 → changed=0，不触发 restart。
+# =============================================================================
+
+- name: "containerd:config | 创建运行时/配置/unit 目录"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "{{ containerd_config_dir_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  loop:
+    - "{{ containerd_config_dir }}"
+    - "{{ containerd_root_dir }}"
+    - "{{ containerd_state_dir }}"
+    - "{{ containerd_cni_conf_dir }}"
+    - "{{ containerd_unit_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["containerd", "containerd:config"]
+
+- name: "containerd:config | 渲染 config.toml"
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: "{{ containerd_config_path }}"
+    mode: "{{ containerd_config_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  notify: "containerd:restart"
+  tags: ["containerd", "containerd:config"]
+
+- name: "containerd:config | 渲染 systemd unit"
+  ansible.builtin.template:
+    src: containerd.service.j2
+    dest: "{{ containerd_unit_path }}"
+    mode: "{{ containerd_unit_mode }}"
+    owner: "{{ containerd_root_owner }}"
+    group: "{{ containerd_root_group }}"
+  notify: "containerd:restart"
+  tags: ["containerd", "containerd:config"]

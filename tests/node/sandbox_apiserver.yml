@@ -1,0 +1,19 @@
+# =============================================================================
+#  T008 沙箱 kube-apiserver（节点注册所需的最小控制面）
+#   - 复用 T007 role；只渲染/安装，不触碰宿主 systemd；
+#   - 高位端口 16443，127.0.0.1；admin.conf 供测试 kubectl 使用；
+#   - etcd 由测试脚本从 T005 role 渲染的 unit 拉起。
+# =============================================================================
+- name: T008 sandbox kube-apiserver
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_apiserver_root_prefix: "{{ sandbox_root }}"
+    kube_apiserver_manage_service: false
+    kube_apiserver_bind_address: 127.0.0.1
+    kube_apiserver_advertise_address: 127.0.0.1
+    kube_apiserver_secure_port: 16443
+  roles:
+    - role: kube-apiserver

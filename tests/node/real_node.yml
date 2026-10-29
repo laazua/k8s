@@ -1,0 +1,15 @@
+# =============================================================================
+#  T008 真机复验 playbook（**只允许在目标真机执行**）
+#   - 真实路径 + manage_service=true：会写 /etc/systemd/system 并 enable/start；
+#   - 前置：T002 base（关闭 swap/加载模块）、T004 PKI 已把
+#     /etc/kubernetes/pki/{ca.crt,kubelet/<node>.crt,kubelet/<node>.key}
+#     分发到节点（分发属 T014；本 role 只消费并 fail-fast 校验）；
+#   - 不接入 playbooks/site.yml。
+# =============================================================================
+- name: T008 real node runtime (containerd + kubelet)
+  hosts: k8s_node
+  become: true
+  gather_facts: true
+  roles:
+    - role: containerd
+    - role: kubelet

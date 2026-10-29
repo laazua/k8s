@@ -1,0 +1,19 @@
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ kubelet_service_type }}
+User={{ kubelet_user }}
+Group={{ kubelet_group }}
+ExecStart={{ kubelet_binary }} {{ kubelet_args | join(' ') }}
+Restart=always
+RestartSec={{ kubelet_restart_sec }}
+LimitNOFILE={{ kubelet_limit_nofile }}
+KillMode=process
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

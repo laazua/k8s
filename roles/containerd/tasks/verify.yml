@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# containerd:verify — 可选 CRI 端点自检（生产默认开启）
+#   仅当 containerd_verify_endpoint=true：等待 socket 出现并执行 crictl info。
+#   沙箱测试显式关闭（进程由测试脚本从 unit 拉起，role 不管理系统服务）。
+# =============================================================================
+
+- name: "containerd:verify | 等待 CRI socket 出现"
+  ansible.builtin.stat:
+    path: "{{ containerd_socket }}"
+  register: containerd_socket_stat
+  until: containerd_socket_stat.stat.exists
+  retries: "{{ containerd_verify_retries }}"
+  delay: "{{ containerd_verify_delay }}"
+  when: containerd_verify_endpoint | bool
+  tags: ["containerd", "containerd:verify"]
+
+- name: "containerd:verify | 断言 CRI socket 已就绪"
+  ansible.builtin.assert:
+    that:
+      - containerd_socket_stat.stat.exists
+    fail_msg: >-
+      CRI endpoint 不可用：{{ containerd_socket }} 未在
+      {{ containerd_verify_retries }}×{{ containerd_verify_delay }}s 内出现；
+      请检查 containerd 服务日志与 config.toml 的 grpc.address。
+    quiet: true
+  when: containerd_verify_endpoint | bool
+  tags: ["containerd", "containerd:verify"]
+
+- name: "containerd:verify | crictl info（CRI 端点连通性）"
+  ansible.builtin.command:
+    cmd: >-
+      {{ crictl_binary }} --runtime-endpoint unix://{{ containerd_socket }} info
+  register: containerd_crictl_info
+  changed_when: false
+  when: containerd_verify_endpoint | bool
+  tags: ["containerd", "containerd:verify"]
+
+- name: "containerd:verify | 断言 crictl info 成功"
+  ansible.builtin.assert:
+    that:
+      - containerd_crictl_info.rc == 0
+    fail_msg: >-
+      crictl info 失败（CRI endpoint 不可用）：
+      {{ containerd_crictl_info.stderr | default('') }}
+    quiet: true
+  when: containerd_verify_endpoint | bool
+  tags: ["containerd", "containerd:verify"]

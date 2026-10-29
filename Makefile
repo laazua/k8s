@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane clean
+.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -47,6 +47,7 @@ test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/etcd/test_etcd_role.sh
 	tests/ha/test_ha_role.sh
 	tests/control-plane/test_control_plane_roles.sh
+	tests/node/test_node_roles.sh
 
 test-download: ## 运行 download role 测试套件（全离线 mock 源/代理）
 	tests/download/test_download_role.sh
@@ -62,6 +63,9 @@ test-ha: ## 运行 HA role 测试套件（netns 真实 VRRP 漂移 + haproxy 负
 
 test-control-plane: ## 运行控制平面 role 测试套件（真实 etcd + 三组件进程，宿主零污染）
 	tests/control-plane/test_control_plane_roles.sh
+
+test-node: ## 运行节点运行时 role 测试套件（真实 containerd + kubelet + 控制面，宿主零污染）
+	tests/node/test_node_roles.sh
 
 clean: ## 清理运行产物
 	@rm -f *.retry

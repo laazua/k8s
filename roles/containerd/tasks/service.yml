@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# containerd:service — 生产服务管理
+#   `containerd_manage_service=false`（共享开发机/沙箱）时不调用 systemctl。
+# =============================================================================
+
+- name: "containerd:service | 启用并启动 {{ containerd_unit_name }}"
+  ansible.builtin.systemd:
+    name: "{{ containerd_unit_name }}"
+    enabled: "{{ containerd_service_enabled }}"
+    state: "{{ containerd_service_state }}"
+    daemon_reload: true
+  when: containerd_manage_service | bool
+  tags: ["containerd", "containerd:service"]

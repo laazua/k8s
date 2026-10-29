@@ -1,0 +1,34 @@
+# =============================================================================
+# KubeletConfiguration（由 roles/kubelet 渲染；禁止手工编辑）
+#   - cgroupDriver 与 containerd SystemdCgroup 单一来源（systemd）；
+#   - 关闭匿名认证，使用 Webhook 授权（调用 apiserver SubjectAccessReview）；
+#   - serving 证书复用 T004 pki 的 kubelet 证书（kubernetes-ca 签发，含 serverAuth）。
+# =============================================================================
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+address: {{ kubelet_address }}
+port: {{ kubelet_port }}
+readOnlyPort: {{ kubelet_read_only_port }}
+healthzBindAddress: {{ kubelet_address }}
+healthzPort: {{ kubelet_healthz_port }}
+cgroupDriver: {{ kubelet_cgroup_driver }}
+containerRuntimeEndpoint: {{ kubelet_container_runtime_endpoint }}
+failSwapOn: {{ kubelet_fail_swap_on }}
+clusterDomain: {{ kubelet_cluster_domain }}
+resolvConf: {{ kubelet_resolv_conf }}
+rotateCertificates: {{ kubelet_rotate_certificates }}
+serverTLSBootstrap: false
+authentication:
+  anonymous:
+    enabled: {{ kubelet_anonymous_auth }}
+  webhook:
+    enabled: {{ kubelet_webhook_auth_enabled }}
+  x509:
+    clientCAFile: {{ kubelet_client_ca_file }}
+authorization:
+  mode: {{ kubelet_authorization_mode }}
+tlsCertFile: {{ kubelet_client_cert_file }}
+tlsPrivateKeyFile: {{ kubelet_client_key_file }}
+{% if kubelet_static_pod_path | string | length > 0 %}
+staticPodPath: {{ kubelet_static_pod_path }}
+{% endif %}

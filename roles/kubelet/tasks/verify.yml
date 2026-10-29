@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# kubelet:verify — 落盘产物自检（只读、幂等；不依赖 systemd）
+#   断言二进制/配置/kubeconfig/unit 存在、kubeconfig 权限 0600 root:root。
+# =============================================================================
+
+- name: "kubelet:verify | 检查产物"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kubelet_binary }}"
+    - "{{ kubelet_config_path }}"
+    - "{{ kubelet_kubeconfig_path }}"
+    - "{{ kubelet_unit_path }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kubelet_verify_stat
+  tags: ["kubelet", "kubelet:verify"]
+
+- name: "kubelet:verify | 断言产物齐全"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: "kubelet 产物缺失：{{ item.item }}（binary/config/kubeconfig/unit 必须全部落盘）。"
+    quiet: true
+  loop: "{{ kubelet_verify_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["kubelet", "kubelet:verify"]
+
+- name: "kubelet:verify | 断言 kubeconfig 权限 0600 root:root"
+  ansible.builtin.assert:
+    that:
+      - kubelet_verify_stat.results[2].stat.mode == kubelet_kubeconfig_mode
+      - kubelet_verify_stat.results[2].stat.pw_name == kubelet_root_owner
+      - kubelet_verify_stat.results[2].stat.gr_name == kubelet_root_group
+    fail_msg: >-
+      kubelet.conf 权限/属主不符：期望 {{ kubelet_kubeconfig_mode }}
+      {{ kubelet_root_owner }}:{{ kubelet_root_group }}，实际
+      {{ kubelet_verify_stat.results[2].stat.mode }}
+      {{ kubelet_verify_stat.results[2].stat.pw_name }}:{{ kubelet_verify_stat.results[2].stat.gr_name }}。
+    quiet: true
+  tags: ["kubelet", "kubelet:verify"]

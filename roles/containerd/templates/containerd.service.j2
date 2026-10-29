@@ -1,0 +1,22 @@
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ containerd_service_type }}
+User={{ containerd_user }}
+Group={{ containerd_group }}
+ExecStart={{ containerd_binary }} {{ containerd_exec_args | join(' ') }}
+Restart=always
+RestartSec={{ containerd_restart_sec }}
+LimitNOFILE={{ containerd_limit_nofile }}
+OOMScoreAdjust={{ containerd_oom_score_adjust }}
+Delegate=yes
+KillMode=mixed
+TimeoutStartSec=0
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,126 @@
+---
+# =============================================================================
+# kubelet:binary — 官方二进制获取与安装（强制 sha256）
+#   1) 目录 root:root 0755
+#   2) sha256：优先显式/已知固定值；否则读取官方 `<url>.sha256` 侧车
+#      —— **制品已存在但未固定 sha256** 时直接失败（离线部署必须固定哈希）
+#   3) 复用 download role（代理 / 缓存 / sha256 校验）
+#   4) 安装到 kubelet_bin_dir（内容不变 → changed=0，不触发重启）
+#   5) 断言 `--version` 与 kubelet_version 一致（防缓存/URL 错配）
+# =============================================================================
+
+- name: "kubelet:binary | 创建制品与安装目录"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ kubelet_root_owner }}"
+    group: "{{ kubelet_root_group }}"
+  loop:
+    - "{{ kubelet_artifact_dir }}"
+    - "{{ kubelet_bin_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 检查既有制品"
+  ansible.builtin.stat:
+    path: "{{ kubelet_artifact_path }}"
+  register: kubelet_artifact_stat
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 断言既有制品必须显式固定 sha256（离线可复现）"
+  ansible.builtin.assert:
+    that:
+      - kubelet_sha256 | length == 64
+    fail_msg: >-
+      制品 {{ kubelet_artifact_path }} 已存在，但未提供 kubelet_sha256。
+      离线部署必须显式固定哈希（不可用本地文件自证）；请设置 kubelet_sha256
+      或使用已知版本（kubelet_known_sha256）。
+    quiet: true
+  when:
+    - kubelet_sha256 | length == 0
+    - kubelet_artifact_stat.stat.exists
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 读取官方 sha256 侧车（未固定且制品缺失时）"
+  ansible.builtin.uri:
+    url: "{{ kubelet_download_url }}.sha256"
+    return_content: true
+    status_code: 200
+    timeout: "{{ kubelet_checksum_timeout }}"
+  register: kubelet_checksum_response
+  when:
+    - kubelet_sha256 | length == 0
+    - not kubelet_artifact_stat.stat.exists
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 解析官方 sha256"
+  ansible.builtin.set_fact:
+    kubelet_resolved_sha256: "{{ (kubelet_checksum_response.content | default('') | trim | lower).split(' ')[0] }}"
+  when:
+    - kubelet_sha256 | length == 0
+    - not kubelet_artifact_stat.stat.exists
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 断言 sha256 合法"
+  ansible.builtin.assert:
+    that:
+      - (kubelet_sha256 | length == 64) or (kubelet_resolved_sha256 | default('') is match('^[0-9a-f]{64}$'))
+    fail_msg: >-
+      无法获取合法 sha256（kubelet_sha256='{{ kubelet_sha256 }}'，
+      侧车='{{ kubelet_resolved_sha256 | default('') }}'）。
+      请显式设置 kubelet_sha256。
+    quiet: true
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 下载官方二进制（复用 download role 的缓存/代理/sha256）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_root_prefix: "{{ kubelet_root_prefix }}"
+    download_cache_dir: "{{ kubelet_artifact_dir }}"
+    download_file_owner: "{{ kubelet_root_owner }}"
+    download_file_group: "{{ kubelet_root_group }}"
+    download_timeout: "{{ kubelet_download_timeout }}"
+    download_retries: "{{ kubelet_download_retries }}"
+    download_retry_delay: "{{ kubelet_download_retry_delay }}"
+    download_items:
+      - name: kubelet
+        url: "{{ kubelet_download_url }}"
+        sha256: "{{ kubelet_sha256 if (kubelet_sha256 | length == 64) else (kubelet_resolved_sha256 | default('')) }}"
+        dest: "{{ kubelet_artifact_path }}"
+        mode: "0644"
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 安装 kubelet"
+  ansible.builtin.copy:
+    src: "{{ kubelet_artifact_path }}"
+    dest: "{{ kubelet_binary }}"
+    remote_src: true
+    mode: "{{ kubelet_bin_mode }}"
+    owner: "{{ kubelet_root_owner }}"
+    group: "{{ kubelet_root_group }}"
+  notify: "kubelet:restart"
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 读取已安装版本"
+  ansible.builtin.command:
+    cmd: "{{ kubelet_binary }} --version"
+  register: kubelet_version_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["kubelet", "kubelet:binary"]
+
+- name: "kubelet:binary | 断言实际版本与 kubelet_version 一致"
+  ansible.builtin.assert:
+    that:
+      - kubelet_version_check.rc == 0
+      - ("v" ~ kubelet_version) in (kubelet_version_check.stdout | default(''))
+    fail_msg: >-
+      已安装 kubelet 版本与 kubelet_version={{ kubelet_version }} 不一致：
+      {{ kubelet_version_check.stdout | default(kubelet_version_check.stderr | default('(无法执行 --version)')) }}。
+      请检查制品 URL / sha256 是否对应目标版本。
+    quiet: true
+  tags: ["kubelet", "kubelet:binary"]
