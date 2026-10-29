@@ -19,11 +19,22 @@
 
 1. **核对交付物**：两 role 结构齐全（`defaults/tasks/{facts,validate,binary,config,service,verify,…}`、
    `handlers`、`meta`、`templates`、`README`）；containerd 含 `runc.yml`/`cni.yml`/`crictl.yml`，
-   kubelet 含 `kubeconfig.yml`；二进制统一经 `roles/download`（URL + 强制 sha256 + 缓存/代理）。
+   kubelet 含 `kubeconfig_file.yml`；二进制统一经 `roles/download`（URL + 强制 sha256 + 缓存/代理）。
 2. **TDD 红证据**（实现前，`/tmp/opencode/t008_red.log`）：`PASS=11 FAIL=29`、rc=1，
    11 条 PASS 全是测试资产自身存在，role 目录缺失导致 A2–A10/B1–B12 不可判定。
-3. **红→绿**：`tests/node/test_node_roles.sh` → **PASS=290 FAIL=0、rc=0**。
-4. **契约如实填写**：§8 自测表、§10.1 红阶段、§10.2 M6、§10.3 N5（均含可复跑证据路径）。
+3. **红→绿**：`tests/node/test_node_roles.sh` → **PASS=291 FAIL=0、rc=0**。
+4. **契约如实填写**：§8 自测表、§10.1 红阶段、§10.2 M6、§10.3 N5、§10.4 新发现的 `.gitignore` 缺陷。
+
+### 提交前发现并修掉一个 B1 类缺陷（T007 r1 同类）
+
+- **现象**：`roles/kubelet/tasks/kubeconfig.yml` 命中 `.gitignore:7` 的 `kubeconfig.*` 规则
+  （`git check-ignore -v` 实测），文件只在工作区、**未入库**；`tasks/main.yml` 却 `import_tasks: kubeconfig.yml`
+  → 干净检出（`git archive`）会缺文件、kubelet role 直接失败。原 A1 只用 `test -f` 检查，抓不到。
+- **修复**：改名 `roles/kubelet/tasks/kubeconfig_file.yml`（对齐 T007 的 `kubeconfig_file.j2` 命名，
+  不改 `.gitignore`、不放宽忽略规则），`tasks/main.yml` 同步。
+- **新增防线断言**：「两 role 无被 .gitignore 忽略的文件」（`find … | git check-ignore --stdin`）。
+  **牙齿实测**：临时放回 `kubeconfig.yml` → 断言 FAIL；移除 → PASS（非恒真）。
+- 断言数因此 290 → **291**，并以 291/291 重跑门禁（见下表）。
 
 ### T007-r3 M6/N5 真实状态（逐项复核，非照抄）
 
@@ -44,8 +55,9 @@
 
 | 项 | 结果 |
 | --- | --- |
-| `tests/node/test_node_roles.sh` ×2 | **290/0 rc=0**、**290/0 rc=0**（计数一致；`t008_run1.log`/`t008_run2.log`） |
-| `make test` 全量 ×1 | **rc=0**；`27/39/59/100/225/186/269/**290**`（合计 1095），`FAIL=0`；T001–T007 无回退（`t008_make1.log`） |
+| `tests/node/test_node_roles.sh` ×2（修复后） | **291/0 rc=0**、**291/0 rc=0**（计数一致；`t008_run3.log`/`t008_run4.log`） |
+| `make test` 全量 ×1（修复后） | **rc=0**；`27/39/59/100/225/186/269/**291**`（合计 1096），`FAIL=0`；T001–T007 无回退（`t008_make2.log`） |
+| 修复前参考 | 另有一对 290/290 + 一次全量 rc=0（`t008_run1/2.log`、`t008_make1.log`），如实保留 |
 | `make lint`（syntax-check + yamllint） | 全绿（A9 两条断言 PASS；`t008_syntax_*.log`、`t008_yamllint.log`） |
 
 ### 动态验证要点（真实进程，沙箱 `/tmp/opencode/t008.*`）
@@ -73,7 +85,7 @@
 
 ### 改了哪些文件（本提交）
 
-- 新增：`roles/containerd/**`（15 文件）、`roles/kubelet/**`（13 文件）、`tests/node/**`（8 文件）、
+- 新增：`roles/containerd/**`（15 文件）、`roles/kubelet/**`（13 文件，含改名后的 `kubeconfig_file.yml`）、`tests/node/**`（8 文件）、
   `docs/harness/state/contracts/T008.md`、`docs/harness/state/reports/T007-r3.md`（Evaluator 产物，原样提交）
 - 修改：`Makefile`（`test-node` + 挂入 `make test`）、`tests/control-plane/test_control_plane_roles.sh`（M6/N5）、
   `docs/harness/state/{state.yaml,roadmap.md,handoff.md}`
@@ -82,8 +94,8 @@
 ### 怎么复验
 
 ```bash
-tests/node/test_node_roles.sh                                  # 期望 290/0
-env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test                 # 期望 rc=0，末段 290/0
+tests/node/test_node_roles.sh                                  # 期望 291/0
+env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test                 # 期望 rc=0，末段 291/0
 # M6 冷缓存自举：
 rm -rf /tmp/opencode/cold && mkdir -p /tmp/opencode/cold
 T007_TEST_CACHE=/tmp/opencode/cold tests/control-plane/test_control_plane_roles.sh   # 期望 269/0
