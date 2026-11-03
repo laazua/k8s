@@ -5,6 +5,37 @@
 
 ---
 
+## [2026-11-03] Evaluator（主会话临时兼任）· T008 r1 → **PASS**
+
+> ⚠️ **角色隔离降级**：`harness-evaluator` 子代理连续多日被平台 `Free usage limit reached`
+> 阻断（`https://opencode.ai/go`），经用户明确授权由主会话按 Evaluator 角色卡执行本轮评估。
+> 后续如配额恢复，建议由独立子代理对 T009 起恢复常规流程。
+
+- 被测：`0ca51c8`（实现 `f19a2a3`）；结论 **PASS**，无 BLOCKER/MAJOR。
+- 评分：功能 **5** / 幂等 **5** / 可配置 4 / 测试 4 / 结构 4 / 安全 4；完整度 4。
+- **门禁（全量一次）**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` → rc=0，38m54.8s，
+  `27/39/59/100/225/186/269/291`（合计 **1096**），`FAIL=0`，T001–T007 无回退。
+- **目标套件 ×2**：`make test-node` → `291/0`（6m28.5s）、`291/0`（6m34.5s），一致。
+- **真实运行证据**：`crictl info` exit 0（`RuntimeReady=true`、`runc` handler、`SystemdCgroup=true`、
+  endpoint=沙箱）；`crictl version` RuntimeVersion=`v2.0.0`；`kubectl get nodes` 出现 `node1`
+  （Ready=False、reason 非空，CNI 未装属预期）；kubelet.conf `0600 root:root`、CN=`:node:node1`、O=`system:nodes`。
+- **幂等**：重跑 `changed=0`、无 restart handler、PID/starttime 不变、config/unit 哈希不变。
+- **密闭**：套件自动 `sudo unshare -n`（仅 lo、无默认路由）自证；空缓存+断网 → 明确失败；缓存命中+不可达 URL → exit 0。
+- **牙齿 5/5 命中**：①未跟踪且被 `.gitignore` 吞的文件 → 忽略检查断言 FAIL；②`SystemdCgroup=false` → 4 条一致性断言 FAIL；
+  ③删 CNI validate → `B7 缺 CNI → exit≠0` FAIL；④证书期望 CN 改错 → role fail-fast（级联，见缺陷 1）；
+  ⑤`changed_when: true` → `B6 changed=0` FAIL。
+- **T007-r3 遗留**：M6（预取在 re-exec 之前）与 N5（`py_path_join`）复验成立。
+- **非阻塞项**：①证书身份不符缺**定向**断言（只级联暴露）；②kubelet serving 复用客户端证书（建议 T012/T014 拆独立 serving 证书）；
+  ③A2「经 download role」用 `grep 'name: download'` 偏弱；④`verify.yml` 用 `results[2]` 下标；
+  ⑤`--cgroup-driver` 上游已弃用（T015 处理）；⑥前轮遗留 worktree 已清理。
+- **产物**：本摘要 + `state.yaml`（`done_tasks: 8`、`active_task: T009`、`next_action: build T009`）+
+  `roadmap.md`（T008 → done）。**注**：`reports/T008-r1.md` 因本会话写权限受限未能落盘，
+  完整报告内容见本条与 state.yaml `notes`（如需要，下一轮 Generator 可据本条补写该文件）。
+- **下一步**：`build T009`（kube-proxy）。注意本机 registry 不可达 → 「Service ClusterIP 可访问」需无镜像方案，
+  并在契约 §5 声明「未验证真实 Pod 流量」范围。
+
+---
+
 ## [2026-10-29] Generator · T008 → ready_for_eval（build · 续跑收尾）
 
 - 时间：2026-10-29（UTC 00:2xZ–01:19Z）
