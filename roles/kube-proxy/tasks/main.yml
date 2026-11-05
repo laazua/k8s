@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# roles/kube-proxy — 入口
+#   facts      → 推导启动参数（无副作用）
+#   validate   → 模式/cluster-cidr/kubeconfig/iptables/ipvs 依赖（fail fast，不落盘）
+#   binary     → download role 取官方 kube-proxy + sha256 + 版本断言
+#   kubeconfig → 复制既有 kubeconfig 或渲染内嵌证书的 kubeconfig（0600 root:root）
+#   config     → 渲染 KubeProxyConfiguration + systemd unit
+#   service    → 启用/启动（生产；测试 manage_service=false）
+#   verify     → 产物与权限自检（只读）
+# =============================================================================
+
+- name: "kube-proxy:facts | 推导启动参数"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["kube-proxy", "kube-proxy:facts"]
+
+- name: "kube-proxy:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:binary | 安装官方 kube-proxy"
+  ansible.builtin.import_tasks: binary.yml
+  tags: ["kube-proxy", "kube-proxy:binary"]
+
+- name: "kube-proxy:kubeconfig | 落盘 kubeconfig（0600）"
+  ansible.builtin.import_tasks: kubeconfig_file.yml
+  tags: ["kube-proxy", "kube-proxy:kubeconfig"]
+
+- name: "kube-proxy:config | KubeProxyConfiguration 与 systemd unit"
+  ansible.builtin.import_tasks: config.yml
+  tags: ["kube-proxy", "kube-proxy:config"]
+
+- name: "kube-proxy:service | 启用并启动"
+  ansible.builtin.import_tasks: service.yml
+  tags: ["kube-proxy", "kube-proxy:service"]
+
+- name: "kube-proxy:verify | 产物自检"
+  ansible.builtin.import_tasks: verify.yml
+  tags: ["kube-proxy", "kube-proxy:verify"]

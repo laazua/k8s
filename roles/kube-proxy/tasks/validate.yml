@@ -1,0 +1,152 @@
+---
+# =============================================================================
+# kube-proxy:validate — 前置校验（fail fast；任何失败都不落盘）
+#   1) proxy_mode 合法（仅 iptables / ipvs）
+#   2) cluster-cidr 必填且为合法 IPv4 CIDR
+#   3) hostnameOverride 非空
+#   4) kubeconfig 来源可用（source：文件存在且非空；embedded：CA/cert/key 齐全）
+#   5) 依赖：iptables 可执行（iptables 模式）/ ip_vs 已加载（ipvs 模式）
+#   6) 制品 sha256 格式
+# =============================================================================
+
+- name: "kube-proxy:validate | 校验 proxy_mode 取值"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_proxy_mode in ['iptables', 'ipvs']
+    fail_msg: >-
+      kube_proxy_proxy_mode='{{ kube_proxy_proxy_mode }}' 非法；
+      仅支持 iptables / ipvs（nftables 在 1.31 仍为 alpha，本 role 不支持）。
+    quiet: true
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | cluster-cidr 必填且为合法 IPv4 CIDR"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_cluster_cidr | length > 0
+      - kube_proxy_cluster_cidr is match(kube_proxy_ipv4_cidr_regex)
+    fail_msg: >-
+      kube_proxy_cluster_cidr='{{ kube_proxy_cluster_cidr }}' 非法：必须为非空的
+      IPv4 CIDR（形如 <网络>/<前缀>，通常等于 k8s_pod_cidr）。
+      该值语义为 Pod CIDR，用于 detectLocalMode=ClusterCIDR。
+    quiet: true
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | hostnameOverride 必填"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_hostname_override | length > 0
+    fail_msg: >-
+      kube_proxy_hostname_override 为空：kube-proxy 需要与 Node 对象同名的 hostname
+      （真实集群由 kubelet 注册，可用 inventory_hostname 或显式覆盖）。
+    quiet: true
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 校验 kubeconfig 来源模式"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_kubeconfig_source_mode in ['source', 'embedded']
+    fail_msg: >-
+      kube_proxy_kubeconfig_source_mode='{{ kube_proxy_kubeconfig_source_mode }}' 非法；
+      仅支持 source（复制既有 kubeconfig）/ embedded（由 CA/cert/key 渲染）。
+    quiet: true
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 检查 kubeconfig 源文件（source 模式）"
+  ansible.builtin.stat:
+    path: "{{ kube_proxy_kubeconfig_source }}"
+  register: kube_proxy_kubeconfig_source_stat
+  when: kube_proxy_kubeconfig_source_mode == 'source'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | kubeconfig 缺失/为空 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_kubeconfig_source_stat.stat.exists
+      - kube_proxy_kubeconfig_source_stat.stat.size | int > 0
+    fail_msg: >-
+      kubeconfig 缺失或为空：{{ kube_proxy_kubeconfig_source }} 不存在/不可读。
+      请先由控制面（T007）产出 admin.conf，或改用
+      kube_proxy_kubeconfig_source_mode=embedded 并提供 CA/cert/key。
+    quiet: true
+  when: kube_proxy_kubeconfig_source_mode == 'source'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 检查 CA/cert/key（embedded 模式）"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kube_proxy_client_ca_file }}"
+    - "{{ kube_proxy_client_cert_file }}"
+    - "{{ kube_proxy_client_key_file }}"
+  loop_control:
+    label: "{{ item }}"
+  register: kube_proxy_embedded_stat
+  when: kube_proxy_kubeconfig_source_mode == 'embedded'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 缺少 CA/cert/key → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      缺少 kube-proxy 客户端凭据：{{ item.item }} 不存在。
+      embedded 模式要求 CA/cert/key 齐全（证书由 PKI 签发，本 role 只消费）。
+    quiet: true
+  loop: "{{ kube_proxy_embedded_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: kube_proxy_kubeconfig_source_mode == 'embedded'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 检查 iptables 依赖（iptables 模式）"
+  ansible.builtin.shell: |
+    set -o pipefail
+    command -v "{{ kube_proxy_iptables_binary }}"
+  args:
+    executable: /bin/bash
+  register: kube_proxy_iptables_check
+  changed_when: false
+  failed_when: false
+  when: kube_proxy_proxy_mode == 'iptables'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | iptables 依赖缺失 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_iptables_check.rc == 0
+      - kube_proxy_iptables_check.stdout | default('') | length > 0
+    fail_msg: >-
+      iptables 依赖缺失：找不到可执行文件 '{{ kube_proxy_iptables_binary }}'。
+      iptables 模式要求节点已安装 iptables（含 iptables-save/restore）。
+      也可改用 kube_proxy_proxy_mode=ipvs（需内核加载 ip_vs）。
+    quiet: true
+  when: kube_proxy_proxy_mode == 'iptables'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 检查 ip_vs 内核模块（ipvs 模式）"
+  ansible.builtin.stat:
+    path: "{{ kube_proxy_ipvs_proc_path }}"
+  register: kube_proxy_ipvs_stat
+  when: kube_proxy_proxy_mode == 'ipvs'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | ipvs 模式但 ip_vs 未加载 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - kube_proxy_ipvs_stat.stat.exists
+    fail_msg: >-
+      kube_proxy_proxy_mode=ipvs，但内核 ip_vs 未加载（{{ kube_proxy_ipvs_proc_path }} 不存在）。
+      请先 modprobe ip_vs（及 ip_vs_rr/ip_vs_wrr 等调度器），或改用 iptables 模式。
+    quiet: true
+  when: kube_proxy_proxy_mode == 'ipvs'
+  tags: ["kube-proxy", "kube-proxy:validate"]
+
+- name: "kube-proxy:validate | 断言 sha256 格式（若已固定）"
+  ansible.builtin.assert:
+    that:
+      - (kube_proxy_sha256 | length == 0) or (kube_proxy_sha256 is match('^[0-9a-fA-F]{64}$'))
+    fail_msg: >-
+      kube_proxy_sha256 非法：'{{ kube_proxy_sha256 }}'（必须为 64 位 hex；
+      可留空以读取官方侧车，但离线部署必须显式固定）。
+    quiet: true
+  tags: ["kube-proxy", "kube-proxy:validate"]

@@ -1,0 +1,16 @@
+---
+# =============================================================================
+# kube-proxy:facts — 推导启动参数（无副作用）
+#   配置项（mode/clusterCIDR/监听地址/conntrack/iptables/ipvs）由 config 文件承载；
+#   命令行只保留 --config / --hostname-override / --v（便于单元测试与真机一致）。
+# =============================================================================
+
+- name: "kube-proxy:facts | 构建启动参数"
+  ansible.builtin.set_fact:
+    kube_proxy_args: >-
+      {{ [
+           '--config=' ~ kube_proxy_config_path,
+           '--hostname-override=' ~ kube_proxy_hostname_override,
+           '--v=' ~ (kube_proxy_log_level | string)
+         ] + kube_proxy_extra_args }}
+  tags: ["kube-proxy", "kube-proxy:facts"]

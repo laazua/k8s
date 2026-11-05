@@ -1,0 +1,122 @@
+---
+# =============================================================================
+# roles/kube-proxy — 默认变量
+#
+# 设计要点：
+#   1) 方案：官方二进制 + systemd（**不使用 DaemonSet**）——registry 不可达，
+#      DaemonSet 无法真实运行；二进制方案可真实拉起进程并完成 ClusterIP 验收。
+#   2) 版本/架构/URL/sha256/路径/端口/参数全部可配置；tasks/templates 禁止硬编码。
+#   3) 制品复用 roles/download（URL + 强制 sha256 + 代理 + 本地缓存）。
+#   4) kubeconfig 两种来源：复制既有 kubeconfig（默认 admin.conf，引导凭据）或
+#      由 ca/cert/key 渲染内嵌证书的 kubeconfig；落盘 0600 root:root。
+#   5) 安全默认：healthz/metrics 均绑定 127.0.0.1。
+#   6) 沙箱前缀 kube_proxy_root_prefix（生产留空）把二进制/config/kubeconfig/unit
+#      整体重定向；systemd 副作用由 kube_proxy_manage_service 控制。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+kube_proxy_root_prefix: ""
+
+# --- 版本 / 架构 / 官方制品 ---------------------------------------------------
+kube_proxy_version: "{{ k8s_version | default('1.31.0') }}"
+kube_proxy_arch: "{{ k8s_arch | default('amd64') }}"
+kube_proxy_download_url_base: "https://dl.k8s.io"
+kube_proxy_download_url: >-
+  {{ kube_proxy_download_url_base }}/v{{ kube_proxy_version }}/bin/linux/{{ kube_proxy_arch }}/kube-proxy
+kube_proxy_known_sha256:
+  "1.31.0": "b4b4ecbfeb9f8897b672ff8fa53f3288580b361340d7b2daa40b476e2f2967ca"
+kube_proxy_sha256: "{{ kube_proxy_known_sha256[kube_proxy_version] | default('') }}"
+kube_proxy_checksum_timeout: 30
+kube_proxy_artifact_dir: "{{ kube_proxy_root_prefix }}{{ k8s_artifact_dir | default('/opt/k8s/artifacts') }}"
+kube_proxy_artifact_path: "{{ kube_proxy_artifact_dir }}/kube-proxy"
+kube_proxy_bin_dir: "{{ kube_proxy_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}"
+kube_proxy_binary: "{{ kube_proxy_bin_dir }}/kube-proxy"
+kube_proxy_bin_mode: "0755"
+kube_proxy_root_owner: root
+kube_proxy_root_group: root
+kube_proxy_download_timeout: 120
+kube_proxy_download_retries: 3
+kube_proxy_download_retry_delay: 2
+
+# --- 目录 / 配置 / unit ------------------------------------------------------
+kube_proxy_config_dir: "{{ kube_proxy_root_prefix }}{{ k8s_config_dir | default('/etc/kubernetes') }}"
+kube_proxy_config_path: "{{ kube_proxy_config_dir }}/kube-proxy.yaml"
+kube_proxy_config_mode: "0644"
+kube_proxy_config_dir_mode: "0750"
+kube_proxy_kubeconfig_path: "{{ kube_proxy_config_dir }}/kube-proxy.conf"
+kube_proxy_kubeconfig_mode: "0600"
+kube_proxy_unit_dir: "{{ kube_proxy_root_prefix }}{{ kube_systemd_dir | default('/etc/systemd/system') }}"
+kube_proxy_unit_name: kube-proxy.service
+kube_proxy_unit_path: "{{ kube_proxy_unit_dir }}/{{ kube_proxy_unit_name }}"
+kube_proxy_unit_mode: "0644"
+
+# --- kubeconfig 来源 ---------------------------------------------------------
+# source  : 复制既有 kubeconfig（默认 T007 的 admin.conf；生产应换专用凭据）
+# embedded: 由 ca/cert/key 渲染内嵌证书的 kubeconfig（证书由 PKI 签发，本 role 只消费）
+kube_proxy_kubeconfig_source_mode: source
+kube_proxy_kubeconfig_source: "{{ kube_proxy_config_dir }}/admin.conf"
+kube_proxy_kubeconfig_user: "system:kube-proxy"
+kube_proxy_pki_dir: "{{ kube_proxy_config_dir }}/pki"
+kube_proxy_client_ca_file: "{{ kube_proxy_pki_dir }}/ca.crt"
+kube_proxy_client_cert_file: "{{ kube_proxy_pki_dir }}/kube-proxy.crt"
+kube_proxy_client_key_file: "{{ kube_proxy_pki_dir }}/kube-proxy.key"
+kube_proxy_apiserver_url: >-
+  https://{{ k8s_vip | default(ansible_host | default(inventory_hostname)) }}:{{ k8s_apiserver_port | default(6443) }}
+
+# --- 代理模式与网络 ----------------------------------------------------------
+# 仅支持 iptables / ipvs（其它值 fail-fast）。
+kube_proxy_proxy_mode: iptables
+# cluster-cidr 语义为 **Pod CIDR**（detectLocalMode=ClusterCIDR 时用于判定本地流量）。
+kube_proxy_cluster_cidr: "{{ k8s_pod_cidr | default('10.244.0.0/16') }}"
+kube_proxy_ipv4_cidr_regex: >-
+  ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$
+kube_proxy_bind_address: "0.0.0.0"
+kube_proxy_healthz_bind_address: "127.0.0.1:10256"
+kube_proxy_metrics_bind_address: "127.0.0.1:10249"
+kube_proxy_hostname_override: "{{ inventory_hostname }}"
+kube_proxy_detect_local_mode: ClusterCIDR
+kube_proxy_node_port_addresses: []
+kube_proxy_extra_args: []
+kube_proxy_log_level: 2
+
+# --- clientConnection --------------------------------------------------------
+kube_proxy_accept_content_types: "application/vnd.kubernetes.protobuf,application/json"
+kube_proxy_content_type: "application/vnd.kubernetes.protobuf"
+kube_proxy_qps: 5
+kube_proxy_burst: 10
+
+# --- conntrack（0 = 保持系统现值，避免共享主机上改动全局限制）---------------
+kube_proxy_conntrack_max_per_core: 0
+kube_proxy_conntrack_min: 0
+kube_proxy_conntrack_tcp_established_timeout: 24h0m0s
+kube_proxy_conntrack_tcp_close_wait_timeout: 1h0m0s
+
+# --- iptables 参数 -----------------------------------------------------------
+kube_proxy_iptables_masquerade_all: false
+kube_proxy_iptables_masquerade_bit: 14
+kube_proxy_iptables_sync_period: 30s
+kube_proxy_iptables_min_sync_period: 1s
+kube_proxy_iptables_localhost_node_ports: false
+
+# --- ipvs 参数（仅 proxy_mode=ipvs 时渲染）----------------------------------
+kube_proxy_ipvs_scheduler: rr
+kube_proxy_ipvs_sync_period: 30s
+kube_proxy_ipvs_min_sync_period: 2s
+kube_proxy_ipvs_strict_arp: false
+kube_proxy_ipvs_tcp_timeout: 0s
+kube_proxy_ipvs_tcp_fin_timeout: 0s
+kube_proxy_ipvs_udp_timeout: 0s
+
+# --- 依赖探测（fail-fast 用）------------------------------------------------
+kube_proxy_iptables_binary: iptables
+kube_proxy_ipvs_proc_path: /proc/net/ip_vs
+
+# --- 服务管理（生产 true；共享开发机测试必须 false）-------------------------
+kube_proxy_manage_service: true
+kube_proxy_service_enabled: true
+kube_proxy_service_state: started
+kube_proxy_service_type: simple
+kube_proxy_user: root
+kube_proxy_group: root
+kube_proxy_restart_sec: 10
+kube_proxy_limit_nofile: 1048576

@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T009      # 例如 T001
-contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # 当前任务已评估轮数（T008 r1 = PASS）
-next_action: "build T009"
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 0          # 当前任务已评估轮数（T009 尚未评估；T008 r1 = PASS）
+next_action: "eval T009"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -32,7 +32,11 @@ defaults:
 
 blockers: []          # T008 r1 PASS；无阻塞。MINOR 见 reports/T008-r1.md（若文件不可写，见 handoff 摘要）
 notes: |
+  T009（generator）已交付并独立复验（2026-11-05）：`make lint` PASS；`test-kube-proxy`
+  连跑两次 208/0（275s/273s，PASS 集逐条一致）；全量 `make test` 一次 rc=0（43m38s，
+  27/39/59/100/225/186/269/291 + 208 = 1404 全 PASS，既有套件计数与基线逐项一致）。
+  受限项见 contracts/T009.md §5。
   T008 r1 由主会话临时兼任评估者执行（角色隔离降级：harness-evaluator 子代理持续被平台
   "Free usage limit reached" 阻断，经用户授权）。评估证据：全量 make test 一次 rc=0（38m55s，
   27/39/59/100/225/186/269/291=1096），test-node 连跑两次 291/0 一致；牙齿 5/5 命中。
-updated: "2026-11-03T00:00:00Z"   # ISO8601
+updated: "2026-11-05T00:00:00Z"   # ISO8601

@@ -1,0 +1,18 @@
+[Unit]
+Description=Kubernetes Kube-Proxy
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type={{ kube_proxy_service_type }}
+User={{ kube_proxy_user }}
+Group={{ kube_proxy_group }}
+ExecStart={{ kube_proxy_binary }} {{ kube_proxy_args | join(' ') }}
+Restart=always
+RestartSec={{ kube_proxy_restart_sec }}
+LimitNOFILE={{ kube_proxy_limit_nofile }}
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

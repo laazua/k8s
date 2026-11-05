@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# kube-proxy:service — 生产服务管理
+#   `kube_proxy_manage_service=false`（共享开发机/沙箱）时不调用 systemctl。
+# =============================================================================
+
+- name: "kube-proxy:service | 启用并启动 {{ kube_proxy_unit_name }}"
+  ansible.builtin.systemd:
+    name: "{{ kube_proxy_unit_name }}"
+    enabled: "{{ kube_proxy_service_enabled }}"
+    state: "{{ kube_proxy_service_state }}"
+    daemon_reload: true
+  when: kube_proxy_manage_service | bool
+  tags: ["kube-proxy", "kube-proxy:service"]

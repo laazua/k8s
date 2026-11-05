@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# kube-proxy:config — 渲染 KubeProxyConfiguration 与 systemd unit
+#   内容不变 → changed=0，不触发 restart。
+# =============================================================================
+
+- name: "kube-proxy:config | 创建配置/unit 目录"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: "{{ kube_proxy_root_owner }}"
+    group: "{{ kube_proxy_root_group }}"
+  loop:
+    - { path: "{{ kube_proxy_config_dir }}", mode: "{{ kube_proxy_config_dir_mode }}" }
+    - { path: "{{ kube_proxy_unit_dir }}", mode: "0755" }
+  loop_control:
+    label: "{{ item.path }}"
+  tags: ["kube-proxy", "kube-proxy:config"]
+
+- name: "kube-proxy:config | 渲染 kube-proxy.yaml（KubeProxyConfiguration）"
+  ansible.builtin.template:
+    src: kube-proxy-config.yaml.j2
+    dest: "{{ kube_proxy_config_path }}"
+    mode: "{{ kube_proxy_config_mode }}"
+    owner: "{{ kube_proxy_root_owner }}"
+    group: "{{ kube_proxy_root_group }}"
+  notify: "kube-proxy:restart"
+  tags: ["kube-proxy", "kube-proxy:config"]
+
+- name: "kube-proxy:config | 渲染 systemd unit"
+  ansible.builtin.template:
+    src: kube-proxy.service.j2
+    dest: "{{ kube_proxy_unit_path }}"
+    mode: "{{ kube_proxy_unit_mode }}"
+    owner: "{{ kube_proxy_root_owner }}"
+    group: "{{ kube_proxy_root_group }}"
+  notify: "kube-proxy:restart"
+  tags: ["kube-proxy", "kube-proxy:config"]

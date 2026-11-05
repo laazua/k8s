@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/kube-proxy — handlers
+#   仅在二进制 / config / kubeconfig / unit 变化时通知；`manage_service=false` 时跳过。
+# =============================================================================
+
+- name: "kube-proxy:restart"
+  ansible.builtin.systemd:
+    name: "{{ kube_proxy_unit_name }}"
+    state: restarted
+    daemon_reload: true
+  when: kube_proxy_manage_service | bool
+  tags: ["kube-proxy", "kube-proxy:service"]

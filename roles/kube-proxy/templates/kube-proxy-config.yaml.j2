@@ -1,0 +1,43 @@
+# =============================================================================
+# KubeProxyConfiguration（由 roles/kube-proxy 渲染；禁止手工编辑）
+#   - mode/clusterCIDR/监听地址/conntrack/iptables/ipvs 全部来自变量；
+#   - healthz/metrics 默认绑定 127.0.0.1（安全默认）；
+#   - kubeconfig 由 role 以 0600 root:root 落盘。
+# =============================================================================
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: {{ kube_proxy_proxy_mode }}
+clusterCIDR: {{ kube_proxy_cluster_cidr }}
+bindAddress: {{ kube_proxy_bind_address }}
+healthzBindAddress: {{ kube_proxy_healthz_bind_address }}
+metricsBindAddress: {{ kube_proxy_metrics_bind_address }}
+hostnameOverride: {{ kube_proxy_hostname_override }}
+detectLocalMode: {{ kube_proxy_detect_local_mode }}
+nodePortAddresses: {{ kube_proxy_node_port_addresses | to_json }}
+clientConnection:
+  kubeconfig: {{ kube_proxy_kubeconfig_path }}
+  acceptContentTypes: {{ kube_proxy_accept_content_types }}
+  contentType: {{ kube_proxy_content_type }}
+  qps: {{ kube_proxy_qps }}
+  burst: {{ kube_proxy_burst }}
+conntrack:
+  maxPerCore: {{ kube_proxy_conntrack_max_per_core }}
+  min: {{ kube_proxy_conntrack_min }}
+  tcpEstablishedTimeout: {{ kube_proxy_conntrack_tcp_established_timeout }}
+  tcpCloseWaitTimeout: {{ kube_proxy_conntrack_tcp_close_wait_timeout }}
+iptables:
+  masqueradeAll: {{ kube_proxy_iptables_masquerade_all }}
+  masqueradeBit: {{ kube_proxy_iptables_masquerade_bit }}
+  syncPeriod: {{ kube_proxy_iptables_sync_period }}
+  minSyncPeriod: {{ kube_proxy_iptables_min_sync_period }}
+  localhostNodePorts: {{ kube_proxy_iptables_localhost_node_ports }}
+{% if kube_proxy_proxy_mode == 'ipvs' %}
+ipvs:
+  scheduler: {{ kube_proxy_ipvs_scheduler }}
+  syncPeriod: {{ kube_proxy_ipvs_sync_period }}
+  minSyncPeriod: {{ kube_proxy_ipvs_min_sync_period }}
+  strictARP: {{ kube_proxy_ipvs_strict_arp }}
+  tcpTimeout: {{ kube_proxy_ipvs_tcp_timeout }}
+  tcpFinTimeout: {{ kube_proxy_ipvs_tcp_fin_timeout }}
+  udpTimeout: {{ kube_proxy_ipvs_udp_timeout }}
+{% endif %}

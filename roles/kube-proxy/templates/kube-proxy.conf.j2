@@ -1,0 +1,23 @@
+# =============================================================================
+# kube-proxy kubeconfig（由 roles/kube-proxy 渲染；证书内嵌，0600 root:root）
+#   身份来自 PKI（T011 将签发专用 system:kube-proxy）；本 role 只消费证书。
+# =============================================================================
+apiVersion: v1
+kind: Config
+clusters:
+  - name: kubernetes
+    cluster:
+      server: {{ kube_proxy_apiserver_url }}
+      certificate-authority-data: "{{ kube_proxy_ca_b64 }}"
+users:
+  - name: "{{ kube_proxy_kubeconfig_user }}"
+    user:
+      client-certificate-data: "{{ kube_proxy_client_cert_b64 }}"
+      client-key-data: "{{ kube_proxy_client_key_b64 }}"
+contexts:
+  - name: kube-proxy
+    context:
+      cluster: kubernetes
+      user: "{{ kube_proxy_kubeconfig_user }}"
+current-context: kube-proxy
+preferences: {}

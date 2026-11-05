@@ -1,0 +1,26 @@
+# =============================================================================
+#  T009 沙箱 kube-proxy（真实安装/渲染，不调用 systemctl）
+#   - kubeconfig 消费 T007 的 admin.conf（引导凭据；专用 system:kube-proxy 属 T011）；
+#   - 二进制/config/kubeconfig/unit 全部落 sandbox_root；
+#   - 高位端口 20247(healthz)/20249(metrics)，不占默认 10256/10249；
+#   - 监听地址全部 127.0.0.1（安全默认），不做宿主级变更。
+# =============================================================================
+- name: T009 sandbox kube-proxy
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_proxy_root_prefix: "{{ sandbox_root }}"
+    kube_proxy_manage_service: false
+    kube_proxy_proxy_mode: iptables
+    kube_proxy_cluster_cidr: "{{ k8s_pod_cidr }}"
+    kube_proxy_hostname_override: "{{ inventory_hostname }}"
+    kube_proxy_bind_address: 127.0.0.1
+    kube_proxy_healthz_bind_address: "127.0.0.1:20247"
+    kube_proxy_metrics_bind_address: "127.0.0.1:20249"
+    kube_proxy_kubeconfig_source: "{{ sandbox_root }}/etc/kubernetes/admin.conf"
+    kube_proxy_iptables_sync_period: 5s
+    kube_proxy_iptables_min_sync_period: 1s
+  roles:
+    - role: kube-proxy
