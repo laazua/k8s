@@ -9,6 +9,36 @@
 
 ---
 
+## [2026-11-06] Generator · T009 r1 修复（B10 flaky）→ **ready_for_eval**
+
+> 仅改测试与契约/状态；产品 role 未改（评估 r1 结论：功能/安全均通过，唯一阻塞为测试缺陷）。
+
+- 基线：`f5f97a6`（被测 `a1adfe6`）；工作区修复后待评估。
+- **B10 根因**：`host_ports()` 无空值重试/无失败信号；断言比较**全局**宿主监听端口，
+  被无关进程抖动干扰；失败不落 diff。
+- **修复**（`tests/kube-proxy/test_kube_proxy_role.sh`）：
+  1. `host_ports()` 对齐 `host_ipt_raw()`：空输出重试 20×0.2s，耗尽返回非零；
+     PRE/POST 采集失败显式 `bad` + 哨兵，不把「采集失败」误判为「端口变化」。
+  2. B10 快照收敛为**本任务端口集合**（16443/12379/20247/20249/18080），
+     不再断言全局宿主状态；无关进程增删监听端口不影响结果。
+  3. 失败落 `/tmp/opencode/t009_host_ports.diff`（任务端口子集 + 全量诊断 diff）。
+  4. N1：`ip route add $SVC_IP/32 dev lo` 加注释（DNAT 在 OUTPUT 生效，不构成绕过）。
+  5. M2：契约 A6 精确为「healthz/metrics 不得 `0.0.0.0`」；注明 `bindAddress`
+     的 `0.0.0.0` 是代理源地址语义。
+- **5 次连续运行**（`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test-kube-proxy`）：
+  `208/0`、`208/0`、`208/0`、`208/0`、`208/0`，**5/5 rc=0**（272–275s）。
+- **反证**：
+  - 函数级（PATH 注入假 `nsenter`）：旧实现 POST 瞬时空 → PRE≠POST 红；
+    新实现前 2 次空 → 重试后绿；前 19 次空 → 第 20 次成功；全空 → rc=1。
+  - 端到端：完整套件注入前 2 次 `ss` 空返回 → B10 PASS，`208/0`，rc=0。
+- **全量**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` rc=0，2611s，
+  `27/39/59/100/225/186/269/291/208` = 1404，FAIL=0（T001–T008 无回退）。
+- 收尾：无残留进程/netns/沙箱目录；工作区提交见下条 commit。
+- 状态：`ready_for_eval` / `phase: EVALUATING` / `next_action: eval T009 (r2)`；
+  roadmap T009 保持 `in-progress`。**Generator 不自判 PASS。**
+
+---
+
 ## [2026-11-06] Evaluator（主会话临时兼任）· T009 r1 → **FAIL**
 
 > 角色隔离降级（子代理持续 `Free usage limit reached`，经用户授权）。评估标准未降低。

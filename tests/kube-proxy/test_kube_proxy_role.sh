@@ -432,11 +432,33 @@ host_ipt() { host_ipt_raw | sha256sum | awk '{print $1}'; }
 # iptables-save 会按 ~80 列用反斜杠续行，规则匹配前先折叠续行。
 nat_rules() { iptables-save -t nat 2>/dev/null | sed -e ':a' -e 'N' -e '$!ba' -e 's/\\\n/ /g'; }
 host_ports() {
-  nsenter -t 1 -n ss -ltn 2>/dev/null | awk 'NR>1{print $4}' | sort | tr '\n' ' '
+  # 与 host_ipt_raw() 对齐：nsenter/ss 可能瞬时失败或输出为空（netlink 争用、
+  # nsenter 启动抖动）。空输出时重试（20 次 × 0.2s）；重试耗尽返回非零，
+  # 避免把「采集失败」误判成「端口变化」而随机红（r1 的 flaky 根因）。
+  local i out
+  for ((i = 0; i < 20; i++)); do
+    out="$(nsenter -t 1 -n ss -ltn 2>/dev/null | awk 'NR>1{print $4}' | sort -u | tr '\n' ' ')"
+    [[ -n "${out// /}" ]] && { printf '%s\n' "$out"; return 0; }
+    sleep 0.2
+  done
+  return 1
+}
+# B10 只断言「本任务端口是否泄漏到宿主」，不比较全局监听端口：
+# 共享宿主的无关进程（编辑器/dev server/浏览器等）会随机增删监听端口，
+# 全局快照因此天然 flaky（r1 实测 5 次中 1 次红）；本任务端口集合是确定的。
+TASK_PORTS_RE=":(${PORT_API}|${PORT_ETCD}|${PORT_KP_HEALTHZ}|${PORT_KP_METRICS}|${PORT_MOCK})$"
+filter_task_ports() {
+  printf '%s\n' "$1" | tr ' ' '\n' | grep -E "$TASK_PORTS_RE" | sort -u | tr '\n' ' ' || true
 }
 PRE_HOST_IPT="$(host_ipt)"
 PRE_HOST_IPT_RAW="$(host_ipt_raw)"
-PRE_HOST_PORTS="$(host_ports)"
+PRE_HOST_PORTS_FULL="$(host_ports)" || PRE_HOST_PORTS_FULL="__CAPTURE_FAILED__"
+if [[ "$PRE_HOST_PORTS_FULL" == "__CAPTURE_FAILED__" ]]; then
+  bad "B10 宿主监听端口快照（PRE）采集失败（重试耗尽）"
+  PRE_HOST_PORTS="__CAPTURE_FAILED__"
+else
+  PRE_HOST_PORTS="$(filter_task_ports "$PRE_HOST_PORTS_FULL")"
+fi
 PRE_HOST_UNIT="$(snapshot_path /etc/systemd/system/kube-proxy.service)"
 PRE_ETC_K8S="$(snapshot_path /etc/kubernetes)"
 PRE_VAR_LIB_KP="$(snapshot_path /var/lib/kube-proxy)"
@@ -643,6 +665,10 @@ check "B2 EndpointSlice mock-abc 已创建" \
 # 后端地址（非 loopback：EndpointSlice 拒绝 127/8）+ service CIDR 路由
 # （真实节点有默认路由；netns 内显式给 ClusterIP 一条 lo 路由，属测试夹具）。
 ip addr add "$MOCK_IP/32" dev lo 2>/dev/null || true
+# 说明：给 ClusterIP 加 lo 路由**不构成绕过 kube-proxy**——DNAT 在 OUTPUT 链生效
+# （KUBE-SERVICES/KUBE-NODEPORTS），curl 发往 10.96.0.50 时先被 DNAT 到
+# 10.0.0.10:18080；若 kube-proxy 规则缺失，路由仍指向 lo 但该端口无监听 → 连接拒绝
+# （B5 会红）。因此该路由只是补足 netns 缺少默认路由的夹具。
 ip route add "$SVC_IP/32" dev lo 2>/dev/null || true
 ip route add 10.96.0.0/12 dev lo 2>/dev/null || true
 printf '%s\n' "$MOCK_BODY" >"$SB/www/health"
@@ -950,7 +976,13 @@ check "B10 测试 Service 规则未泄漏到宿主（与本 netns 内规则无�
 
 POST_HOST_IPT="$(host_ipt)"
 POST_HOST_IPT_RAW="$(host_ipt_raw)"
-POST_HOST_PORTS="$(host_ports)"
+POST_HOST_PORTS_FULL="$(host_ports)" || POST_HOST_PORTS_FULL="__CAPTURE_FAILED__"
+if [[ "$POST_HOST_PORTS_FULL" == "__CAPTURE_FAILED__" ]]; then
+  bad "B10 宿主监听端口快照（POST）采集失败（重试耗尽）"
+  POST_HOST_PORTS="__CAPTURE_FAILED__"
+else
+  POST_HOST_PORTS="$(filter_task_ports "$POST_HOST_PORTS_FULL")"
+fi
 POST_HOST_UNIT="$(snapshot_path /etc/systemd/system/kube-proxy.service)"
 POST_ETC_K8S="$(snapshot_path /etc/kubernetes)"
 POST_VAR_LIB_KP="$(snapshot_path /var/lib/kube-proxy)"
@@ -960,8 +992,17 @@ if [[ "$PRE_HOST_IPT" != "$POST_HOST_IPT" ]]; then
   diff -u <(printf '%s\n' "$PRE_HOST_IPT_RAW") <(printf '%s\n' "$POST_HOST_IPT_RAW") \
     >/tmp/opencode/t009_host_ipt.diff 2>&1 || true
 fi
+if [[ "$PRE_HOST_PORTS" != "$POST_HOST_PORTS" ]]; then
+  {
+    printf 'PRE  host task ports : %s\n' "$PRE_HOST_PORTS"
+    printf 'POST host task ports : %s\n' "$POST_HOST_PORTS"
+    printf '\n-- 全量宿主监听端口 PRE/POST diff（仅诊断，不参与断言）--\n'
+    diff -u <(printf '%s\n' "${PRE_HOST_PORTS_FULL// /$'\n'}") \
+            <(printf '%s\n' "${POST_HOST_PORTS_FULL// /$'\n'}") || true
+  } >/tmp/opencode/t009_host_ports.diff 2>&1 || true
+fi
 check "B10 宿主 iptables/ip6tables 快照一致（零污染）" test "$PRE_HOST_IPT" = "$POST_HOST_IPT"
-check "B10 宿主监听端口快照一致" test "$PRE_HOST_PORTS" = "$POST_HOST_PORTS"
+check "B10 宿主监听端口快照一致（仅本任务端口）" test "$PRE_HOST_PORTS" = "$POST_HOST_PORTS"
 check "B10 宿主未新增 kube-proxy.service" test "$PRE_HOST_UNIT" = "$POST_HOST_UNIT"
 check "B10 宿主 /etc/kubernetes 未被创建/改动" test "$PRE_ETC_K8S" = "$POST_ETC_K8S"
 check "B10 宿主 /var/lib/kube-proxy 未被创建/改动" test "$PRE_VAR_LIB_KP" = "$POST_VAR_LIB_KP"
