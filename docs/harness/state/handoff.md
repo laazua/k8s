@@ -9,6 +9,59 @@
 
 ---
 
+## [2026-11-07] Evaluator（主会话临时兼任）· T009 r2 → **PASS**
+
+> 角色隔离降级（`harness-evaluator` 子代理再次提前结束/受限流；经用户此前授权由主会话兼任）。
+> 评估标准未降低。被测提交：`741464d`（产品 `a1adfe6` + r1 测试修复）。
+
+### 结论与评分
+| 维度 | 分 | 依据 |
+| --- | --- | --- |
+| 功能正确性 | 5 | ClusterIP 经真实 kube-proxy DNAT 返回 `MOCK-OK-T009`；端点移除→失败→恢复→成功 |
+| 幂等/可重入 | 5 | 每轮 B8 `changed=0`；牙齿 `changed_when: true` → 红 |
+| 可配置/接缝 | 4 | 全变量化、两套件模板；`bindAddress` 语义已澄清 |
+| **测试质量** | **4（≥4 达标）** | r1 flaky 已消除（修复后 **10/10 连续绿**：generator 5 + evaluator 5）；牙齿 5/5（r1）+ 3/3（r2）；MINOR：B10 端口集合漏 etcd peer `12380` |
+| 结构/可维护 | 4 | role 16 文件分层清晰 |
+| 安全 | 4 | healthz/metrics 默认 `127.0.0.1`、kubeconfig `0600 root:root`、无 `0.0.0.0` 默认 |
+| 完整度 | 4 | §5 受限声明诚实（DaemonSet 未运行、无 Pod 流量、systemd 未在宿主启动） |
+
+### 独立复现证据
+- **目标套件 5 次**（evaluator 独立跑）：`208/0`、`208/0`、`208/0`、`208/0`、`208/0`，**5/5 rc=0**（276/274/273/275/274s）
+  → 日志 `/tmp/opencode/t009_r2_run{1..5}.log`、`t009_r2_5runs.txt`。r1 的 `B10` 随机红未复现。
+- **全量门禁**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test` **rc=0，43m17s**，
+  `27/39/59/100/225/186/269/291/208` = **1404 全 PASS**，零回退（`t009_r2_full.log`）。
+- **静态**：两份 playbook `--syntax-check` 通过；`yamllint` 0 输出（`t009_syntax_*.log`）。
+- **核心验收为真**：mock 绑 `10.0.0.10/32 dev lo`，ClusterIP `10.96.0.50` 未绑任何接口；
+  `curl` 仅能经 DNAT 到达。逐轮 B4（DNAT 规则）/B5（200+响应体）/B6（后端故障）/B7（端点移除）全 PASS。
+- **密闭性**：空缓存 + 不可达 URL → 显式 `failed=1`（`t009_b0_empty.log`）；缓存命中 → 成功（`t009_b0_offline.log`）。
+- **收尾**：无残留进程/netns/沙箱/worktree；`git status` clean；`git ls-files` 无凭据。
+
+### r2 牙齿实验（`git worktree`，主工作区 clean）
+| # | 变异 | 结果 |
+| --- | --- | --- |
+| T1 | EndpointSlice 端口 `18080→18081` | rc=2，`202/6`（B4/B5/B6 核心断言） |
+| T2 | `verify.yml` 加 `changed_when: true` | rc=2，`207/1`（B8 changed=0） |
+| T3 | `healthzBindAddress` 改 `0.0.0.0:10256` | rc=2，`206/2`（A6 两条） |
+
+> T1 期间有一次并发残留进程写入同一日志，尾段第二次汇总（198/10）不计入；首段 `202/6` 的失败项均为预期的核心断言。
+
+### r1 修复验收（B10 flaky）
+- 修复方式符合 spec v1.5：快照收敛为本任务端口集合、空值重试 20×0.2s、耗尽显式失败、失败落 diff。
+- 函数级反证（evaluator 独立）：前 2 次空 → 第 3 次成功；前 19 次空 → 第 20 次成功；全空 → rc=1；
+  正则失效 → 泄漏被过滤成空（确认断言依赖该正则，**非假绿**）。
+- 端到端注入：完整套件 + `ss` 前 2 次空返回 → B10 PASS、`208/0`（generator 证据）。
+
+### 非阻塞项（记入后续，不影响本任务 PASS）
+- **M1**：`TASK_PORTS_RE` 未包含 etcd peer `12380`（inventory `etcd_peer_port`）→ B10 端口泄漏检测存在盲点；
+  建议 T010 或收尾任务补入并加断言。
+- **M2（保留）**：`kube_proxy_kubeconfig_source` 默认 `admin.conf`（引导凭据），专用 `system:kube-proxy` 凭据属 T011。
+- **N1**：`reports/T009-r2.md` 因本会话写权限受限未落盘，完整报告即本条。
+
+- 状态：`accepted` / `eval_round: 2` / `done_tasks: 9` / `active_task: T010` / `next_action: build T010` / `phase: BUILDING`；
+  roadmap T009 → `done`。
+
+---
+
 ## [2026-11-06] Generator · T009 r1 修复（B10 flaky）→ **ready_for_eval**
 
 > 仅改测试与契约/状态；产品 role 未改（评估 r1 结论：功能/安全均通过，唯一阻塞为测试缺陷）。

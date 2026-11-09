@@ -2,15 +2,15 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T009      # 例如 T001
-contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # 已完成轮数（T009 r1 = FAIL；r1 修复已完成，待 r2 评估）
-next_action: "eval T009 (r2)"
+phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+active_task: T010      # 例如 T001
+contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 2          # T009 r2 = PASS（done_tasks 9）
+next_action: "build T010"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
-done_tasks: 8
+done_tasks: 9
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,18 +30,15 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # T009 r1 阻塞（B10 flaky）已修复，待 r2 独立评估确认
+blockers: []          # 无阻塞；T009 已 accepted，进入 T010
 notes: |
-  T009 r1 评估（主会话临时兼任，角色隔离降级）→ **FAIL**：全量 1404 全 PASS，
-  但 `test-kube-proxy` 5 次中 1 次红（B10 全局宿主端口快照 flaky）。
-  **r1 修复（generator，2026-11-06）**：仅改测试 + 契约——
-  `host_ports()` 空值重试 20×0.2s + 耗尽返回非零；B10 收敛为「本任务端口集合」
-  （16443/12379/20247/20249/18080）；失败落 `/tmp/opencode/t009_host_ports.diff`；
-  M2（A6 措辞）、N1（ClusterIP lo 路由注释）已处理。
-  证据：`test-kube-proxy` **5/5 208/0 rc=0**（272–275s）；反证 5 项（旧实现红/新实现
-  重试后绿/19 次空→第 20 次成功/全空 rc=1/端口泄漏仍红）+ 端到端注入 `ss` 空返回仍
-  `208/0`；全量 `make test` rc=0（2611s，27/39/59/100/225/186/269/291/208 = **1404**）。
-  日志：`/tmp/opencode/t009_fix_{run1..5,injected,full}.log`、`t009_reverse_proof.log`。
-  待 r2 独立评估（优先 `harness-evaluator` 子代理；被限流则按既定降级流程）。
+  **T009 r2 = PASS（accepted，2026-11-07）**，被测 `741464d`：
+  - evaluator 独立 `test-kube-proxy` **5/5 208/0 rc=0**（276/274/273/275/274s）；
+  - 全量 `make test` **rc=0，43m17s**，27/39/59/100/225/186/269/291/208 = **1404**；
+  - 牙齿 3/3（EndpointSlice 端口 202/6、changed_when 207/1、healthz 0.0.0.0 206/2）；
+  - r1 flaky 已消除：修复后累计 10/10 连续绿；断言收敛为本任务端口 + 空值重试 + 失败落 diff；
+  - 核心验收真实：ClusterIP 未绑任何接口，`curl` 经 DNAT 返回 `MOCK-OK-T009`，端点移除→失败→恢复成功。
+  非阻塞遗留：M1（B10 端口集合漏 etcd peer 12380）、M2（kube-proxy 专用凭据属 T011）。
+  报告全文见 `handoff.md` 顶部（`reports/` 本会话不可写）。
   T008 r1 PASS（全量 1096、test-node ×2 291/0、牙齿 5/5）。
-updated: "2026-11-06T13:00:00Z"   # ISO8601
+updated: "2026-11-09T00:00:00Z"   # ISO8601

@@ -1,6 +1,7 @@
 # 任务清单（Roadmap）· k8s 二进制 Ansible 部署
 
-> 状态：**已复核定稿（v1.2，Planner，2026-10-19）**，取代 v1.1。上游：`spec.md`（G1–G13 / A1–A16 / C1–C13 / D1–D3）。
+> 状态：**已复核定稿（v1.3，Planner，2026-11-09）**，取代 v1.2。上游：`spec.md`（G1–G13 / A1–A16 / C1–C13 / D1–D3）。
+> v1.3 变更：T009 → done；T010 验收按 spec v1.5 / R1 v1.4 **无镜像范式**重述（目标验收保留 + 受限项声明 + netns/veth VXLAN 下沉验证）。
 > v1.2 变更：按评估报告 `T002-r1` 的 D4 更正「验证环境」事实（PID1=systemd、免密 sudo 可用、registry 不可达）。
 > v1.1 变更：① T002「测试方式」由 molecule+testinfra 改为**沙箱前缀真实执行 + 接线/干跑断言**（验收摘要不变，受限项见契约）；
 > ② 新增「验证环境」说明——容器/VM 类测试方式在当前环境不可执行，须按 R1 降级并显式声明。
@@ -21,8 +22,8 @@
 | T006 | done | 控制面高可用 role（LB + VIP） | `roles/haproxy`、`roles/keepalived`（`ha_mode=kube-vip` 可切换） | VIP 可达且 `curl -k https://<VIP>:6443/healthz` 返回 ok；停掉持有 VIP 的 master 后 VIP 漂移到另一 master 且仍返回 ok [A6, D1] | T002, T003 | 集群断言 + 故障注入（停/起节点） | normal |
 | T007 | done | 控制平面组件 role | `roles/kube-apiserver`、`roles/kube-controller-manager`、`roles/kube-scheduler` | 三组件 systemd active+enabled；`kubectl get --raw /healthz` 与 `/readyz` 为 ok；apiserver 安全默认生效（`--anonymous-auth=false`、RBAC 授权）[A7, C11] | T004, T005, T006 | 集群断言 + 配置文件/进程参数断言 | normal |
 | T008 | done | 运行时与节点组件 role | `roles/containerd`、`roles/kubelet`（+runc、CNI plugins、cgroup driver=systemd） | containerd、kubelet systemd active；`crictl info` 返回正常且 CRI 端点可连通；kubelet 启动后节点出现在 `kubectl get nodes`（可能 NotReady，CNI 未就绪）[A8] | T002, T003, T004 | molecule（容器内验证配置）+ 集群断言 | normal |
-| T009 | in-progress | kube-proxy role | `roles/kube-proxy`（DaemonSet 或二进制二选一，契约内声明） | kube-proxy 在全部 node 运行；创建 Service 后 ClusterIP 可访问 [A9]（无镜像范式：netns 内真实 etcd/apiserver/kube-proxy + 手工 Service/EndpointSlice 指向本地 mock；`curl <ClusterIP>` 必须 200 且响应体来自 mock，端点移除→失败→恢复成功） | T008 | 沙箱 netns 真实进程 + ClusterIP 实测 + 宿主零污染断言 | normal |
-| T010 | todo | Cilium CNI role | `roles/cilium`（helm/manifest + 变量化版本与参数，默认 VXLAN、保留 kube-proxy） | `cilium status` healthy；**跨节点**两个 Pod 互相 ping/HTTP 成功（容器内 netns）；`kubectl get nodes` 全部 Ready [A10, D2] | T009 | 集群断言 + 跨节点连通性测试 | normal |
+| T009 | done | kube-proxy role | `roles/kube-proxy`（DaemonSet 或二进制二选一，契约内声明） | kube-proxy 在全部 node 运行；创建 Service 后 ClusterIP 可访问 [A9]（无镜像范式：netns 内真实 etcd/apiserver/kube-proxy + 手工 Service/EndpointSlice 指向本地 mock；`curl <ClusterIP>` 必须 200 且响应体来自 mock，端点移除→失败→恢复成功） | T008 | 沙箱 netns 真实进程 + ClusterIP 实测 + 宿主零污染断言 | normal |
+| T010 | todo | Cilium CNI role | `roles/cilium`（helm/manifest + 变量化版本与参数，默认 VXLAN、保留 kube-proxy） | **目标验收**：`cilium status` healthy；跨节点两个 Pod 互相 ping/HTTP 成功；`kubectl get nodes` 全部 Ready [A10, D2]。**本环境无镜像/registry 不可达 → 目标项为受限项**，实际可判定面：①渲染产物与变量一致（版本/VXLAN/`kubeProxyReplacement=false`/集群名与 ID/Pod CIDR/API endpoint），清单可解析且 `--syntax-check` 通过；②netns+veth 双节点拓扑上按渲染参数真实建立 VXLAN 隧道，跨 netns ICMP/HTTP 成功（内核数据面，非 Pod 网络）；③连跑两次 `changed=0`；④契约 §5 逐项声明「cilium-agent/Pod/Node Ready 未验证」并给真机复验步骤 | T009 | 静态/渲染断言 + netns/veth VXLAN 数据面 + 幂等复跑（无镜像范式） | normal |
 | T011 | todo | kubeconfig / RBAC / 核心附加组件 role | `roles/cluster-addons`（admin&kubelet kubeconfig、CoreDNS、必要 RBAC） | admin kubeconfig 可用于本机 `kubectl`；CoreDNS 全部 Pod Running；集群内 DNS 解析（起 tmp Pod `nslookup kubernetes.default`）成功 [A11] | T010 | 集群断言 + DNS 解析测试 | normal |
 | T012 | todo | 集群验证与冒烟测试套件 | `tests/e2e/` 冒烟脚本 + 使用说明 | 一条命令完成：全部节点 Ready、全部系统 Pod Running、集群内 DNS 解析成功、跨节点 Pod 互通，输出明确的 PASS/FAIL 汇总 [A12] | T011 | 端到端冒烟脚本（可重复执行） | normal |
 | T013 | todo | 调度约束：业务仅落 node | `roles/taints`（或并入 base 的独立 tag）+ 示例工作负载 | 控制面节点带 `NoSchedule` 污点与角色标签；一个**不带 toleration** 的示例工作负载多个副本全部调度到 node（0 副本落在 master）[A13, G8] | T012 | 集群断言（`kubectl get pods -o wide` 校验节点分布） | normal |
@@ -31,6 +32,9 @@
 | T016 | todo | 端到端验收与使用文档 | `tests/e2e/` 全流程脚本、`docs/` 使用手册（inventory 填写、变量说明、代理/离线、加节点、升级、回滚、已知限制） | 从干净 inventory 按 README 快速开始流程可一条命令得到可用 HA 集群；文档覆盖全部可配置项与已知限制；**T013/T014/T015 的验收在同一轮全流程中全部复现通过** [A16] | T013, T015 | 端到端全流程（干净环境重跑） | normal |
 
 > 注：T013 与 T014 **可并行**（互不依赖）；T016 依赖二者完成，故为主线的终点。
+> 注（v1.3，2026-11-09）：T010 起凡涉及「Pod / 镜像 / `cilium status` / 节点 Ready」的验收，
+> 一律按 **spec R1 v1.4 无镜像范式**执行：**目标验收保留在摘要中**，同时给出本环境可判定的
+> 下沉验证面，并在契约 §5 逐项声明「未验证」+ 真机复验步骤；**不得**把下沉验证表述为已达成目标验收。
 
 ## 依赖与并行
 
