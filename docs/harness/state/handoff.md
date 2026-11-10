@@ -9,6 +9,39 @@
 
 ---
 
+## [2026-11-10] Evaluator（独立子代理）· T010 r1 → **PASS（accepted）**
+
+> 被测 `eb22fb9`（工作区 clean，`git diff eb22fb9` 为空）。标准未降低；只验证不改代码。
+
+- **结论**：PASS。六项：功能 5 / 幂等 5 / 可配置 5 / 测试 4 / 结构 4 / 安全 4；完整度 4（加权）。
+- **独立复现**：`env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test-cilium` **4 次**均 `229/0` rc=0
+  （67.1s/67.7s/67.3s/…，PASS 集逐条 `diff` 一致；要求 2 次，实际 4 次）。`make lint` rc=0。
+- **核心数据面**：独立建 2 netns + veth + VXLAN（VNI=7、port=9472、mtu=1400 取自渲染 ConfigMap）：
+  underlay 通、路由 `dev vxlan0`、ICMP 2/2、HTTP 返回 `DP-OK-EVAL`；VNI 不一致 / 端口不一致
+  独立复现均为 underlay 通、Pod IP 不通。
+- **fail-fast**：独立 19 例（mode/CIDR/conflict/version/name/API/port/MTU/cluster-id/registry/
+  namespace/pullPolicy/operator 副本）全部 rc=2、错误可定位、已渲染哈希不变；全新沙箱不落盘；
+  `replacement=true+enabled=false` 合法 rc=0，`true+true` rc=2（r2 修复成立）。
+- **宿主零污染**：4 次后无 netns/vxlan/测试路由/进程/沙箱；宿主 iptables 规则（去 counters/时间戳）
+  逐行一致；`/etc/kubernetes` 前后均不存在；无 8472/9472/18081 监听。
+- **牙齿 4/4**（worktree，主工作区 clean）：①模板随机 nonce → B3 4 红；②模板 MTU 硬编码 1450
+  → 5 红（A3/B1/B1b/泄漏）；③删 Pod CIDR 校验 → B2/B3 共 18 红；④正例一侧端口错配
+  → ICMP/MTU/HTTP/反证后 4 红。
+- **全量处理**：按成本政策未重跑；核对 `t010_r2_full.log`：rc=0、44m41.765s，10 套件
+  `27/39/59/100/225/186/269/291/208/229` = **1633** PASS/0 FAIL；前 9 套件与 T009 基线
+  （1404）逐项一致，cilium 段 229 与本次 run1 PASS 集逐条一致。**发现 §8/state/handoff/commit
+  的 `1526` 是误加，应为 1633（D1，文档修正，非阻塞）**。
+- **非阻塞项**：D1 总数更正；D2 B5 的全局 vxlan 计数与采集失败静默（spec v1.5 残余）；
+  D3 `pkill -f "http.server 18081"` 宿主进程匹配过宽；D4 真机前需补 operator `leases` RBAC /
+  CNI 安装 init container（契约已声明运行态未验证）。
+- **诚实性**：契约 §5.1–5.8 与 READMEs 如实声明 agent/Pod 网络/`cilium status`/Node Ready 未验证，
+  内核 VXLAN ≠ Cilium BPF；真机步骤已给。
+- **状态**：`accepted` / `eval_round: 1` / `done_tasks: 10` / `active_task: T011` /
+  `next_action: "build T011"` / `phase: BUILDING`；roadmap T010 → `done`。
+  报告：`docs/harness/state/reports/T010-r1.md`。
+
+---
+
 ## [2026-11-10] Generator（主会话代执行）· T010 r2 修复 → **ready_for_eval**
 
 > 子代理再次 `Free usage limit reached`（`https://opencode.ai/go`），按既定降级由主会话续做；
@@ -29,7 +62,8 @@
 - **门禁**：
   - `make lint` rc=0（yamllint 无输出，5 份 playbook syntax OK）；
   - `make test-cilium` **连跑两次 229/0**（67s/68s，PASS 集逐条一致）；
-  - 全量 `make test` **rc=0，44m42s**：`27/39/59/100/225/186/269/291/208/229` = **1526**，无回退；
+  - 全量 `make test` **rc=0，44m42s**：`27/39/59/100/225/186/269/291/208/229` = **1633**，无回退；
+    （原误写 1526，已按评估 D1 更正）
   - 宿主：无残留 netns/进程/VXLAN/沙箱。
 - 产物：`contracts/T010.md` §8/§10.3 已填、状态 `ready_for_eval`。
 - 状态：`state.yaml` → `phase: EVALUATING`、`active_task: T010`、`contract_status: ready_for_eval`、

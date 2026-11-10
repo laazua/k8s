@@ -23,7 +23,7 @@
 | T007 | done | 控制平面组件 role | `roles/kube-apiserver`、`roles/kube-controller-manager`、`roles/kube-scheduler` | 三组件 systemd active+enabled；`kubectl get --raw /healthz` 与 `/readyz` 为 ok；apiserver 安全默认生效（`--anonymous-auth=false`、RBAC 授权）[A7, C11] | T004, T005, T006 | 集群断言 + 配置文件/进程参数断言 | normal |
 | T008 | done | 运行时与节点组件 role | `roles/containerd`、`roles/kubelet`（+runc、CNI plugins、cgroup driver=systemd） | containerd、kubelet systemd active；`crictl info` 返回正常且 CRI 端点可连通；kubelet 启动后节点出现在 `kubectl get nodes`（可能 NotReady，CNI 未就绪）[A8] | T002, T003, T004 | molecule（容器内验证配置）+ 集群断言 | normal |
 | T009 | done | kube-proxy role | `roles/kube-proxy`（DaemonSet 或二进制二选一，契约内声明） | kube-proxy 在全部 node 运行；创建 Service 后 ClusterIP 可访问 [A9]（无镜像范式：netns 内真实 etcd/apiserver/kube-proxy + 手工 Service/EndpointSlice 指向本地 mock；`curl <ClusterIP>` 必须 200 且响应体来自 mock，端点移除→失败→恢复成功） | T008 | 沙箱 netns 真实进程 + ClusterIP 实测 + 宿主零污染断言 | normal |
-| T010 | in-progress | Cilium CNI role | `roles/cilium`（helm/manifest + 变量化版本与参数，默认 VXLAN、保留 kube-proxy） | **目标验收**：`cilium status` healthy；跨节点两个 Pod 互相 ping/HTTP 成功；`kubectl get nodes` 全部 Ready [A10, D2]。**本环境无镜像/registry 不可达 → 目标项为受限项**，实际可判定面：①渲染产物与变量一致（版本/VXLAN/`kubeProxyReplacement=false`/集群名与 ID/Pod CIDR/API endpoint），清单可解析且 `--syntax-check` 通过；②netns+veth 双节点拓扑上按渲染参数真实建立 VXLAN 隧道，跨 netns ICMP/HTTP 成功（内核数据面，非 Pod 网络）；③连跑两次 `changed=0`；④契约 §5 逐项声明「cilium-agent/Pod/Node Ready 未验证」并给真机复验步骤 | T009 | 静态/渲染断言 + netns/veth VXLAN 数据面 + 幂等复跑（无镜像范式） | normal |
+| T010 | done | Cilium CNI role | `roles/cilium`（helm/manifest + 变量化版本与参数，默认 VXLAN、保留 kube-proxy） | **目标验收**：`cilium status` healthy；跨节点两个 Pod 互相 ping/HTTP 成功；`kubectl get nodes` 全部 Ready [A10, D2]。**本环境无镜像/registry 不可达 → 目标项为受限项**，实际可判定面：①渲染产物与变量一致（版本/VXLAN/`kubeProxyReplacement=false`/集群名与 ID/Pod CIDR/API endpoint），清单可解析且 `--syntax-check` 通过；②netns+veth 双节点拓扑上按渲染参数真实建立 VXLAN 隧道，跨 netns ICMP/HTTP 成功（内核数据面，非 Pod 网络）；③连跑两次 `changed=0`；④契约 §5 逐项声明「cilium-agent/Pod/Node Ready 未验证」并给真机复验步骤 | T009 | 静态/渲染断言 + netns/veth VXLAN 数据面 + 幂等复跑（无镜像范式） | normal |
 | T011 | todo | kubeconfig / RBAC / 核心附加组件 role | `roles/cluster-addons`（admin&kubelet kubeconfig、CoreDNS、必要 RBAC） | admin kubeconfig 可用于本机 `kubectl`；CoreDNS 全部 Pod Running；集群内 DNS 解析（起 tmp Pod `nslookup kubernetes.default`）成功 [A11] | T010 | 集群断言 + DNS 解析测试 | normal |
 | T012 | todo | 集群验证与冒烟测试套件 | `tests/e2e/` 冒烟脚本 + 使用说明 | 一条命令完成：全部节点 Ready、全部系统 Pod Running、集群内 DNS 解析成功、跨节点 Pod 互通，输出明确的 PASS/FAIL 汇总 [A12] | T011 | 端到端冒烟脚本（可重复执行） | normal |
 | T013 | todo | 调度约束：业务仅落 node | `roles/taints`（或并入 base 的独立 tag）+ 示例工作负载 | 控制面节点带 `NoSchedule` 污点与角色标签；一个**不带 toleration** 的示例工作负载多个副本全部调度到 node（0 副本落在 master）[A13, G8] | T012 | 集群断言（`kubectl get pods -o wide` 校验节点分布） | normal |
@@ -35,6 +35,10 @@
 > 注（v1.3，2026-11-09）：T010 起凡涉及「Pod / 镜像 / `cilium status` / 节点 Ready」的验收，
 > 一律按 **spec R1 v1.4 无镜像范式**执行：**目标验收保留在摘要中**，同时给出本环境可判定的
 > 下沉验证面，并在契约 §5 逐项声明「未验证」+ 真机复验步骤；**不得**把下沉验证表述为已达成目标验收。
+> 注（v1.4，2026-11-10）：T010 r1 评估 PASS，遗留非阻塞项——**D4（真机前必做）**：渲染清单需补
+> operator `coordination.k8s.io/leases` RBAC 与 CNI 安装 initContainer（否则 §5.7 真机步骤可能失败）；
+> **D2/D3/D5（测试卫生）**：B5 宿主快照仍有全局 vxlan 计数与采集失败静默、`pkill -f` 匹配过宽、
+> cluster-id/API endpoint/version 缺动态变体 → 在 T011/T012 的测试中避免同类问题，或另立收尾任务。
 
 ## 依赖与并行
 
