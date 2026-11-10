@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T010      # 例如 T001
-contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 2          # T009 r2 = PASS（done_tasks 9）
-next_action: "build T010"
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 0          # T010 尚未评估（T009 r2 = PASS）
+next_action: "eval T010"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -30,15 +30,19 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T009 已 accepted，进入 T010
+blockers: []          # 无阻塞；T010 待 r1 评估
 notes: |
-  **T009 r2 = PASS（accepted，2026-11-07）**，被测 `741464d`：
-  - evaluator 独立 `test-kube-proxy` **5/5 208/0 rc=0**（276/274/273/275/274s）；
-  - 全量 `make test` **rc=0，43m17s**，27/39/59/100/225/186/269/291/208 = **1404**；
-  - 牙齿 3/3（EndpointSlice 端口 202/6、changed_when 207/1、healthz 0.0.0.0 206/2）；
-  - r1 flaky 已消除：修复后累计 10/10 连续绿；断言收敛为本任务端口 + 空值重试 + 失败落 diff；
-  - 核心验收真实：ClusterIP 未绑任何接口，`curl` 经 DNAT 返回 `MOCK-OK-T009`，端点移除→失败→恢复成功。
-  非阻塞遗留：M1（B10 端口集合漏 etcd peer 12380）、M2（kube-proxy 专用凭据属 T011）。
+  **T010（Cilium CNI）已交付并自测，待 r1 评估**（估 `2026-11-10`）：
+  - 交付：`roles/cilium`（离线 Jinja 渲染 multi-doc 清单，vxlan/geneve/native，
+    `kubeProxyReplacement` 默认 false、cluster-id 作 VNI、全参数变量化）+
+    `tests/cilium` **229 断言**（渲染映射 / fail-fast 矩阵 / 幂等 / netns+veth VXLAN 真实数据面 / 宿主零污染）。
+  - r2 修复：`validate.yml` 冲突条件写反（合法组合 replacement=true+enabled=false 被判冲突）；
+    conflict 用例同步为 enabled=true。TDD：B1b 先红（221/8）→ 绿（229/0）。
+  - 门禁：`make lint` rc=0；`test-cilium` **×2 229/0**（67s/68s，逐条一致）；
+    全量 `make test` **rc=0，44m42s**，27/39/59/100/225/186/269/291/208/229 = **1526** 全 PASS。
+  - 受限（契约 §5）：cilium-agent/Pod 网络/`cilium status`/Node Ready 均**未验证**（无镜像），
+    内核 VXLAN ≠ Cilium BPF 数据面；真机复验步骤已给。
+  **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
+  全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告全文见 `handoff.md` 顶部（`reports/` 本会话不可写）。
-  T008 r1 PASS（全量 1096、test-node ×2 291/0、牙齿 5/5）。
-updated: "2026-11-09T00:00:00Z"   # ISO8601
+updated: "2026-11-10T00:00:00Z"   # ISO8601

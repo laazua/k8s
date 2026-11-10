@@ -1,0 +1,191 @@
+---
+# =============================================================================
+# cilium:validate — 前置校验（fail fast；任何失败都不落盘、不改已渲染清单）
+#   1) mode 合法（vxlan / geneve / native）
+#   2) cluster name / cluster id（VNI）合法
+#   3) Pod / Service CIDR 必填且为合法 IPv4 CIDR
+#   4) API endpoint 为 http(s)://host:port
+#   5) tunnel 端口 / MTU 范围
+#   6) 版本格式 + 支持范围
+#   7) kubeProxyReplacement=true 与保留 kube-proxy 冲突
+#   8) namespace/SA/registry/pullPolicy/ipam/operator 副本数
+# =============================================================================
+
+- name: "cilium:validate | mode 合法"
+  ansible.builtin.assert:
+    that:
+      - cilium_mode in cilium_supported_modes
+    fail_msg: >-
+      cilium_mode='{{ cilium_mode }}' 非法；仅支持
+      {{ cilium_supported_modes | join(' / ') }}（默认 vxlan）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | cluster name 必填"
+  ansible.builtin.assert:
+    that:
+      - cilium_cluster_name | length > 0
+    fail_msg: >-
+      cilium_cluster_name 为空：Cilium 需要非空 cluster name
+      （通常等于 k8s 集群名；可用 k8s_cluster_name 覆盖）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | cluster id（VXLAN VNI）范围"
+  ansible.builtin.assert:
+    that:
+      - cilium_cluster_id | int >= cilium_vni_min | int
+      - cilium_cluster_id | int <= cilium_vni_max | int
+    fail_msg: >-
+      cilium_cluster_id='{{ cilium_cluster_id }}' 非法：必须为
+      {{ cilium_vni_min }}..{{ cilium_vni_max }}（24-bit VXLAN VNI；
+      Cilium 以 cluster-id 作为 VNI）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | Pod CIDR 必填且为合法 IPv4 CIDR"
+  ansible.builtin.assert:
+    that:
+      - cilium_pod_cidr | length > 0
+      - cilium_pod_cidr is match(cilium_ipv4_cidr_regex)
+    fail_msg: >-
+      cilium_pod_cidr='{{ cilium_pod_cidr }}' 非法：必须为非空 IPv4 CIDR
+      （形如 <network>/<prefix>；通常等于 k8s_pod_cidr）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | Service CIDR 必填且为合法 IPv4 CIDR"
+  ansible.builtin.assert:
+    that:
+      - cilium_service_cidr | length > 0
+      - cilium_service_cidr is match(cilium_ipv4_cidr_regex)
+    fail_msg: >-
+      cilium_service_cidr='{{ cilium_service_cidr }}' 非法：必须为非空 IPv4 CIDR
+      （形如 <network>/<prefix>；通常等于 k8s_service_cidr）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | API endpoint 合法"
+  ansible.builtin.assert:
+    that:
+      - cilium_k8s_api_endpoint | length > 0
+      - cilium_k8s_api_endpoint is match(cilium_api_endpoint_regex)
+    fail_msg: >-
+      cilium_k8s_api_endpoint='{{ cilium_k8s_api_endpoint }}' 非法：
+      必须为 http(s)://<host>:<port>（例如 <scheme>://<host>:<port>）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | tunnel 端口范围"
+  ansible.builtin.assert:
+    that:
+      - cilium_tunnel_port | int >= cilium_port_min | int
+      - cilium_tunnel_port | int <= cilium_port_max | int
+    fail_msg: >-
+      cilium_tunnel_port='{{ cilium_tunnel_port }}' 非法：必须为
+      {{ cilium_port_min }}..{{ cilium_port_max }}（VXLAN 默认端口见 defaults）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | MTU 范围"
+  ansible.builtin.assert:
+    that:
+      - cilium_mtu | int >= cilium_mtu_min | int
+      - cilium_mtu | int <= cilium_mtu_max | int
+    fail_msg: >-
+      cilium_mtu='{{ cilium_mtu }}' 非法：必须为
+      {{ cilium_mtu_min }}..{{ cilium_mtu_max }}（VXLAN 下通常小于 underlay MTU）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | 版本格式"
+  ansible.builtin.assert:
+    that:
+      - cilium_version is string
+      - cilium_version is match(cilium_version_regex)
+    fail_msg: >-
+      cilium_version='{{ cilium_version }}' 非法：必须为 x.y.z
+      （不允许 'latest'/预发布标签；离线渲染要求固定版本）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | 版本支持范围"
+  ansible.builtin.assert:
+    that:
+      - cilium_version is version(cilium_min_version, '>=')
+      - cilium_version is version(cilium_max_version, '<')
+    fail_msg: >-
+      cilium_version='{{ cilium_version }}' 不在支持范围
+      [{{ cilium_min_version }}, {{ cilium_max_version }})；
+      低于最低支持版本或高于已声明上限。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | kubeProxyReplacement 与 kube-proxy 不得同时启用"
+  ansible.builtin.assert:
+    that:
+      - not (cilium_kube_proxy_replacement | bool and cilium_kube_proxy_enabled | bool)
+    fail_msg: >-
+      冲突：cilium_kube_proxy_replacement=true 且 cilium_kube_proxy_enabled=true。
+      两者不可同时启用（否则 Service 规则可能双写）。项目默认保留 kube-proxy →
+      保持 cilium_kube_proxy_replacement=false；若要启用 replacement，请同时设置
+      cilium_kube_proxy_enabled=false。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | namespace / service account 必填"
+  ansible.builtin.assert:
+    that:
+      - cilium_namespace | length > 0
+      - cilium_service_account | length > 0
+      - cilium_operator_service_account | length > 0
+    fail_msg: >-
+      cilium_namespace / cilium_service_account / cilium_operator_service_account
+      不得为空（渲染对象需要合法的命名空间与 ServiceAccount）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | 镜像 registry / repository 合法"
+  ansible.builtin.assert:
+    that:
+      - cilium_image_registry | length > 0
+      - cilium_image_repository | length > 0
+      - cilium_operator_image_repository | length > 0
+      - "' ' not in cilium_image_registry"
+      - "' ' not in cilium_image_repository"
+    fail_msg: >-
+      cilium_image_registry='{{ cilium_image_registry }}' /
+      cilium_image_repository='{{ cilium_image_repository }}' 非法：
+      必须非空且不含空格（registry 前缀用于离线/代理镜像仓库）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | imagePullPolicy 合法"
+  ansible.builtin.assert:
+    that:
+      - cilium_image_pull_policy in cilium_supported_pull_policies
+    fail_msg: >-
+      cilium_image_pull_policy='{{ cilium_image_pull_policy }}' 非法；
+      仅支持 {{ cilium_supported_pull_policies | join(' / ') }}。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | ipam 合法"
+  ansible.builtin.assert:
+    that:
+      - cilium_ipam in cilium_supported_ipam
+    fail_msg: >-
+      cilium_ipam='{{ cilium_ipam }}' 非法；
+      仅支持 {{ cilium_supported_ipam | join(' / ') }}（默认 cluster-pool）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:validate | operator 副本数合法"
+  ansible.builtin.assert:
+    that:
+      - (not (cilium_operator_enabled | bool)) or (cilium_operator_replicas | int >= 1)
+    fail_msg: >-
+      cilium_operator_enabled=true 时 cilium_operator_replicas
+      必须 >= 1（当前 {{ cilium_operator_replicas }}）。
+    quiet: true
+  tags: ["cilium", "cilium:validate"]

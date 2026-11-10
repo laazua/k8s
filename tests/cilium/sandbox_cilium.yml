@@ -1,0 +1,24 @@
+# =============================================================================
+#  T010 沙箱 Cilium 渲染（不联网、不拉 chart/镜像；只写 sandbox_root）
+#  所有参数显式覆盖，用来证明变量逐项映射；生产值见 roles/cilium/defaults。
+# =============================================================================
+- name: T010 sandbox cilium render
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    cilium_root_prefix: "{{ sandbox_root }}"
+    cilium_version: "1.16.3"
+    cilium_mode: vxlan
+    cilium_cluster_name: test-cluster
+    cilium_cluster_id: 7
+    cilium_pod_cidr: 10.88.0.0/16
+    cilium_service_cidr: 10.128.0.0/12
+    cilium_k8s_api_endpoint: "https://192.0.2.10:16443"
+    cilium_tunnel_port: 9472
+    cilium_mtu: 1400
+    cilium_image_registry: registry.example.local
+    cilium_operator_enabled: true
+  roles:
+    - role: cilium

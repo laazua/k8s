@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# cilium:render — 渲染 multi-doc Cilium 清单
+#   纯 ansible.builtin.template；内容不变 → changed=0。
+# =============================================================================
+
+- name: "cilium:render | 创建清单目录"
+  ansible.builtin.file:
+    path: "{{ cilium_manifest_dir }}"
+    state: directory
+    mode: "{{ cilium_manifest_dir_mode }}"
+    owner: "{{ cilium_root_owner }}"
+    group: "{{ cilium_root_group }}"
+  tags: ["cilium", "cilium:render"]
+
+- name: "cilium:render | 渲染 Cilium 清单"
+  ansible.builtin.template:
+    src: cilium.yaml.j2
+    dest: "{{ cilium_manifest_path }}"
+    mode: "{{ cilium_manifest_mode }}"
+    owner: "{{ cilium_root_owner }}"
+    group: "{{ cilium_root_group }}"
+  tags: ["cilium", "cilium:render"]

@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: cilium
+  author: harness-generator
+  description: Cilium CNI（离线 Jinja 渲染清单；默认 VXLAN；保留 kube-proxy）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - cilium
+    - cni
+    - networking
+
+dependencies: []

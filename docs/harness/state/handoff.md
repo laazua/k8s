@@ -9,6 +9,35 @@
 
 ---
 
+## [2026-11-10] Generator（主会话代执行）· T010 r2 修复 → **ready_for_eval**
+
+> 子代理再次 `Free usage limit reached`（`https://opencode.ai/go`），按既定降级由主会话续做；
+> 修复内容是子代理遗留的 T010 缺陷，评估标准未降低。
+
+- 基线：`a5cd3bb` + 未提交的 `roles/cilium`、`tests/cilium`、`Makefile`、`contracts/T010.md`。
+- **r1 全量门禁结果（子代理留存）**：前 8 套件全 PASS；`cilium` **221/8**，
+  8 条失败全在 **B1b geneve 变体**。
+- **根因（产品 bug + 自相矛盾用例）**：
+  1. `roles/cilium/tasks/validate.yml` 的冲突断言写成
+     `not (replacement and not enabled)` → 把**合法组合** `replacement=true + enabled=false`
+     判为冲突（`t010_variant_geneve.log` 可见反向前提）；
+  2. `tests/cilium/test_cilium_role.sh` 的 `conflict` 用例也传
+     `replacement=true + enabled=false` 并期待失败，与 B1b 自相矛盾，掩盖了 bug。
+- **修复**：断言改为 `not (replacement | bool and enabled | bool)`（仅同时启用才冲突）；
+  任务名/fail_msg/契约 §4 B2/conflict 用例（改为 `enabled=true`）同步；
+  **TDD 顺序**：B1b 先红（221/8）→ 改实现 → 绿（229/0）。
+- **门禁**：
+  - `make lint` rc=0（yamllint 无输出，5 份 playbook syntax OK）；
+  - `make test-cilium` **连跑两次 229/0**（67s/68s，PASS 集逐条一致）；
+  - 全量 `make test` **rc=0，44m42s**：`27/39/59/100/225/186/269/291/208/229` = **1526**，无回退；
+  - 宿主：无残留 netns/进程/VXLAN/沙箱。
+- 产物：`contracts/T010.md` §8/§10.3 已填、状态 `ready_for_eval`。
+- 状态：`state.yaml` → `phase: EVALUATING`、`active_task: T010`、`contract_status: ready_for_eval`、
+  `eval_round: 0`、`next_action: "eval T010"`；roadmap T010 → `in-progress`。
+- **Generator 不自判 PASS。**
+
+---
+
 ## [2026-11-07] Evaluator（主会话临时兼任）· T009 r2 → **PASS**
 
 > 角色隔离降级（`harness-evaluator` 子代理再次提前结束/受限流；经用户此前授权由主会话兼任）。

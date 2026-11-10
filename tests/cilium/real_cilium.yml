@@ -1,0 +1,14 @@
+# =============================================================================
+#  T010 真机复验 playbook（**只允许在目标真机执行**）
+#   渲染到真实路径 /etc/kubernetes/cilium/cilium.yaml；不自动 apply、不拉镜像。
+#   前置：T002 base、T004 PKI、T007 控制面、T008 containerd+kubelet、T009 kube-proxy。
+#   后续手工步骤见 docs/harness/state/contracts/T010.md §5.7。
+# =============================================================================
+- name: T010 real cilium render
+  hosts: k8s_node
+  become: true
+  gather_facts: true
+  vars:
+    cilium_kube_proxy_enabled: true
+  roles:
+    - role: cilium

@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# cilium:facts — 由 API endpoint 推导 host/port（无副作用）
+#   endpoint 已由 validate 校验为 http(s)://host:port，可直接解析。
+# =============================================================================
+
+- name: "cilium:facts | 解析 API endpoint host/port"
+  ansible.builtin.set_fact:
+    cilium_k8s_api_host: "{{ cilium_k8s_api_endpoint | urlsplit('hostname') | string }}"
+    cilium_k8s_api_port: "{{ cilium_k8s_api_endpoint | urlsplit('port') | string }}"
+  tags: ["cilium", "cilium:facts"]
+
+- name: "cilium:facts | 断言解析结果非空"
+  ansible.builtin.assert:
+    that:
+      - cilium_k8s_api_host | length > 0
+      - cilium_k8s_api_port | length > 0
+      - cilium_k8s_api_port | int >= cilium_port_min | int
+      - cilium_k8s_api_port | int <= cilium_port_max | int
+    fail_msg: >-
+      API endpoint 解析失败：host='{{ cilium_k8s_api_host }}'
+      port='{{ cilium_k8s_api_port }}'（来自 {{ cilium_k8s_api_endpoint }}）。
+    quiet: true
+  tags: ["cilium", "cilium:facts"]

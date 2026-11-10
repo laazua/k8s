@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# cilium:verify — 只读自检（不依赖 kubectl/helm）
+#   断言清单存在、非空、包含关键 kind。--check 干跑时跳过写后断言。
+# =============================================================================
+
+- name: "cilium:verify | 检查清单文件"
+  ansible.builtin.stat:
+    path: "{{ cilium_manifest_path }}"
+  register: cilium_manifest_stat
+  tags: ["cilium", "cilium:verify"]
+
+- name: "cilium:verify | 断言清单存在且非空"
+  ansible.builtin.assert:
+    that:
+      - cilium_manifest_stat.stat.exists
+      - cilium_manifest_stat.stat.size | int > 0
+    fail_msg: >-
+      Cilium 清单缺失或为空：{{ cilium_manifest_path }}
+      （render 任务未成功落盘）。
+    quiet: true
+  when: not ansible_check_mode
+  tags: ["cilium", "cilium:verify"]
+
+- name: "cilium:verify | 读取清单内容"
+  ansible.builtin.slurp:
+    src: "{{ cilium_manifest_path }}"
+  register: cilium_manifest_slurp
+  when: cilium_manifest_stat.stat.exists
+  tags: ["cilium", "cilium:verify"]
+
+- name: "cilium:verify | 断言关键 kind 已渲染"
+  ansible.builtin.assert:
+    that:
+      - "'kind: ServiceAccount' in (cilium_manifest_slurp.content | b64decode)"
+      - "'kind: ClusterRole' in (cilium_manifest_slurp.content | b64decode)"
+      - "'kind: ClusterRoleBinding' in (cilium_manifest_slurp.content | b64decode)"
+      - "'kind: ConfigMap' in (cilium_manifest_slurp.content | b64decode)"
+      - "'kind: DaemonSet' in (cilium_manifest_slurp.content | b64decode)"
+    fail_msg: >-
+      清单缺少关键对象（ServiceAccount/ClusterRole/ClusterRoleBinding/
+      ConfigMap/DaemonSet）：{{ cilium_manifest_path }}。
+    quiet: true
+  when: cilium_manifest_stat.stat.exists
+  tags: ["cilium", "cilium:verify"]

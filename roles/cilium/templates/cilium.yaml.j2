@@ -1,0 +1,291 @@
+# =============================================================================
+# Cilium {{ cilium_version }} — 由 roles/cilium 渲染，禁止手工编辑
+#   模式: {{ cilium_mode }} | cluster: {{ cilium_cluster_name }} (id={{ cilium_cluster_id }})
+#   kubeProxyReplacement: {{ cilium_kube_proxy_replacement | bool | lower }}
+#   离线渲染：不依赖 helm/chart/镜像；apply 与运行属真机步骤（契约 §5）。
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ cilium_service_account }}
+  namespace: {{ cilium_namespace }}
+  labels:
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/part-of: cilium
+    app.kubernetes.io/version: "{{ cilium_version }}"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ cilium_service_account }}
+  labels:
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/part-of: cilium
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/status
+      - pods
+      - pods/status
+      - services
+      - endpoints
+      - namespaces
+      - configmaps
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cilium.io"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ cilium_service_account }}
+  labels:
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/part-of: cilium
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ cilium_service_account }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ cilium_service_account }}
+    namespace: {{ cilium_namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ cilium_config_map_name }}
+  namespace: {{ cilium_namespace }}
+  labels:
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/part-of: cilium
+data:
+  cluster-name: "{{ cilium_cluster_name }}"
+  cluster-id: "{{ cilium_cluster_id }}"
+  k8s-service-cidr: "{{ cilium_service_cidr }}"
+  k8s-service-host: "{{ cilium_k8s_api_host }}"
+  k8s-service-port: "{{ cilium_k8s_api_port }}"
+  routing-mode: "{{ cilium_routing_mode }}"
+  tunnel-protocol: "{{ cilium_tunnel_protocol }}"
+  tunnel-port: "{{ cilium_tunnel_port }}"
+  mtu: "{{ cilium_mtu }}"
+  ipam: "{{ cilium_ipam }}"
+  cluster-pool-ipv4-cidr: "{{ cilium_pod_cidr }}"
+  enable-ipv4: "{{ cilium_enable_ipv4 | bool | lower }}"
+  enable-ipv6: "{{ cilium_enable_ipv6 | bool | lower }}"
+  identity-allocation-mode: "{{ cilium_identity_allocation_mode }}"
+  kube-proxy-replacement: "{{ cilium_kube_proxy_replacement | bool | lower }}"
+  agent-health-port: "{{ cilium_agent_health_port }}"
+  prometheus-serve-addr: ":{{ cilium_agent_prometheus_port }}"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ cilium_daemonset_name }}
+  namespace: {{ cilium_namespace }}
+  labels:
+    k8s-app: cilium
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/part-of: cilium
+spec:
+  selector:
+    matchLabels:
+      k8s-app: cilium
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+  template:
+    metadata:
+      labels:
+        k8s-app: cilium
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ cilium_agent_prometheus_port }}"
+    spec:
+      serviceAccountName: {{ cilium_service_account }}
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 1
+      tolerations:
+{{ cilium_tolerations | to_nice_yaml(indent=2) | indent(8, true) }}
+{% if cilium_node_selector | length > 0 %}
+      nodeSelector:
+{{ cilium_node_selector | to_nice_yaml(indent=2) | indent(8, true) }}
+{% endif %}
+      containers:
+        - name: cilium-agent
+          image: "{{ cilium_image_registry }}/{{ cilium_image_repository }}:{{ cilium_version }}"
+          imagePullPolicy: {{ cilium_image_pull_policy }}
+          securityContext:
+            privileged: true
+          args:
+            - "--config-dir={{ cilium_agent_config_dir }}"
+{% for arg in cilium_daemonset_args %}
+            - {{ arg | quote }}
+{% endfor %}
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: CILIUM_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: CILIUM_CLUSTER_NAME
+              value: "{{ cilium_cluster_name }}"
+            - name: CILIUM_CLUSTER_ID
+              value: "{{ cilium_cluster_id }}"
+          resources:
+{{ cilium_agent_resources | to_nice_yaml(indent=2) | indent(12, true) }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ cilium_agent_health_port }}
+            failureThreshold: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ cilium_agent_health_port }}
+            failureThreshold: 5
+            periodSeconds: 30
+          volumeMounts:
+            - name: cilium-run
+              mountPath: /var/run/cilium
+            - name: bpf-maps
+              mountPath: /sys/fs/bpf
+              mountPropagation: Bidirectional
+            - name: cilium-config-path
+              mountPath: {{ cilium_agent_config_dir }}
+              readOnly: true
+      volumes:
+        - name: cilium-run
+          hostPath:
+            path: /var/run/cilium
+            type: DirectoryOrCreate
+        - name: bpf-maps
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: cilium-config-path
+          configMap:
+            name: {{ cilium_config_map_name }}
+{% if cilium_operator_enabled | bool %}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ cilium_operator_service_account }}
+  namespace: {{ cilium_namespace }}
+  labels:
+    app.kubernetes.io/name: cilium-operator
+    app.kubernetes.io/part-of: cilium
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ cilium_operator_service_account }}
+  labels:
+    app.kubernetes.io/name: cilium-operator
+    app.kubernetes.io/part-of: cilium
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - pods
+      - services
+      - endpoints
+      - namespaces
+      - configmaps
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cilium.io"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ cilium_operator_service_account }}
+  labels:
+    app.kubernetes.io/name: cilium-operator
+    app.kubernetes.io/part-of: cilium
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ cilium_operator_service_account }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ cilium_operator_service_account }}
+    namespace: {{ cilium_namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ cilium_operator_name }}
+  namespace: {{ cilium_namespace }}
+  labels:
+    name: cilium-operator
+    app.kubernetes.io/name: cilium-operator
+    app.kubernetes.io/part-of: cilium
+spec:
+  replicas: {{ cilium_operator_replicas }}
+  selector:
+    matchLabels:
+      name: cilium-operator
+  template:
+    metadata:
+      labels:
+        name: cilium-operator
+    spec:
+      serviceAccountName: {{ cilium_operator_service_account }}
+      hostNetwork: true
+      priorityClassName: system-cluster-critical
+      tolerations:
+{{ cilium_operator_tolerations | to_nice_yaml(indent=2) | indent(8, true) }}
+      containers:
+        - name: cilium-operator
+          image: "{{ cilium_image_registry }}/{{ cilium_operator_image_repository }}:{{ cilium_version }}"
+          imagePullPolicy: {{ cilium_image_pull_policy }}
+          command: ["cilium-operator-generic"]
+          args:
+            - "--config-dir={{ cilium_agent_config_dir }}"
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: CILIUM_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+          resources:
+{{ cilium_operator_resources | to_nice_yaml(indent=2) | indent(12, true) }}
+          volumeMounts:
+            - name: cilium-config-path
+              mountPath: {{ cilium_agent_config_dir }}
+              readOnly: true
+      volumes:
+        - name: cilium-config-path
+          configMap:
+            name: {{ cilium_config_map_name }}
+{% endif %}

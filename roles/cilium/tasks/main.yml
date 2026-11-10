@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# roles/cilium — 入口
+#   validate → 模式/CIDR/冲突/版本/必填参数（fail fast，不落盘）
+#   facts    → 解析 API endpoint（host/port），供模板使用
+#   render   → 渲染 multi-doc Cilium 清单（纯 template，离线）
+#   verify   → 只读自检（存在/非空/关键 kind）
+# =============================================================================
+
+- name: "cilium:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["cilium", "cilium:validate"]
+
+- name: "cilium:facts | 解析 API endpoint"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["cilium", "cilium:facts"]
+
+- name: "cilium:render | 渲染 Cilium 清单"
+  ansible.builtin.import_tasks: render.yml
+  tags: ["cilium", "cilium:render"]
+
+- name: "cilium:verify | 产物自检"
+  ansible.builtin.import_tasks: verify.yml
+  tags: ["cilium", "cilium:verify"]
