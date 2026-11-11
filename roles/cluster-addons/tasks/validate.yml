@@ -1,0 +1,127 @@
+---
+# =============================================================================
+# roles/cluster-addons — 前置校验（全部 fail-fast，失败不得落盘）
+#   1) 必填变量非空
+#   2) kubelet 节点名 / 集群域合法
+#   3) server 为 https URL
+#   4) CA 与 leaf 存在 + 证书链可验证（admin/kubelet）
+#   5) CoreDNS 版本/端口/上游/副本合法
+# =============================================================================
+
+- name: "cluster-addons:validate | 必填变量非空"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_cluster_name | length > 0
+      - cluster_addons_kubelet_node | length > 0
+      - cluster_addons_server | length > 0
+      - cluster_addons_cluster_domain | length > 0
+      - cluster_addons_coredns_upstream | length > 0
+    fail_msg: >-
+      必填变量缺失：cluster_name / kubelet_node / server / cluster_domain / coredns_upstream。
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | kubelet 节点名符合 DNS-1123"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_kubelet_node is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+    fail_msg: "kubelet 节点名非法：'{{ cluster_addons_kubelet_node }}'（须为小写 DNS-1123）"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | 集群域合法"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_cluster_domain is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$')
+    fail_msg: "集群域非法：'{{ cluster_addons_cluster_domain }}'"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | server 为 https URL"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_server is match('^https://[^/]+(:[0-9]+)?$')
+    fail_msg: "cluster_addons_server 非法：'{{ cluster_addons_server }}'（期望 https://host:port）"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | CA 证书存在"
+  ansible.builtin.stat:
+    path: "{{ cluster_addons_ca_cert }}"
+  register: ca_stat
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | CA 证书必须存在"
+  ansible.builtin.assert:
+    that:
+      - ca_stat.stat.exists
+      - ca_stat.stat.isreg
+    fail_msg: "CA 证书不存在：{{ cluster_addons_ca_cert }}（先执行 roles/pki）"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | leaf 证书存在"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ cluster_addons_admin_cert }}"
+    - "{{ cluster_addons_admin_key }}"
+    - "{{ cluster_addons_kubelet_cert }}"
+    - "{{ cluster_addons_kubelet_key }}"
+  register: leaf_stats
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | leaf 必须存在"
+  ansible.builtin.assert:
+    that:
+      - leaf_stats.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      leaf 缺失：{{ leaf_stats.results | selectattr('stat.exists', 'equalto', false)
+                     | map(attribute='item') | list | join(', ') }}
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | 证书链可验证（admin / kubelet）"
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -CAfile
+      - "{{ cluster_addons_ca_cert }}"
+      - "{{ item }}"
+  loop:
+    - "{{ cluster_addons_admin_cert }}"
+    - "{{ cluster_addons_kubelet_cert }}"
+  register: verify_chain
+  changed_when: false
+  failed_when: verify_chain.rc != 0
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | CoreDNS 版本格式"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_coredns_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+    fail_msg: "coredns_version 非法：'{{ cluster_addons_coredns_version }}'"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | CoreDNS 端口/缓存/副本合法"
+  ansible.builtin.assert:
+    that:
+      - cluster_addons_coredns_listen_port | int > 0
+      - cluster_addons_coredns_listen_port | int < 65536
+      - cluster_addons_coredns_cache_seconds | int >= 0
+      - cluster_addons_coredns_replicas | int >= 1
+    fail_msg: "CoreDNS 端口/缓存/副本越界"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:validate | 上游合法（路径或 host:port）"
+  ansible.builtin.assert:
+    that:
+      - (cluster_addons_coredns_upstream is match('^/[^ ]+$')) or
+        (cluster_addons_coredns_upstream is match('^[A-Za-z0-9._-]+(:[0-9]+)?$')) or
+        (cluster_addons_coredns_upstream is match('^\[[0-9a-fA-F:]+\](:[0-9]+)?$'))
+    fail_msg: "coredns_upstream 非法：'{{ cluster_addons_coredns_upstream }}'"
+    quiet: true
+  tags: ["cluster-addons", "cluster-addons:validate"]

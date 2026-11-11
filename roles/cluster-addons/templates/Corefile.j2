@@ -1,0 +1,29 @@
+# 由 roles/cluster-addons 渲染；禁止手工编辑
+.:{{ cluster_addons_coredns_listen_port }} {
+    errors
+    health {
+        lameduck 5s
+    }
+{% if cluster_addons_coredns_ready_port | string | length > 0 %}
+    ready :{{ cluster_addons_coredns_ready_port }}
+{% else %}
+    ready
+{% endif %}
+    kubernetes {{ cluster_addons_cluster_domain }} in-addr.arpa ip6.arpa {
+        pods insecure
+        fallthrough in-addr.arpa ip6.arpa
+        ttl {{ cluster_addons_coredns_cache_ttl }}
+{% if cluster_addons_coredns_kubernetes_endpoint | length > 0 %}
+        endpoint {{ cluster_addons_coredns_kubernetes_endpoint }}
+{% endif %}
+{% if cluster_addons_coredns_tls_cert | length > 0 %}
+        tls {{ cluster_addons_coredns_tls_cert }} {{ cluster_addons_coredns_tls_key }} {{ cluster_addons_coredns_tls_ca }}
+{% endif %}
+    }
+    prometheus :{{ cluster_addons_coredns_metrics_port }}
+    forward . {{ cluster_addons_coredns_upstream }}
+    cache {{ cluster_addons_coredns_cache_seconds }}
+    loop
+    reload
+    loadbalance
+}

@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium clean
+.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -50,6 +50,7 @@ test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/node/test_node_roles.sh
 	tests/kube-proxy/test_kube_proxy_role.sh
 	tests/cilium/test_cilium_role.sh
+	tests/cluster-addons/test_cluster_addons_role.sh
 
 test-download: ## 运行 download role 测试套件（全离线 mock 源/代理）
 	tests/download/test_download_role.sh
@@ -74,6 +75,9 @@ test-kube-proxy: ## 运行 kube-proxy role 测试套件（netns 真实 apiserver
 
 test-cilium: ## 运行 Cilium role 测试套件（离线渲染 + netns/VXLAN 真实内核数据面）
 	tests/cilium/test_cilium_role.sh
+
+test-cluster-addons: ## 运行 cluster-addons 测试套件（kubeconfig/RBAC 真实认证 + CoreDNS 真实解析）
+	tests/cluster-addons/test_cluster_addons_role.sh
 
 clean: ## 清理运行产物
 	@rm -f *.retry

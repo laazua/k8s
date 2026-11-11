@@ -1,0 +1,20 @@
+---
+# T011 沙箱 CoreDNS 官方二进制制品（tarball，经 download role + sha256）
+- name: T011 sandbox coredns artifact
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    coredns_version: "1.11.3"
+    coredns_url: "https://github.com/coredns/coredns/releases/download/v{{ coredns_version }}/coredns_{{ coredns_version }}_linux_amd64.tgz"
+    coredns_sha256: "6af4d6a5412734417378f778343c4fba363a61ae027060675123d4296f5a8ee5"
+    download_root_prefix: "{{ sandbox_root }}"
+    download_cache_dir: "{{ download_cache_dir_override | default(sandbox_root ~ '/opt/k8s/artifacts') }}"
+    download_items:
+      - name: "coredns_{{ coredns_version }}_linux_amd64.tgz"
+        url: "{{ coredns_url }}"
+        sha256: "{{ coredns_sha256 }}"
+        mode: "0644"
+  roles:
+    - role: download

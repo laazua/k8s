@@ -1,0 +1,12 @@
+---
+# T011 渲染（离线）：pki 产物 → kubeconfig + RBAC + CoreDNS 清单
+- name: T011 cluster-addons render
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    cluster_addons_root_prefix: "{{ sandbox_root }}"
+    cluster_addons_kubelet_node: node1
+  roles:
+    - role: cluster-addons

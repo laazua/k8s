@@ -1,0 +1,29 @@
+---
+# =============================================================================
+# roles/cluster-addons — 入口
+#   validate  → 输入/证书链 fail-fast（不落盘）
+#   facts     → 汇总路径与内嵌数据
+#   kubeconfig→ 渲染 admin.conf / kubelet.conf（0600 root:root）
+#   manifests → 渲染 RBAC 与 CoreDNS 清单/Corefile
+#   verify    → 只读自检
+# =============================================================================
+
+- name: "cluster-addons:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["cluster-addons", "cluster-addons:validate"]
+
+- name: "cluster-addons:facts | 读取证书与派生路径"
+  ansible.builtin.import_tasks: facts.yml
+  tags: ["cluster-addons", "cluster-addons:facts"]
+
+- name: "cluster-addons:kubeconfig | 渲染 kubeconfig"
+  ansible.builtin.import_tasks: kubeconfigs.yml
+  tags: ["cluster-addons", "cluster-addons:kubeconfig"]
+
+- name: "cluster-addons:manifests | 渲染 RBAC/CoreDNS"
+  ansible.builtin.import_tasks: manifests.yml
+  tags: ["cluster-addons", "cluster-addons:manifests"]
+
+- name: "cluster-addons:verify | 产物自检"
+  ansible.builtin.import_tasks: verify.yml
+  tags: ["cluster-addons", "cluster-addons:verify"]

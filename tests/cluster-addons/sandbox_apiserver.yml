@@ -1,0 +1,18 @@
+---
+# T011 沙箱 kube-apiserver（真实 TLS；高位端口 16443）
+- name: T011 sandbox kube-apiserver
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_apiserver_root_prefix: "{{ sandbox_root }}"
+    kube_apiserver_manage_service: false
+    kube_apiserver_bind_address: 127.0.0.1
+    kube_apiserver_advertise_address: 127.0.0.1
+    kube_apiserver_secure_port: 16443
+    # 只开 RBAC：Node authorizer 会给 kubelet 隐式放行 secrets/pods 等，
+    # 会掩盖本 role RBAC 清单的真实边界；生产默认仍为 RBAC,Node。
+    kube_apiserver_authorization_mode: "RBAC"
+  roles:
+    - role: kube-apiserver

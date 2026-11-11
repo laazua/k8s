@@ -1,0 +1,23 @@
+---
+- name: "cluster-addons:facts | 读取 CA 与 leaf（内嵌到 kubeconfig）"
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - "{{ cluster_addons_ca_cert }}"
+    - "{{ cluster_addons_admin_cert }}"
+    - "{{ cluster_addons_admin_key }}"
+    - "{{ cluster_addons_kubelet_cert }}"
+    - "{{ cluster_addons_kubelet_key }}"
+  register: addons_slurp
+  no_log: true
+  tags: ["cluster-addons", "cluster-addons:facts"]
+
+- name: "cluster-addons:facts | 汇总 base64 内容"
+  ansible.builtin.set_fact:
+    addons_ca_b64: "{{ addons_slurp.results[0].content }}"
+    addons_admin_cert_b64: "{{ addons_slurp.results[1].content }}"
+    addons_admin_key_b64: "{{ addons_slurp.results[2].content }}"
+    addons_kubelet_cert_b64: "{{ addons_slurp.results[3].content }}"
+    addons_kubelet_key_b64: "{{ addons_slurp.results[4].content }}"
+  no_log: true
+  tags: ["cluster-addons", "cluster-addons:facts"]

@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T011      # 例如 T001
-contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # T010 r1 = PASS（T009 r2 = PASS）
-next_action: "build T011"
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 1          # T011 r1 待评估（T010 r1 = PASS、T009 r2 = PASS）
+next_action: "eval T011"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -30,8 +30,22 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T010 r1 = PASS，推进 T011
+blockers: []          # 无阻塞；T011 已 ready_for_eval，待独立评估
 notes: |
+  **T011（cluster-addons）build 完成 → ready_for_eval（2026-11-11）**：
+  - 交付 `roles/cluster-addons`（kubeconfig 内嵌 CA/leaf、0600 root:root、默认不覆盖 +
+    rotate 开关；kubelet RBAC 最小权限（无 secrets）+ CoreDNS RBAC；CoreDNS
+    Deployment/Service/SA/ConfigMap(Corefile)/RBAC 全变量化离线渲染）+
+    `tests/cluster-addons` **135 断言**（静态/渲染、权限、幂等与不覆盖、9 类 fail-fast、
+    真实 TLS etcd+apiserver 认证与 RBAC 正反例、CoreDNS 官方二进制真实解析、域变量反证、
+    密闭性与宿主零污染）。
+  - 门禁：`make test-cluster-addons` **135/0**（340s/342s，两跑逐条一致）；全量
+    `make test` rc=0 / 3010s，`27/39/59/100/225/186/269/291/208/229/135` = **1768 PASS / 0 FAIL**。
+  - 红证据（移走 role）68 FAIL，如实记为「红证据回放」（本轮限时降级，非严格测试先行）。
+  - 关键取舍（契约 §3.3）：沙箱 apiserver 只开 RBAC（Node authorizer 会隐式放行 secrets/pods，
+    掩盖 RBAC 边界）；`ready` 端口变量化（默认 :8181 不在 metrics 端口）；任务文件改名
+    `kubeconfigs.yml` 规避 `.gitignore` 的 `kubeconfig.*`。
+  - 受限（契约 §5）：CoreDNS Pod/集群内 DNS、kubelet 运行态、生产 RBAC∪Node 权限未验证。
   **T010（Cilium CNI）r1 = PASS（accepted）**，被测 `eb22fb9`（评估 `2026-11-10`）：
   六项：功能 5 / 幂等 5 / 可配置 5 / 测试 4 / 结构 4 / 安全 4；完整度 4（加权）。
   - 交付：`roles/cilium`（离线 Jinja 渲染 multi-doc 清单，vxlan/geneve/native，
@@ -48,4 +62,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-10T02:10:17Z"   # ISO8601
+updated: "2026-11-11T04:04:04Z"   # ISO8601

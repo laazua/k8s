@@ -1,0 +1,112 @@
+# =============================================================================
+# 由 roles/cluster-addons 渲染；禁止手工编辑
+#   CoreDNS 部署（无镜像环境下仅渲染，不在本机运行）
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ cluster_addons_coredns_service_account }}
+  namespace: {{ cluster_addons_coredns_namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: {{ cluster_addons_coredns_namespace }}
+data:
+  Corefile: |
+{{ lookup('template', 'Corefile.j2') | indent(4, true) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns
+  namespace: {{ cluster_addons_coredns_namespace }}
+  labels:
+    k8s-app: kube-dns
+spec:
+  replicas: {{ cluster_addons_coredns_replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-dns
+    spec:
+      priorityClassName: system-cluster-critical
+      serviceAccountName: {{ cluster_addons_coredns_service_account }}
+      dnsPolicy: Default
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: coredns
+          image: "{{ cluster_addons_coredns_image_registry }}/{{ cluster_addons_coredns_image_repository }}:{{ cluster_addons_coredns_version }}"
+          imagePullPolicy: {{ cluster_addons_coredns_image_pull_policy }}
+          args: ["-conf", "/etc/coredns/Corefile"]
+          ports:
+            - name: dns
+              containerPort: {{ cluster_addons_coredns_container_port }}
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: {{ cluster_addons_coredns_container_port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ cluster_addons_coredns_metrics_port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ cluster_addons_coredns_metrics_port }}
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ cluster_addons_coredns_metrics_port }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/coredns
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add: ["NET_BIND_SERVICE"]
+              drop: ["ALL"]
+      volumes:
+        - name: config-volume
+          configMap:
+            name: coredns
+            items:
+              - key: Corefile
+                path: Corefile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ cluster_addons_coredns_service_name }}
+  namespace: {{ cluster_addons_coredns_namespace }}
+  labels:
+    k8s-app: kube-dns
+    kubernetes.io/name: CoreDNS
+spec:
+  selector:
+    k8s-app: kube-dns
+  ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+    - name: metrics
+      port: {{ cluster_addons_coredns_metrics_port }}
+      protocol: TCP

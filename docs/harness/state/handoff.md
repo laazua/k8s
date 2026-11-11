@@ -9,6 +9,36 @@
 
 ---
 
+## [2026-11-11] Generator（限时降级：主会话代做）· T011 build → **ready_for_eval**
+
+> 交付 `roles/cluster-addons` + `tests/cluster-addons`；未自评 PASS，待独立评估。
+
+- **交付**：kubeconfig（admin/kubelet，内嵌 CA+leaf，`0600 root:root`，默认不覆盖，
+  `cluster_addons_rotate_kubeconfigs=true` 强制轮换）；RBAC（kubelet `system:nodes`
+  最小权限、**无 secrets**；CoreDNS 只读）；CoreDNS 清单/Corefile（版本、域、上游、
+  缓存、端口、镜像仓库、TLS endpoint、ready 端口全变量化；离线渲染）。
+- **测试（135 断言）**：A 结构/无硬编码/gitignore；B 渲染、权限、幂等与不覆盖、9 类 fail-fast；
+  C 真实 TLS etcd + kube-apiserver 认证 + RBAC 正反例（`auth whoami` / `can-i`）；
+  D CoreDNS 1.11.3 官方二进制按渲染 Corefile 真实解析（kubernetes 插件 + forward 到 DNS mock）
+  与域变量反证；E 密闭性（空缓存+不可达显式失败、`--check` 不写）与宿主零污染。
+- **门禁**：`make test-cluster-addons` **135 PASS / 0 FAIL**，340s/342s，两次逐条 `diff` 一致；
+  全量 `make test` **rc=0，3010s**，`27/39/59/100/225/186/269/291/208/229/135` = **1768 PASS / 0 FAIL**
+  （前 10 套件与 1633 基线逐项一致，无回退）。
+- **红证据**：临时移走 `roles/cluster-addons` → **68 FAIL**（A1 全缺 + 后续渲染/认证/DNS 全红），
+  rc=1。**如实记录为「红证据回放」**：本轮为限时降级接管，测试与实现并行编写，非严格先红后绿。
+- **调试修复（首轮 125/9 → 135/0）**：`.gitignore` 的 `kubeconfig.*` 吞掉 `tasks/kubeconfig.yml`
+  （改名 `kubeconfigs.yml`）；RBAC secrets 断言误匹配注释；`coredns_version` 未定义；
+  `can-i` 受 Node authorizer 隐式放行（沙箱 apiserver 改 RBAC 单模式）；`ready` 在 `:8181`
+  而非 metrics 端口（新增 `cluster_addons_coredns_ready_port`）；D2 断言把可解析名误判为 NXDOMAIN；
+  `pgrep -f "$SB/"` 自匹配。
+- **受限（契约 §5）**：CoreDNS Pod Running / 集群内 DNS / kubelet 运行态 / 生产 `RBAC,Node`
+  下 kubelet 实际权限（含 Node authorizer）均**未验证**；真机复验步骤已给（注：
+  `tests/cluster-addons/real_addons.yml` 尚未创建）。
+- **状态**：`phase: EVALUATING` / `contract_status: ready_for_eval` / `eval_round: 1` /
+  `active_task: T011` / `next_action: "eval T011"` / `done_tasks: 10`；roadmap T011 → `in-progress`。
+
+---
+
 ## [2026-11-10] Evaluator（独立子代理）· T010 r1 → **PASS（accepted）**
 
 > 被测 `eb22fb9`（工作区 clean，`git diff eb22fb9` 为空）。标准未降低；只验证不改代码。

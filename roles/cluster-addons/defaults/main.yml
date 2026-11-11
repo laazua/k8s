@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# roles/cluster-addons — 默认变量
+#
+# 设计要点：
+#   1) kubeconfig：从 roles/pki 产物（CA + admin/kubelet leaf）渲染 admin.conf /
+#      kubelet.conf，证书与私钥以 *-data 内嵌，落盘 0600 root:root；重跑默认不覆盖
+#      （force=false），证书轮换时置 cluster_addons_rotate_kubeconfigs=true 强制更新。
+#   2) RBAC：kubelet（Group system:nodes）最小权限（不含 secrets）与 CoreDNS 只读权限。
+#   3) CoreDNS：渲染 Deployment/Service/SA/ClusterRole(Binding)/ConfigMap(Corefile)/Service；
+#      版本/域/上游/缓存/端口/镜像仓库/TLS endpoint 全变量化，离线可渲染。
+#   4) CoreDNS 二进制不落宿主：本 role 只渲染清单与 Corefile；运行态由集群（镜像）
+#      或测试夹具（官方二进制）承担。
+#   5) 沙箱前缀 cluster_addons_root_prefix（生产留空）把全部产物重定向。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+cluster_addons_root_prefix: ""
+
+# --- 路径 --------------------------------------------------------------------
+cluster_addons_k8s_dir: "{{ k8s_config_dir | default('/etc/kubernetes') }}"
+cluster_addons_pki_dir: "{{ cluster_addons_root_prefix }}{{ k8s_pki_dir | default('/etc/kubernetes/pki') }}"
+cluster_addons_output_dir: "{{ cluster_addons_root_prefix }}{{ cluster_addons_k8s_dir }}/addons"
+cluster_addons_manifest_dir: "{{ cluster_addons_output_dir }}/manifests"
+
+# --- kubeconfig ---------------------------------------------------------------
+cluster_addons_cluster_name: "{{ k8s_cluster_name | default('kubernetes') }}"
+cluster_addons_server: >-
+  https://{{ k8s_vip if (k8s_vip | default('') | string | length > 0)
+              else (k8s_apiserver_advertise_address | default(ansible_host | default(inventory_hostname))) }}:{{ k8s_apiserver_port | default(6443) }}
+
+cluster_addons_admin_kubeconfig: "{{ cluster_addons_root_prefix }}{{ cluster_addons_k8s_dir }}/admin.conf"
+cluster_addons_kubelet_kubeconfig: "{{ cluster_addons_root_prefix }}{{ cluster_addons_k8s_dir }}/kubelet.conf"
+cluster_addons_kubeconfig_mode: "0600"
+cluster_addons_kubeconfig_owner: root
+cluster_addons_kubeconfig_group: root
+cluster_addons_rotate_kubeconfigs: false
+
+cluster_addons_ca_cert: "{{ cluster_addons_pki_dir }}/ca.crt"
+cluster_addons_admin_cert: "{{ cluster_addons_pki_dir }}/admin.crt"
+cluster_addons_admin_key: "{{ cluster_addons_pki_dir }}/admin.key"
+cluster_addons_admin_user: kubernetes-admin
+
+# kubelet：每节点一份证书（CN=system:node:<node>，O=system:nodes）
+cluster_addons_kubelet_node: "{{ inventory_hostname }}"
+cluster_addons_kubelet_cert: "{{ cluster_addons_pki_dir }}/kubelet/{{ cluster_addons_kubelet_node }}.crt"
+cluster_addons_kubelet_key: "{{ cluster_addons_pki_dir }}/kubelet/{{ cluster_addons_kubelet_node }}.key"
+cluster_addons_kubelet_user: "system:node:{{ cluster_addons_kubelet_node }}"
+
+# --- RBAC ---------------------------------------------------------------------
+cluster_addons_kubelet_group: system:nodes
+cluster_addons_coredns_namespace: "{{ k8s_system_namespace | default('kube-system') }}"
+cluster_addons_coredns_service_account: coredns
+
+# --- CoreDNS 镜像/版本（仅渲染，不拉取）--------------------------------------
+cluster_addons_coredns_version: "1.11.3"
+cluster_addons_coredns_image_registry: docker.io
+cluster_addons_coredns_image_repository: coredns/coredns
+cluster_addons_coredns_image_pull_policy: IfNotPresent
+cluster_addons_coredns_replicas: 2
+cluster_addons_coredns_service_name: kube-dns
+cluster_addons_coredns_container_port: 53
+cluster_addons_coredns_metrics_port: 9153
+# ready 插件监听地址：留空 → CoreDNS 默认 :8181；测试可指向高位端口
+cluster_addons_coredns_ready_port: ""
+
+# --- CoreDNS 配置 -------------------------------------------------------------
+cluster_addons_cluster_domain: cluster.local
+cluster_addons_coredns_listen_port: 53
+cluster_addons_coredns_upstream: /etc/resolv.conf
+cluster_addons_coredns_cache_ttl: 30
+cluster_addons_coredns_cache_seconds: 30
+# 为空 → 使用集群内 ServiceAccount（默认）；测试/独立运行可指向沙箱 apiserver。
+cluster_addons_coredns_kubernetes_endpoint: ""
+cluster_addons_coredns_tls_cert: ""
+cluster_addons_coredns_tls_key: ""
+cluster_addons_coredns_tls_ca: ""

@@ -1,0 +1,7 @@
+---
+# =============================================================================
+#  T011 沙箱 stack：kubectl + pki + 单成员 TLS etcd（复用 T007 范式）
+#   + CoreDNS 官方二进制制品
+# =============================================================================
+- import_playbook: ../control-plane/sandbox_stack.yml
+- import_playbook: sandbox_coredns.yml

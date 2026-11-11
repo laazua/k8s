@@ -1,0 +1,42 @@
+---
+- name: "cluster-addons:verify | kubeconfig 权限 0600"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ cluster_addons_admin_kubeconfig }}"
+    - "{{ cluster_addons_kubelet_kubeconfig }}"
+  register: kc_stat
+  tags: ["cluster-addons", "cluster-addons:verify"]
+
+- name: "cluster-addons:verify | 断言权限与属主"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.mode == cluster_addons_kubeconfig_mode
+      - item.stat.pw_name == cluster_addons_kubeconfig_owner
+      - item.stat.gr_name == cluster_addons_kubeconfig_group
+    fail_msg: "kubeconfig 权限/属主不符：{{ item.item }}"
+    quiet: true
+  loop: "{{ kc_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["cluster-addons", "cluster-addons:verify"]
+
+- name: "cluster-addons:verify | 清单与 Corefile 存在"
+  ansible.builtin.stat:
+    path: "{{ cluster_addons_manifest_dir }}/{{ item }}"
+  loop: [rbac.yaml, coredns.yaml, Corefile]
+  register: man_stat
+  tags: ["cluster-addons", "cluster-addons:verify"]
+
+- name: "cluster-addons:verify | 断言清单非空"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.size > 0
+    fail_msg: "清单缺失或为空：{{ item.item }}"
+    quiet: true
+  loop: "{{ man_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["cluster-addons", "cluster-addons:verify"]
