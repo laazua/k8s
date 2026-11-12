@@ -9,6 +9,21 @@
 
 ---
 
+## [2026-11-12] Planner · T012 评估收口 → 推进 T013，新增 T017
+
+- **决策**：T012 r1 = PASS **予以接受**（不返工）；报告 `reports/T012-r1.md`（被测 `37896d8`，六项 4/5/4/4/4/5，完整度 3）。
+- **roadmap v1.4**：T012 → `done`（目标验收保留 + 已验/受限分栏）；新增 **T017**（e2e real 模式健壮性修复），
+  `T016` 依赖追加 T017；版本对照更新为 17 个任务。
+- **spec v1.6**：新增 **C14 冒烟输出与 SKIP 语义**（SKIP 不计入 PASS、禁止空集恒真、可控失败判 FAIL）；
+  A12 细化为「一条命令 + 可判定输出」；新增 **R7 冒烟假绿**；成本基线更新为 12 套件 / **1799** 断言 / ~56 分钟。
+- **D1–D3 处理**：real 模式空集恒真、`--image` Job 失败降级 SKIP、参数缺值死循环（rc=124）
+  定为 **T016 前置门禁**，由 T017 关闭（含 D4/D6/D9）。
+- **状态**：`phase: BUILDING` / `active_task: T013` / `contract_status: accepted`（T012）/
+  `next_action: "build T013"` / `done_tasks: 12` / `planned_tasks: 17`。
+- **下一步**：T013（调度约束：业务仅落 node），Generator 先建契约并写红测试。
+
+---
+
 ## [2026-11-12] Generator（限时降级：主会话代做）· T012 build → **ready_for_eval**
 
 - **交付**：`tests/e2e/smoke.sh`（三种模式：`--static-only` / `--mode sandbox` /

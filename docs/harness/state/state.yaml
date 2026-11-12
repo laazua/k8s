@@ -3,14 +3,14 @@
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T012      # 例如 T001
-contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # T011 r1 = PASS（T010 r1 = PASS、T009 r2 = PASS）
-next_action: "eval T012"
+active_task: T013      # 例如 T001
+contract_status: accepted  # T012 已 accepted；T013 契约待 Generator 建立
+eval_round: 1          # T012 r1 = PASS（accepted）；T013 尚未评估
+next_action: "build T013"
 
 # 计划摘要（planner 写）
-planned_tasks: 16
-done_tasks: 11
+planned_tasks: 17
+done_tasks: 12
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,8 +30,18 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T012 已 ready_for_eval，待独立评估
+blockers: []          # 无阻塞；T012 r1 = PASS，已接受；T013 可作为下一个任务
 notes: |
+  **T012（e2e 冒烟）r1 = PASS（accepted）**，被测 `37896d8`（评估 `2026-11-12`，
+  报告 `docs/harness/state/reports/T012-r1.md`）：
+  - 六项：功能 4 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5；完整度 3（加权）。
+  - 独立复现：`make test-e2e` **31/0** ×2（308s/310s，内层 smoke 30/0/3，逐条一致）；
+    宿主 `/etc/kubernetes`、5 端口、进程、`kernel.panic*`、`kubepods` 快照前后一致。
+  - 牙齿 5/5 全红：kubelet 端口冲突 / 移走 `roles/cluster-addons` / 域改 `corp.local` /
+    SKIP→PASS / 坏 playbook。
+  - **D1–D3 由 Planner 提升为 T016 前置**：real 模式空集恒真 PASS、`--image` Job 失败降级 SKIP、
+    参数缺值死循环（rc=124）→ 新增 **T017** 关闭（含 D4/D6/D9）。
+  - 受限：real 成功路径、TDD 红回放、全量 `make test` 重跑（评估只跑了 e2e diff）未验证。
   **T012（e2e 冒烟）build 完成 → ready_for_eval（2026-11-12）**：
   - 交付 `tests/e2e/smoke.sh`（`--static-only` / `--mode sandbox` / `--mode real`，
     逐项 PASS/FAIL/SKIP + RESULT/PASS/FAIL/SKIP 汇总，退出码可用）、
@@ -86,4 +96,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-12T03:41:06Z"   # ISO8601
+updated: "2026-11-12T04:40:00Z"   # ISO8601
