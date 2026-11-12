@@ -2,15 +2,15 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T011      # 例如 T001
-contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
-eval_round: 1          # T011 r1 待评估（T010 r1 = PASS、T009 r2 = PASS）
-next_action: "eval T011"
+phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+active_task: T012      # 例如 T001
+contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
+eval_round: 1          # T011 r1 = PASS（T010 r1 = PASS、T009 r2 = PASS）
+next_action: "build T012"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
-done_tasks: 10
+done_tasks: 11
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,8 +30,18 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T011 已 ready_for_eval，待独立评估
+blockers: []          # 无阻塞；T011 r1 = PASS，推进 T012
 notes: |
+  **T011（cluster-addons）r1 = PASS（accepted）**，被测 `338c3f8`（评估 `2026-11-12`）：
+  功能 5 / 幂等 5 / 可配置 5 / 测试 4 / 结构 5 / 安全 5；完整度 4（加权）。
+  - 代评说明：`harness-evaluator` 子代理报 `Free usage limit reached`，按授权由主会话代评并标注。
+  - 独立复现：`test-cluster-addons` **135/0** ×2（356s/340s，逐条一致）；全量 `make test`
+    rc=0/3010s，`27/39/59/100/225/186/269/291/208/229/135` = **1768 PASS / 0 FAIL**。
+  - 牙齿 4/4（worktree）：①mode 改 0644 → 4 红；②RBAC 加 secrets → 3 红（含动态 can-i）；
+    ③Corefile 域写死 → 4 红（含 D2 反证）；④去掉版本校验 → 2 红。
+  - 宿主零污染：`/etc/kubernetes`、`10.96.0.0/12` 路由、netns、systemd unit 前后一致。
+  - 非阻塞 D1–D4：verify 与配置同源自检、清理断言恒真、B4 仅查一个文件、契约引用未建
+    `real_addons.yml`。报告：`docs/harness/state/reports/T011-r1.md`。
   **T011（cluster-addons）build 完成 → ready_for_eval（2026-11-11）**：
   - 交付 `roles/cluster-addons`（kubeconfig 内嵌 CA/leaf、0600 root:root、默认不覆盖 +
     rotate 开关；kubelet RBAC 最小权限（无 secrets）+ CoreDNS RBAC；CoreDNS
@@ -62,4 +72,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-11T04:04:04Z"   # ISO8601
+updated: "2026-11-12T01:43:41Z"   # ISO8601

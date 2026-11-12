@@ -9,6 +9,31 @@
 
 ---
 
+## [2026-11-12] Evaluator（主会话代评；子代理配额失败）· T011 r1 → **PASS（accepted）**
+
+> 被测 `338c3f8`（工作区 clean）。标准未降低；只验证不改代码。
+
+- **结论**：PASS。功能 5 / 幂等 5 / 可配置 5 / 测试 4 / 结构 5 / 安全 5；完整度 4（加权）。
+- **代评声明**：`harness-evaluator` 子代理返回 `Free usage limit reached`
+  （`https://opencode.ai/go`），按此前授权的限时降级由主会话独立复现并写报告。
+- **独立复现**：`test-cluster-addons` **135/0** ×2（356s / 340s，PASS/FAIL 逐条 `diff` 一致）；
+  全量 `make test` **rc=0 / 3010s**，`27/39/59/100/225/186/269/291/208/229/135` =
+  **1768 PASS / 0 FAIL**（前 10 套件与 1633 基线逐项一致）。
+- **牙齿 4/4**（独立 worktree，均从 clean checkout 起）：
+  ①`kubeconfig_mode` 改 0644 → 4 红；②RBAC 加 secrets → 3 红（含动态 `can-i`）；
+  ③Corefile 域写死 `cluster.local` → 4 红（含 D2 反证）；④去掉 CoreDNS 版本校验 → 2 红。
+- **宿主零污染**：`/etc/kubernetes`（absent）、`10.96.0.0/12` 路由（0）、netns（0）、
+  systemd unit（0）跑前跑后一致；worktree 已删除，主工作区 clean。
+- **非阻塞 D1–D4**：D1 `verify.yml` 断言与 `cluster_addons_kubeconfig_mode` 同源（改 0644 时
+  role 自检仍过，仅测试硬编码抓红）；D2 清理断言 `test ! -d "$SB"` 在 `SB=""` 后恒真；
+  D3 B4「不落盘」只查 `coredns.yaml`；D4 契约 §5.6 引用的 `real_addons.yml` 未创建。
+- **受限核对**：CoreDNS Pod / 集群内 DNS / kubelet 运行态 / 生产 `RBAC,Node` 权限均未验证，
+  契约 §5 声明诚实，未夸大。
+- **状态**：`accepted` / `eval_round: 1` / `done_tasks: 11` / `active_task: T012` /
+  `next_action: "build T012"` / `phase: BUILDING`；roadmap T011 → `done`。
+
+---
+
 ## [2026-11-11] Generator（限时降级：主会话代做）· T011 build → **ready_for_eval**
 
 > 交付 `roles/cluster-addons` + `tests/cluster-addons`；未自评 PASS，待独立评估。
