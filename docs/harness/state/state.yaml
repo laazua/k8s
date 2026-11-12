@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T012      # 例如 T001
-contract_status: accepted  # proposed | agreed | ready_for_eval | accepted | changes_requested
+contract_status: ready_for_eval  # proposed | agreed | ready_for_eval | accepted | changes_requested
 eval_round: 1          # T011 r1 = PASS（T010 r1 = PASS、T009 r2 = PASS）
-next_action: "build T012"
+next_action: "eval T012"
 
 # 计划摘要（planner 写）
 planned_tasks: 16
@@ -30,8 +30,22 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T011 r1 = PASS，推进 T012
+blockers: []          # 无阻塞；T012 已 ready_for_eval，待独立评估
 notes: |
+  **T012（e2e 冒烟）build 完成 → ready_for_eval（2026-11-12）**：
+  - 交付 `tests/e2e/smoke.sh`（`--static-only` / `--mode sandbox` / `--mode real`，
+    逐项 PASS/FAIL/SKIP + RESULT/PASS/FAIL/SKIP 汇总，退出码可用）、
+    `test_smoke_contract.sh`（31 断言）、README；Makefile 新增 `test-e2e`/`smoke-e2e`
+    并挂入 `make test`。
+  - 沙箱真实链路：pki → 单成员 TLS etcd → apiserver → containerd → kubelet（node1 注册，
+    Ready=False/KubeletNotReady 有 reason）→ kubeconfig/RBAC → CoreDNS 解析
+    `kubernetes.default=10.96.0.1`。
+  - 门禁：`make test-e2e` **31/0** ×2（324s/319s，逐条一致）；单跑 smoke **30/0/3 SKIP**；
+    全量 `make test` **rc=0 / 3347s**，`27/39/59/100/225/186/269/291/208/229/135/31`
+    = **1799 PASS / 0 FAIL**（前 11 套件与 1768 基线逐项一致）。
+  - 红：实现前契约套件 6/25；牙齿（静态）移走 `roles/cilium` → rc=1 / `FAIL role 缺失`。
+  - 受限（契约 §5）：系统 Pod Running、kube-dns ClusterIP、跨节点 Pod 均 SKIP（无镜像），
+    真机用 `--mode real`。
   **T011（cluster-addons）r1 = PASS（accepted）**，被测 `338c3f8`（评估 `2026-11-12`）：
   功能 5 / 幂等 5 / 可配置 5 / 测试 4 / 结构 5 / 安全 5；完整度 4（加权）。
   - 代评说明：`harness-evaluator` 子代理报 `Free usage limit reached`，按授权由主会话代评并标注。
@@ -72,4 +86,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-12T01:43:41Z"   # ISO8601
+updated: "2026-11-12T03:41:06Z"   # ISO8601

@@ -9,6 +9,30 @@
 
 ---
 
+## [2026-11-12] Generator（限时降级：主会话代做）· T012 build → **ready_for_eval**
+
+- **交付**：`tests/e2e/smoke.sh`（三种模式：`--static-only` / `--mode sandbox` /
+  `--mode real --kubeconfig [--image]`），输出逐项 `PASS/FAIL/SKIP` +
+  `RESULT/PASS/FAIL/SKIP` 汇总，退出码 0/1/2；`tests/e2e/test_smoke_contract.sh`
+  （31 断言）；`tests/e2e/README.md`；Makefile 新增 `test-e2e` / `smoke-e2e` 并挂入 `make test`。
+- **沙箱真实链路**：pki → 单成员 TLS etcd → apiserver（16443）→ containerd（CRI
+  `RuntimeReady`）→ kubelet（`node1` 注册，`Ready=False/KubeletNotReady` 有 reason）→
+  cluster-addons（kubelet.conf 0600、`system:node:node1`、RBAC `can-i`）→ CoreDNS 1.11.3
+  解析 `kubernetes.default=10.96.0.1`。固定 3 条 SKIP（系统 Pod / kube-dns / 跨节点）。
+- **门禁**：`make test-e2e` **31/0** ×2（324s/319s，逐条一致）；单跑 smoke **30/0/3 SKIP**
+  （319s）；全量 `make test` **rc=0 / 3347s**，`27/39/59/100/225/186/269/291/208/229/135/31`
+  = **1799 PASS / 0 FAIL**（前 11 套件与 1768 基线逐项一致）。
+- **TDD 红**：契约套件先写先跑，**6 PASS / 25 FAIL**；实现后 31/0。
+- **牙齿（静态）**：移走 `roles/cilium` → `--static-only` rc=1，`FAIL role 缺失: roles/cilium`。
+- **调试修复**：PKI 0700 目录下断言需 `sudo -n test -f`；CoreDNS 解包需 root；
+  `kubectl auth can-i` 会追加说明文本，需取首列；`create pods` 受 Node authorizer 影响，
+  反例改 `create serviceaccounts`；清理改用有界 kill（不再 `wait`）。
+- **受限（契约 §5）**：系统 Pod Running、kube-dns ClusterIP、跨节点 Pod 均未验证（无镜像）。
+- **状态**：`phase: BUILDING` / `contract_status: ready_for_eval` / `eval_round: 1` /
+  `active_task: T012` / `next_action: "eval T012"` / `done_tasks: 11`；roadmap T012 → `in-progress`。
+
+---
+
 ## [2026-11-12] Evaluator（主会话代评；子代理配额失败）· T011 r1 → **PASS（accepted）**
 
 > 被测 `338c3f8`（工作区 clean）。标准未降低；只验证不改代码。
