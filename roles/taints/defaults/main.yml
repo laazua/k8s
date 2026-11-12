@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# roles/taints — 默认变量
+#
+# 设计要点：
+#   1) 只负责「确保控制面节点带污点 + 角色标签」，不负责删除历史污点；
+#   2) 污点 key/value/effect、角色标签、目标节点全部可配置；
+#   3) 经真实 kubectl 访问真实 API；先读后写，重复执行 changed=0；
+#   4) 默认只允许 [k8s_master] 主机执行（fail-fast），非控制面主机拒绝；
+#   5) 沙箱路径/端口由调用方以变量覆盖，role 内不硬编码环境路径。
+# =============================================================================
+
+# --- kubectl / kubeconfig ---------------------------------------------------
+taints_kubectl: kubectl
+taints_kubeconfig: /etc/kubernetes/admin.conf
+# 额外 kubectl 参数（例如沙箱缓存目录：["--cache-dir", "/tmp/.../cache"]）
+taints_kubectl_extra_args: []
+
+# --- 目标节点 ---------------------------------------------------------------
+# 默认直接取 inventory 的 [k8s_master] 分组；可显式覆盖为节点名列表。
+taints_control_plane_nodes: "{{ groups['k8s_master'] | default([]) }}"
+
+# --- 污点 -------------------------------------------------------------------
+taints_control_plane_taint_key: node-role.kubernetes.io/control-plane
+taints_control_plane_taint_value: ""
+taints_control_plane_taint_effect: NoSchedule
+# 形如 key=value:effect；value 为空时输出 key:effect（kubectl taint 语法）。
+taints_expected_taint: >-
+  {{ taints_control_plane_taint_key
+     ~ (('=' ~ taints_control_plane_taint_value)
+        if (taints_control_plane_taint_value | string | length > 0) else '')
+     ~ ':' ~ taints_control_plane_taint_effect }}
+taints_allowed_effects:
+  - NoSchedule
+  - PreferNoSchedule
+  - NoExecute
+# 是否写入污点（false 时只管理标签）
+taints_manage_taint: true
+
+# --- 角色标签 ---------------------------------------------------------------
+taints_manage_label: true
+taints_control_plane_label_key: node-role.kubernetes.io/control-plane
+taints_control_plane_label_value: ""
+
+# --- 安全 / 等待 ------------------------------------------------------------
+# true：执行 role 的主机必须属于 inventory 的 [k8s_master] 分组。
+taints_require_control_plane_membership: true
+# true：等待 Node 对象出现（控制面 kubelet 可能稍后才注册）。
+taints_wait_for_nodes: true
+taints_wait_retries: 30
+taints_wait_delay: 2

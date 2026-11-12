@@ -9,6 +9,37 @@
 
 ---
 
+## [2026-11-12] Generator · T013 build → **ready_for_eval**
+
+- **交付**：`roles/taints`（defaults/tasks/meta/README）：给 `[k8s_master]` 写真实
+  `node-role.kubernetes.io/control-plane:NoSchedule` 污点 + 角色标签；先 `kubectl get -o json`
+  读现状、按需 `taint/label --overwrite`，第二次 `changed=0`；effect 白名单 / 非控制面主机 /
+  缺 kubeconfig / kubectl 不可执行均 fail-fast。`tests/taints`（inventory + 4 个 sandbox
+  playbook + `workload.example.yml` + `README.md` + 主脚本）**144 断言**；
+  Makefile 新增 `test-taints` 并挂入 `make test`（在 e2e 之前）。
+- **TDD 红 → 绿**：role 未实现时 **PASS=92 / FAIL=52**（更早两轮 88/55、85/58）；
+  实现后 `make test-taints` **144/0**。green3 = 144/0（约 950s），green4 复跑 = 144/0
+  （约 327s），PASS/FAIL 全集逐条 `diff` **一致**；B8 幂等 `changed=0`、污点/标签哈希不变。
+- **全量回归**：`make test` **rc=0 / 3641s**，13 套件
+  `27/39/59/100/225/186/269/291/208/229/135/144/31` = **1943 PASS / 0 FAIL**；
+  前 11 套件与 1799 基线逐项一致（新增 taints=144，e2e 仍 31）。
+- **牙齿证据（真实调度）**：带污点时 `nodeSelector=cp1` 且无 toleration 的 Pod 停留
+  Pending（事件含 untolerated taint）；临时移除污点后同类 Pod 被真实绑定到 `cp1`；
+  重跑 role 恢复污点。fail-fast 三组均 rc≠0、错误信息可判定、污点未变。
+- **调试关键（仅测试适配，未弱化断言）**：宿主根盘可用 12.9% < kubelet 默认
+  `imagefs.available<15%` → `DiskPressure=True` 反复 Evict 已调度 Pod（曾 6103 Pod）。
+  在 `tests/taints/sandbox_kubelet.yml` 增加 `--eviction-hard=...<1%`（内存阈值不变）；
+  B7 仍要求恰好 3 Pod、全部 node1、0 个 cp1。
+- **受限（契约 §5/§9）**：Pod 无镜像不会 Running；`cp1` 为合成 Node 对象（真实 API +
+  真实污点，无 kubelet）；单 worker；CM 仅启用 deployment/replicaset/serviceaccount(-token)，
+  apiserver 禁用 `TaintNodesByCondition`。真机复验步骤见契约 §5.5。
+- **提交号**：本条目所在提交（`git rev-parse HEAD`，信息
+  `T013: 调度约束（控制面污点/标签 + 真实 scheduler 绑定验证）`）。
+- **状态**：`phase: BUILDING` / `active_task: T013` / `contract_status: ready_for_eval` /
+  `eval_round: 1` / `next_action: "eval T013"`；roadmap T013 → `in-progress`。
+
+---
+
 ## [2026-11-12] Planner · T012 评估收口 → 推进 T013，新增 T017
 
 - **决策**：T012 r1 = PASS **予以接受**（不返工）；报告 `reports/T012-r1.md`（被测 `37896d8`，六项 4/5/4/4/4/5，完整度 3）。

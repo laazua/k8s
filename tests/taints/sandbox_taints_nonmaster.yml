@@ -1,0 +1,18 @@
+# =============================================================================
+#  T013 fail-fast：把 taints role 应用到非控制面主机必须失败
+#   - hosts= k8s_node（node1），inventory_hostname 不在 [k8s_master]；
+#   - role 的 validate 必须在任何 kubectl 写操作之前拒绝执行。
+# =============================================================================
+- name: T013 taints on non-control-plane host (must fail)
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    taints_kubectl: "{{ sandbox_root }}/usr/local/bin/kubectl"
+    taints_kubeconfig: "{{ sandbox_root }}/etc/kubernetes/admin.conf"
+    taints_kubectl_extra_args:
+      - "--cache-dir"
+      - "{{ sandbox_root }}/client/kubectl-cache"
+  roles:
+    - role: taints

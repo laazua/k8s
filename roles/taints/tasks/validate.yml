@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# taints:validate — fail fast（只读，不写任何集群状态）
+#   1) effect 必须在白名单内；key/目标节点非空；
+#   2) kubeconfig 必须存在且可读；
+#   3) 默认要求执行主机属于 [k8s_master]（非控制面主机不得打污点）。
+# =============================================================================
+
+- name: "taints:validate | 断言污点/标签参数合法"
+  ansible.builtin.assert:
+    that:
+      - taints_control_plane_taint_key | string | length > 0
+      - taints_control_plane_taint_effect in taints_allowed_effects
+      - taints_control_plane_nodes | length > 0
+      - taints_kubectl | string | length > 0
+      - taints_kubeconfig | string | length > 0
+      - (not (taints_manage_label | bool)) or (taints_control_plane_label_key | string | length > 0)
+    fail_msg: >-
+      调度约束参数非法：taint key=「{{ taints_control_plane_taint_key | default('(空)') }}」，
+      effect=「{{ taints_control_plane_taint_effect | default('(空)') }}」；
+      允许的 effect 白名单为 {{ taints_allowed_effects | join(', ') }}；
+      目标节点={{ taints_control_plane_nodes | default([]) | join(',') }}；
+      kubectl=「{{ taints_kubectl | default('(空)') }}」；
+      kubeconfig=「{{ taints_kubeconfig | default('(空)') }}」。
+    quiet: true
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 断言执行主机属于 [k8s_master]（非控制面拒绝）"
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups['k8s_master'] | default([]))
+    fail_msg: >-
+      调度约束 role 只允许在 control-plane 节点执行：当前主机
+      「{{ inventory_hostname }}」不属于 inventory 的 [k8s_master] 分组
+      （{{ groups['k8s_master'] | default([]) | join(',') }}）。
+      非控制面主机不得被打控制面污点/标签。
+    quiet: true
+  when: taints_require_control_plane_membership | bool
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 检查 kubeconfig"
+  ansible.builtin.stat:
+    path: "{{ taints_kubeconfig }}"
+  register: taints_kubeconfig_stat
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 断言 kubeconfig 存在且可读"
+  ansible.builtin.assert:
+    that:
+      - taints_kubeconfig_stat.stat.exists
+      - taints_kubeconfig_stat.stat.readable
+    fail_msg: >-
+      kubeconfig 不存在或不可读：{{ taints_kubeconfig }}。
+      需要先在控制面完成 kube-apiserver/cluster-addons 引导（admin.conf），
+      再执行本 role。
+    quiet: true
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 构建 kubectl 基础参数"
+  ansible.builtin.set_fact:
+    taints_kubectl_base: >-
+      {{ [taints_kubectl, '--kubeconfig', taints_kubeconfig]
+         + (taints_kubectl_extra_args | default([])) }}
+  tags: ["taints", "taints:validate"]

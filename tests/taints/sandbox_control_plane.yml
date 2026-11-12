@@ -1,0 +1,44 @@
+# =============================================================================
+#  T013 沙箱控制面：apiserver + controller-manager + scheduler
+#   - 仅渲染/安装（manage_service=false），进程由测试从 unit ExecStart 拉起；
+#   - 高位端口：apiserver 16443、CM 20257、scheduler 20259；
+#   - CM 只启用 deployment/replicaset/serviceaccount：
+#       * 让示例 Deployment 真实产生 ReplicaSet/Pod；
+#       * 关闭 nodelifecycle，避免无 CNI（Ready=False）的 node1 被自动加
+#         not-ready:NoSchedule 污点而失去调度资格（T013 只验收调度绑定）。
+# =============================================================================
+- name: T013 sandbox control plane
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_apiserver_root_prefix: "{{ sandbox_root }}"
+    kube_controller_manager_root_prefix: "{{ sandbox_root }}"
+    kube_scheduler_root_prefix: "{{ sandbox_root }}"
+    kube_apiserver_manage_service: false
+    kube_controller_manager_manage_service: false
+    kube_scheduler_manage_service: false
+    kube_apiserver_bind_address: 127.0.0.1
+    kube_apiserver_advertise_address: 127.0.0.1
+    kube_apiserver_secure_port: 16443
+    # 无 CNI 的沙箱 node1 必然 Ready=False；关闭 TaintNodesByCondition 准入插件，
+    # 避免 apiserver 自动给节点加 node.kubernetes.io/not-ready:NoSchedule，
+    # 从而让本任务只观测「控制面污点」这一条调度约束（详见契约 §3.3）。
+    kube_apiserver_disable_admission_plugins:
+      - TaintNodesByCondition
+    kube_controller_manager_bind_address: 127.0.0.1
+    kube_controller_manager_secure_port: 20257
+    kube_controller_manager_leader_elect: false
+    # 生产默认 true：各控制器用 system:controller:* ServiceAccount 身份运行
+    # （默认 CM ClusterRole 不含 apps 写权限；false 会被 RBAC 拒绝）。
+    kube_controller_manager_use_service_account_credentials: true
+    kube_controller_manager_extra_args:
+      - "--controllers=deployment,replicaset,serviceaccount,serviceaccount-token"
+    kube_scheduler_bind_address: 127.0.0.1
+    kube_scheduler_secure_port: 20259
+    kube_scheduler_leader_elect: false
+  roles:
+    - role: kube-apiserver
+    - role: kube-controller-manager
+    - role: kube-scheduler

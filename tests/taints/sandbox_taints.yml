@@ -1,0 +1,21 @@
+# =============================================================================
+#  T013 沙箱调度约束 role
+#   - hosts= k8s_master（cp1）：role 断言 inventory_hostname 属于 [k8s_master]；
+#   - 污点/标签通过真实 kubectl 写入沙箱 apiserver，并由 role 读回断言；
+#   - 只 taint/label 控制面节点，不触碰 node1。
+# =============================================================================
+- name: T013 sandbox taints
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    taints_kubectl: "{{ sandbox_root }}/usr/local/bin/kubectl"
+    taints_kubeconfig: "{{ sandbox_root }}/etc/kubernetes/admin.conf"
+    taints_kubectl_extra_args:
+      - "--cache-dir"
+      - "{{ sandbox_root }}/client/kubectl-cache"
+    taints_wait_retries: 30
+    taints_wait_delay: 1
+  roles:
+    - role: taints

@@ -1,0 +1,33 @@
+# =============================================================================
+#  T013 示例工作负载：不带 toleration 的 Deployment（业务只允许落 node）
+#
+#  默认值（测试 `test_taints_role.sh` 可通过 T013_NAMESPACE / T013_REPLICAS /
+#  T013_IMAGE / T013_APP 覆盖，并在应用前渲染）：
+#    namespace = t013-sched
+#    replicas  = 3
+#    image     = registry.invalid/t013/example:latest（本环境无 registry，仅用于调度判定）
+#
+#  关键：pod template 中**不设置 tolerations**，因此无法容忍控制面
+#  node-role.kubernetes.io/control-plane:NoSchedule 污点。
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t013-workload
+  namespace: t013-sched
+  labels:
+    app: t013-workload
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: t013-workload
+  template:
+    metadata:
+      labels:
+        app: t013-workload
+    spec:
+      containers:
+        - name: example
+          image: registry.invalid/t013/example:latest
+          imagePullPolicy: IfNotPresent

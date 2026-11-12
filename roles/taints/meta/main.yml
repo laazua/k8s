@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: taints
+  author: harness-generator
+  description: 控制面调度约束（NoSchedule 污点 + control-plane 角色标签，经真实 API 幂等写入）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - scheduling
+    - taints
+
+dependencies: []

@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/taints — 入口
+#   validate → 参数/成员身份/kubeconfig fail-fast（只读）
+#   nodes    → 读真实 Node 对象 → 按需写污点/标签 → 读回断言
+# =============================================================================
+
+- name: "taints:validate | 参数与控制面成员身份校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:nodes | 控制面节点污点与角色标签"
+  ansible.builtin.import_tasks: nodes.yml
+  tags: ["taints", "taints:nodes"]

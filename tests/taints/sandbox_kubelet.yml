@@ -1,0 +1,32 @@
+# =============================================================================
+#  T013 沙箱 kubelet（真实安装/渲染，不调用 systemctl）
+#   - 消费 T004 pki 为 [k8s_node] node1 签发的证书；
+#   - runtime endpoint 指向沙箱 containerd socket；
+#   - 高位端口 20250/20248；failSwapOn=false（共享机禁止 swapoff）。
+# =============================================================================
+- name: T013 sandbox kubelet
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kubelet_root_prefix: "{{ sandbox_root }}"
+    kubelet_manage_service: false
+    kubelet_cgroup_driver: "{{ container_runtime_cgroup_driver | default('systemd') }}"
+    kubelet_container_runtime_endpoint: "unix://{{ sandbox_root }}/run/containerd/containerd.sock"
+    kubelet_pki_dir: "{{ sandbox_root }}/etc/kubernetes/pki"
+    kubelet_client_ca_file: "{{ kubelet_pki_dir }}/ca.crt"
+    kubelet_client_cert_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.crt"
+    kubelet_client_key_file: "{{ kubelet_pki_dir }}/kubelet/{{ inventory_hostname }}.key"
+    kubelet_node_ip: 127.0.0.1
+    kubelet_fail_swap_on: false
+    kubelet_address: 127.0.0.1
+    kubelet_port: 20250
+    kubelet_healthz_port: 20248
+    # 共享开发机根盘余量可能低于 kubelet 默认阈值（nodefs/imagefs.available<15%），
+    # 会把已调度的示例 Pod 判为 DiskPressure 并反复 Evict（RS 无限重建）。
+    # 沙箱只验调度约束，故把磁盘阈值降到 1%（内存阈值保持默认）。
+    kubelet_extra_args:
+      - "--eviction-hard=imagefs.available<1%,nodefs.available<1%,imagefs.inodesFree<1%,nodefs.inodesFree<1%"
+  roles:
+    - role: kubelet
