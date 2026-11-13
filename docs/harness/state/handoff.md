@@ -9,6 +9,19 @@
 
 ---
 
+## [2026-11-13] Planner · T013 r2 评估收口 → 推进 T014
+
+- **决策**：T013 r2 = PASS **予以接受**（r1 FAIL 的 D1 BLOCKER / D2 MAJOR 均已关闭）。
+  报告 `reports/T013-r2.md`：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4。
+- **roadmap v1.5**：T013 → `done`（目标验收保留 + 已验/受限分栏）；记录 R2-D1–D4 MINOR 留 T016 收口。
+- **spec v1.7**：A13 判定细化为「真实 scheduler 绑定（`spec.nodeName`），无镜像不要求 Running」；
+  成本基线更新为 **13 套件 / 1974 断言 / ~61m33s**（`test-taints` 175，单跑 ~5.5 分钟）。
+- **状态**：`phase: BUILDING` / `active_task: T014` / `contract_status: accepted`（T013）/
+  `next_action: "build T014"` / `done_tasks: 13` / `planned_tasks: 17`。
+- **下一步**：T014（加节点流程）—— 注意 T017 仍是 T016 的强制前置，可与 T014 并行。
+
+---
+
 ## [2026-11-13] Generator · T013 r2（修复 r1 D1–D7）→ **ready_for_eval**
 
 - **D1 [BLOCKER] `--check`**：nodes 的 3 个只读 `command` 加 `check_mode: false`；写任务与

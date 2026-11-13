@@ -1,10 +1,14 @@
 # 规格（spec.md）· k8s 二进制 Ansible 部署
 
-> 状态：**已定稿（v1.6，Planner，2026-11-12）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
+> 状态：**已定稿（v1.7，Planner，2026-11-13）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
 > 上游：根 `README.md`。下游：`roadmap.md`、`contracts/T00N.md`。
 > 覆盖标记：每条 README 要求后标注其落点任务（`→ T0NN`）。
 >
 > **变更记录**
+> - v1.7（2026-11-13）：T013 r1 FAIL → r2 PASS（accepted）后补录——①全量 `make test` 成本更新为
+>   **~61 分 33 秒/次（3693s）、13 套件 / 1974 断言**（新增 `tests/taints` 175）；②A13 判定细化为
+>   「真实 scheduler 绑定」而非 Pod Running（无镜像）；③记录 r2 遗留 MINOR（A4 只查工作区、
+>   `hosts.example` 指向 `hosts.ini`、kubectl 路径说明、role 缺失时哈希断言恒真）→ T016 收口。
 > - v1.6（2026-11-12）：T012 r1 = PASS（accepted）后补录——①全量 `make test` 成本更新为
 >   **~56 分钟/次（12 套件 / 1799 断言）**，新增 `tests/e2e`（`make test-e2e` ≈ 5.4 分钟）；
 >   ②新增 **C14「冒烟输出与 SKIP 语义」**：受限项必须显式 `SKIP`、`SKIP` 不计入 `PASS`、
@@ -129,7 +133,7 @@
 | A10 | CNI | `cilium status` healthy；跨节点 Pod 互通 |
 | A11 | 附加组件 | CoreDNS Running；集群内 DNS 解析成功 |
 | A12 | 集群冒烟 | 一条命令（`tests/e2e/`，输出 `PASS/FAIL/SKIP` + `RESULT` 与退出码）判定：全部节点 Ready；系统 Pod 全 Running；集群内 DNS 解析成功；跨节点 Pod 互通。`SKIP` 不计入 PASS（C14） |
-| A13 | 调度约束 | 控制面不可调度；示例工作负载仅落在 node |
+| A13 | 调度约束 | 控制面带 `NoSchedule` 污点与角色标签（真实 API 读回）；不带 toleration 的工作负载多副本 **0 副本落 master**（真实 kube-scheduler 绑定判定；无镜像时只验 `spec.nodeName`，不要求 Running） |
 | A14 | 加节点 | 对新 node 执行剧本后 Ready，且可重复执行 |
 | A15 | 升级与回滚 | 升级一个 minor 版本后集群 Ready；回滚路径经实际执行验证 |
 | A16 | 端到端 | 从干净 inventory 一条命令得到可用 HA 集群，全流程文档可复现 |
@@ -155,7 +159,10 @@
     v1.6 实测更新：T012 后全量 **~55 分 47 秒/次（3347s）**，12 套件合计
     `27/39/59/100/225/186/269/291/208/229/135/31` = **1799** 条断言；
     其中 `test-e2e` 约 **5.4 分钟**、`test-cluster-addons` 约 **5.7 分钟**，均可单跑。
-    评估应「改动的套件连跑两次 + 全量按需一次」，并在报告中说明取舍。）
+    评估应「改动的套件连跑两次 + 全量按需一次」，并在报告中说明取舍。
+    v1.7 实测更新：T013 后全量 **~61 分 33 秒/次（3693s）**，13 套件合计
+    `27/39/59/100/225/186/269/291/208/229/135/175/31` = **1974** 条断言；
+    `test-taints` 约 **5.5 分钟**（首次预取约 16 分钟）。）
   - **无镜像验收范式（v1.4，T009 起强制）**：registry 不可达 → **任何任务都不得以「起 Pod/拉镜像」作为唯一验收手段**。
     必须把验收下沉到「真实进程 + 真实内核对象」：
     - Service/ClusterIP 类 → 沙箱真实 apiserver + 手工 `Endpoints`/`EndpointSlice` 指向**本地 mock 服务**，
