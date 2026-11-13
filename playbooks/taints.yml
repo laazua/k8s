@@ -1,0 +1,15 @@
+---
+# =============================================================================
+#  T013 调度约束：控制面节点污点 + 角色标签（业务仅落 node）
+#
+#  前置：控制面已引导完成，admin.conf 存在（roles/cluster-addons 产出）。
+#  用法：ansible-playbook -i inventory/hosts.yml playbooks/taints.yml --tags taints
+#  幂等：重复执行 changed=0；--check 干跑 rc=0 且不写真实 API。
+# =============================================================================
+- name: 调度约束（业务仅落 node）
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+  roles:
+    - role: taints
+      tags: ["taints"]

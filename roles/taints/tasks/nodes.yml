@@ -2,16 +2,20 @@
 # =============================================================================
 # taints:nodes — 读真实 Node 对象 → 按需写污点/标签 → 读回断言
 #   幂等：先 get -o json 读回现状；已存在且值一致时跳过 kubectl taint/label。
+#   check 模式：只读 command 用 check_mode: false 真实取值（干跑可求值）；
+#              写任务与写后断言由 when: not ansible_check_mode 跳过。
+#   argv：所有 kubectl 调用使用列表参数，避免字符串拼接被 shlex 拆开。
 # =============================================================================
 
 - name: "taints:nodes | 等待控制面 Node 对象出现"
   ansible.builtin.command:
-    cmd: "{{ (taints_kubectl_base + ['get', 'node', item, '-o', 'name']) | join(' ') }}"
+    argv: "{{ taints_kubectl_argv + ['get', 'node', item, '-o', 'name'] }}"
   register: taints_node_wait
   until: taints_node_wait.rc == 0
   retries: "{{ taints_wait_retries | int }}"
   delay: "{{ taints_wait_delay | int }}"
   changed_when: false
+  check_mode: false
   loop: "{{ taints_control_plane_nodes }}"
   loop_control:
     label: "{{ item }}"
@@ -20,9 +24,10 @@
 
 - name: "taints:nodes | 读取每个控制面节点的实时对象"
   ansible.builtin.command:
-    cmd: "{{ (taints_kubectl_base + ['get', 'node', item, '-o', 'json']) | join(' ') }}"
+    argv: "{{ taints_kubectl_argv + ['get', 'node', item, '-o', 'json'] }}"
   register: taints_node_state
   changed_when: false
+  check_mode: false
   loop: "{{ taints_control_plane_nodes }}"
   loop_control:
     label: "{{ item }}"
@@ -51,14 +56,15 @@
 
 - name: "taints:nodes | 确保控制面节点带目标污点"
   ansible.builtin.command:
-    cmd: >-
-      {{ (taints_kubectl_base
-          + ['taint', 'node', item, taints_expected_taint, '--overwrite']) | join(' ') }}
+    argv: >-
+      {{ taints_kubectl_argv
+         + ['taint', 'node', item, taints_expected_taint, '--overwrite'] }}
   loop: "{{ taints_control_plane_nodes }}"
   loop_control:
     label: "{{ item }}"
   when: >-
     (taints_manage_taint | bool) and
+    (not ansible_check_mode) and
     (((taints_existing[item]
        | selectattr('key', 'equalto', taints_control_plane_taint_key)
        | selectattr('effect', 'equalto', taints_control_plane_taint_effect)
@@ -69,23 +75,25 @@
 
 - name: "taints:nodes | 确保控制面节点带角色标签"
   ansible.builtin.command:
-    cmd: >-
-      {{ (taints_kubectl_base
-          + ['label', 'node', item, '--overwrite',
-             taints_control_plane_label_key ~ '=' ~ taints_control_plane_label_value]) | join(' ') }}
+    argv: >-
+      {{ taints_kubectl_argv
+         + ['label', 'node', item, '--overwrite',
+            taints_control_plane_label_key ~ '=' ~ taints_control_plane_label_value] }}
   loop: "{{ taints_control_plane_nodes }}"
   loop_control:
     label: "{{ item }}"
   when:
     - taints_manage_label | bool
+    - not ansible_check_mode
     - taints_labels[item].get(taints_control_plane_label_key) != taints_control_plane_label_value
   tags: ["taints", "taints:nodes"]
 
 - name: "taints:nodes | 经真实 API 读回污点/标签"
   ansible.builtin.command:
-    cmd: "{{ (taints_kubectl_base + ['get', 'node', item, '-o', 'json']) | join(' ') }}"
+    argv: "{{ taints_kubectl_argv + ['get', 'node', item, '-o', 'json'] }}"
   register: taints_readback
   changed_when: false
+  check_mode: false
   loop: "{{ taints_control_plane_nodes }}"
   loop_control:
     label: "{{ item }}"
@@ -111,7 +119,9 @@
   loop: "{{ taints_readback.results }}"
   loop_control:
     label: "{{ item.item }}"
-  when: taints_manage_taint | bool
+  when:
+    - taints_manage_taint | bool
+    - not ansible_check_mode
   tags: ["taints", "taints:nodes"]
 
 - name: "taints:nodes | 断言角色标签已在真实 API 生效"
@@ -129,5 +139,7 @@
   loop: "{{ taints_readback.results }}"
   loop_control:
     label: "{{ item.item }}"
-  when: taints_manage_label | bool
+  when:
+    - taints_manage_label | bool
+    - not ansible_check_mode
   tags: ["taints", "taints:nodes"]

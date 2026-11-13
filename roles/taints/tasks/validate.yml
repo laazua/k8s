@@ -1,25 +1,45 @@
 ---
 # =============================================================================
 # taints:validate — fail fast（只读，不写任何集群状态）
-#   1) effect 必须在白名单内；key/目标节点非空；
-#   2) kubeconfig 必须存在且可读；
-#   3) 默认要求执行主机属于 [k8s_master]（非控制面主机不得打污点）。
+#   1) 目标节点必须是「非字符串的列表」，且元素非空；
+#   2) taint key/value/effect 与 label key/value 的类型、字符集、白名单；
+#   3) kubectl 必须存在且可执行；kubeconfig 必须存在且可读；
+#   4) 默认要求执行主机属于 [k8s_master]（非控制面主机不得打污点）。
 # =============================================================================
 
 - name: "taints:validate | 断言污点/标签参数合法"
   ansible.builtin.assert:
     that:
-      - taints_control_plane_taint_key | string | length > 0
-      - taints_control_plane_taint_effect in taints_allowed_effects
+      - taints_control_plane_nodes is sequence
+      - taints_control_plane_nodes is not string
       - taints_control_plane_nodes | length > 0
-      - taints_kubectl | string | length > 0
-      - taints_kubeconfig | string | length > 0
-      - (not (taints_manage_label | bool)) or (taints_control_plane_label_key | string | length > 0)
+      - (taints_control_plane_nodes | select('string') | list | length)
+        == (taints_control_plane_nodes | length)
+      - (taints_control_plane_nodes | reject('match', '^\S+$') | list | length) == 0
+      - taints_control_plane_taint_key is string
+      - taints_control_plane_taint_key | length > 0
+      - taints_control_plane_taint_key is match(taints_key_pattern)
+      - taints_control_plane_taint_value is string
+      - taints_control_plane_taint_value is match(taints_value_pattern)
+      - taints_control_plane_taint_effect is string
+      - taints_control_plane_taint_effect in taints_allowed_effects
+      - taints_kubectl is string
+      - taints_kubectl | length > 0
+      - taints_kubeconfig is string
+      - taints_kubeconfig | length > 0
+      - (not (taints_manage_label | bool))
+        or (taints_control_plane_label_key is string
+            and taints_control_plane_label_key is match(taints_key_pattern))
+      - (not (taints_manage_label | bool))
+        or (taints_control_plane_label_value is string
+            and taints_control_plane_label_value is match(taints_value_pattern))
     fail_msg: >-
       调度约束参数非法：taint key=「{{ taints_control_plane_taint_key | default('(空)') }}」，
+      value=「{{ taints_control_plane_taint_value | default('(空)') }}」，
       effect=「{{ taints_control_plane_taint_effect | default('(空)') }}」；
       允许的 effect 白名单为 {{ taints_allowed_effects | join(', ') }}；
-      目标节点={{ taints_control_plane_nodes | default([]) | join(',') }}；
+      目标节点必须是列表（当前类型={{ taints_control_plane_nodes | type_debug }}，
+      值={{ taints_control_plane_nodes | default([]) | to_json }}）；
       kubectl=「{{ taints_kubectl | default('(空)') }}」；
       kubeconfig=「{{ taints_kubeconfig | default('(空)') }}」。
     quiet: true
@@ -36,6 +56,24 @@
       非控制面主机不得被打控制面污点/标签。
     quiet: true
   when: taints_require_control_plane_membership | bool
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 检查 kubectl 是否存在"
+  ansible.builtin.stat:
+    path: "{{ taints_kubectl }}"
+  register: taints_kubectl_stat
+  tags: ["taints", "taints:validate"]
+
+- name: "taints:validate | 断言 kubectl 存在且可执行"
+  ansible.builtin.assert:
+    that:
+      - taints_kubectl_stat.stat.exists
+      - taints_kubectl_stat.stat.executable
+    fail_msg: >-
+      kubectl 不存在或不可执行：{{ taints_kubectl }}。
+      taints_kubectl 必须是绝对路径（默认 /usr/local/bin/kubectl）；
+      若集群安装在别处，请显式覆盖该变量。
+    quiet: true
   tags: ["taints", "taints:validate"]
 
 - name: "taints:validate | 检查 kubeconfig"
@@ -56,9 +94,9 @@
     quiet: true
   tags: ["taints", "taints:validate"]
 
-- name: "taints:validate | 构建 kubectl 基础参数"
+- name: "taints:validate | 构建 kubectl argv（列表，避免字符串拼接/空格问题）"
   ansible.builtin.set_fact:
-    taints_kubectl_base: >-
+    taints_kubectl_argv: >-
       {{ [taints_kubectl, '--kubeconfig', taints_kubeconfig]
          + (taints_kubectl_extra_args | default([])) }}
   tags: ["taints", "taints:validate"]

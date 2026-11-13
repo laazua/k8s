@@ -60,6 +60,11 @@ if [[ -n "${SUDO_USER:-}" ]]; then
 fi
 
 ROLE=roles/taints
+role_tree_hash() {
+  find "$1" -type f -print0 2>/dev/null | sort -z \
+    | xargs -0 -r sha256sum 2>/dev/null | sha256sum | awk '{print $1}'
+}
+ROLE_TREE_PRE="$(role_tree_hash "$ROLE")"
 INV=tests/taints/inventory.ini
 PLAY_STACK=tests/taints/sandbox_stack.yml
 PLAY_CP=tests/taints/sandbox_control_plane.yml
@@ -67,6 +72,7 @@ PLAY_CD=tests/taints/sandbox_containerd.yml
 PLAY_KL=tests/taints/sandbox_kubelet.yml
 PLAY_TAINT=tests/taints/sandbox_taints.yml
 PLAY_TAINT_NODE=tests/taints/sandbox_taints_nonmaster.yml
+PLAY_TAINT_REAL=playbooks/taints.yml
 WORKLOAD=tests/taints/workload.example.yml
 UNIT_EXEC=tests/etcd/unit_exec.py
 
@@ -152,37 +158,101 @@ if [[ "${EUID}" -ne 0 ]] && sudo -n true 2>/dev/null; then
     bash "$(readlink -f "$0")"
 fi
 
-# --- 宿主快照 ---------------------------------------------------------------
-PRE_ETC_K8S="$(test -e /etc/kubernetes && echo exists || echo absent)"
-PRE_HOST_UNITS="$(ls /etc/systemd/system/containerd.service /etc/systemd/system/kubelet.service 2>/dev/null | sort | tr '\n' ' ')"
-PRE_KERNEL_PANIC="$(cat /proc/sys/kernel/panic 2>/dev/null || echo __MISSING__)"
-PRE_KERNEL_PANIC_ON_OOPS="$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null || echo __MISSING__)"
-PRE_VAR_LIB_CONTAINERD="$(sudo -n stat -c '%F %a' /var/lib/containerd 2>/dev/null || echo __MISSING__)"
-PRE_RUN_CONTAINERD="$(sudo -n stat -c '%F %a' /run/containerd 2>/dev/null || echo __MISSING__)"
-snapshot_path() {
-  local p="$1"
-  if [[ -e "$p" ]]; then
-    if [[ -f "$p" ]]; then sha_of "$p"; else stat -c '%F %a' "$p"; fi
-  else printf '__MISSING__'; fi
+# --- 宿主快照（内容级；采集失败重试 + 显式 FAIL，不静默） ------------------
+tree_hash() {  # 目录内容哈希：__MISSING__ / __ERROR__ / sha256
+  local p="$1" h
+  [[ -e "$p" ]] || { printf '__MISSING__'; return 0; }
+  h="$(sudo -n find "$p" -type f -print0 2>/dev/null | sort -z \
+    | xargs -0 -r sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+  if [[ -z "$h" ]]; then printf '__ERROR__'; else printf '%s' "$h"; fi
 }
-PRE_OPT_CNI="$(snapshot_path /opt/cni/bin)"
-PRE_KUBEPODS_SLICES="$(systemctl list-units --all 'kubepods*' --no-legend 2>/dev/null \
-  | awk '{print $1}' | sort | tr '\n' ' ')"
+shallow_dir_hash() {  # 顶层条目名/类型/大小哈希（避免跟随易变的大目录内容）
+  local p="$1" h
+  [[ -e "$p" ]] || { printf '__MISSING__'; return 0; }
+  h="$(sudo -n find "$p" -maxdepth 1 -mindepth 1 -printf '%f %y %s\n' 2>/dev/null \
+    | sort | sha256sum | awk '{print $1}')"
+  if [[ -z "$h" ]]; then printf '__ERROR__'; else printf '%s' "$h"; fi
+}
+unit_set_hash() {  # /etc/systemd/system 的 unit 集合 + 内容哈希
+  local h
+  h="$(sudo -n find /etc/systemd/system -maxdepth 2 -type f \
+    \( -name '*.service' -o -name '*.socket' -o -name '*.timer' \
+       -o -name '*.mount' -o -name '*.slice' \) -print0 2>/dev/null \
+    | sort -z | xargs -0 -r sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+  if [[ -z "$h" ]]; then printf '__ERROR__'; else printf '%s' "$h"; fi
+}
+kubepods_active() {
+  systemctl list-units 'kubepods*' --no-legend 2>/dev/null \
+    | awk '{print $1}' | sort | tr '\n' ' '
+}
+kubepods_loaded() {
+  systemctl list-units --all 'kubepods*' --no-legend 2>/dev/null \
+    | awk '{print $1}' | sort | tr '\n' ' '
+}
 snapshot_ports() {
   ss -ltn 2>/dev/null | grep -E ':(16443|20250|20248|12379|20257|20259)[[:space:]]' \
     | awk '{print $4}' | sort | tr '\n' ' '
 }
-PRE_PORTS="$(snapshot_ports)"
+snapshot_host_state() {  # snapshot_host_state <outfile>；任一采集失败 → rc=1
+  local out="$1"
+  {
+    printf 'etc_kubernetes=%s\n' "$(tree_hash /etc/kubernetes)"
+    printf 'systemd_units=%s\n' "$(unit_set_hash)"
+    printf 'var_lib_containerd=%s\n' "$(shallow_dir_hash /var/lib/containerd)"
+    printf 'run_containerd=%s\n' "$(shallow_dir_hash /run/containerd)"
+    printf 'opt_cni_bin=%s\n' "$(tree_hash /opt/cni/bin)"
+    printf 'ports=%s\n' "$(snapshot_ports)"
+    printf 'kernel_panic=%s\n' "$(cat /proc/sys/kernel/panic 2>/dev/null || echo __ERROR__)"
+    printf 'kernel_panic_on_oops=%s\n' "$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null || echo __ERROR__)"
+    printf 'kubepods_active=%s\n' "$(kubepods_active)"
+    printf 'kubepods_loaded=%s\n' "$(kubepods_loaded)"
+  } >"$out" 2>/dev/null
+  grep -q '__ERROR__' "$out" && return 1
+  return 0
+}
+snapshot_with_retry() {
+  local out="$1" i
+  for ((i = 0; i < 3; i++)); do
+    snapshot_host_state "$out" && return 0
+    sleep 1
+  done
+  return 1
+}
+snap_get() { grep -m1 "^$2=" "$1" 2>/dev/null | cut -d= -f2-; }
+
+PRE_HOST_SNAP=/tmp/opencode/t013_host_pre.txt
+if ! snapshot_with_retry "$PRE_HOST_SNAP"; then
+  bad "宿主快照采集失败（重试 3 次仍失败）"
+  echo "== 汇总: PASS=$pass_count FAIL=$((fail + 1)) =="
+  exit 1
+fi
+ok "宿主快照已采集（内容级：/etc/kubernetes、unit 集合、containerd、端口、sysctl、kubepods）"
+PRE_KERNEL_PANIC="$(snap_get "$PRE_HOST_SNAP" kernel_panic)"
+PRE_KERNEL_PANIC_ON_OOPS="$(snap_get "$PRE_HOST_SNAP" kernel_panic_on_oops)"
+PRE_KUBEPODS_SLICES="$(snap_get "$PRE_HOST_SNAP" kubepods_active)"
+PRE_KUBEPODS_LOADED="$(snap_get "$PRE_HOST_SNAP" kubepods_loaded)"
+SLICE_STOP_ERRORS=""
+SLICES_STOPPED=0
+stop_new_kubepods_slices() {  # 只停「本次运行新建」的 slice（前后差集 + 精确 unit 名）
+  [[ "$SLICES_STOPPED" -eq 1 ]] && return 0
+  SLICES_STOPPED=1
+  local now u
+  now="$(kubepods_loaded)"
+  while read -r u; do
+    [[ -z "$u" ]] && continue
+    if ! sudo -n systemctl stop "$u" >/dev/null 2>&1; then
+      SLICE_STOP_ERRORS+="$u "
+    fi
+  done < <(comm -13 <(printf '%s\n' $PRE_KUBEPODS_LOADED | sort -u) \
+                    <(printf '%s\n' $now | sort -u))
+  return 0
+}
 
 restore_kernel_tunables() {
   [[ "$PRE_KERNEL_PANIC" == "__MISSING__" ]] || \
     sudo -n sysctl -q -w "kernel.panic=$PRE_KERNEL_PANIC" >/dev/null 2>&1 || true
   [[ "$PRE_KERNEL_PANIC_ON_OOPS" == "__MISSING__" ]] || \
     sudo -n sysctl -q -w "kernel.panic_on_oops=$PRE_KERNEL_PANIC_ON_OOPS" >/dev/null 2>&1 || true
-}
-cleanup_kubepods_slices() {
-  [[ -n "$PRE_KUBEPODS_SLICES" ]] && return 0
-  sudo -n systemctl stop kubepods.slice >/dev/null 2>&1 || true
 }
 
 SB=""
@@ -215,7 +285,7 @@ cleanup() {
   stop_proc "$SB/usr/local/bin/kube-controller-manager"
   stop_proc "$SB/usr/local/bin/kube-apiserver"
   stop_proc "$SB/usr/local/bin/etcd"
-  cleanup_kubepods_slices
+  stop_new_kubepods_slices
   sudo -n rm -rf "$SB" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -254,6 +324,7 @@ for p in "$PLAY_STACK" "$PLAY_CP" "$PLAY_CD" "$PLAY_KL" "$PLAY_TAINT" "$PLAY_TAI
   check "存在 $p" test -f "$p"
 done
 check "存在 Makefile 目标 test-taints" grep -qE '^test-taints:' Makefile
+check "存在部署入口 $PLAY_TAINT_REAL" test -f "$PLAY_TAINT_REAL"
 check "make test 挂载 test_taints_role.sh" \
   bash -c "awk '/^test:/{f=1} f&&/^[a-zA-Z0-9_-]+:/{if(\$0!~/^test:/)exit} f' Makefile | grep -q 'tests/taints/test_taints_role.sh'"
 for p in "$PLAY_STACK" "$PLAY_CP" "$PLAY_CD" "$PLAY_KL" "$PLAY_TAINT" "$PLAY_TAINT_NODE" \
@@ -290,6 +361,17 @@ check_not "role 不硬编码默认端口 6443/10250" \
 check "role 任务带 taints tag" grep -q 'tags:.*taints' "$ROLE/tasks/main.yml"
 check "schema 幂等：nodes 先读后写（get node -o json）" \
   grep -q "get.*node.*-o.*json" "$ROLE/tasks/nodes.yml"
+check "nodes 只读 command 显式 check_mode: false（≥3 处）" \
+  bash -c "[[ \$(grep -c 'check_mode: false' '$ROLE/tasks/nodes.yml') -ge 3 ]]"
+check "nodes 写任务在 check 模式被跳过（not ansible_check_mode）" \
+  grep -q 'not ansible_check_mode' "$ROLE/tasks/nodes.yml"
+check "nodes 使用 argv 列表（不做字符串 join）" grep -q 'argv:' "$ROLE/tasks/nodes.yml"
+check_not "nodes 不再用 join(' ') 构造 cmd" grep -q "join(' ')" "$ROLE/tasks/nodes.yml"
+check "validate 断言 kubectl 可执行" grep -q 'executable' "$ROLE/tasks/validate.yml"
+check "validate 校验目标节点为列表（非字符串）" \
+  grep -qE 'is sequence|is not string' "$ROLE/tasks/validate.yml"
+check "validate 校验 taint key/value 字符集" \
+  grep -qE 'taint_key|taints_control_plane_taint_value' "$ROLE/tasks/validate.yml"
 
 echo "-- A3 示例工作负载（无 toleration）"
 check "workload 是 Deployment" grep -qE '^kind: Deployment' "$WORKLOAD"
@@ -301,17 +383,31 @@ check "workload 文档说明环境变量可覆盖" \
   grep -qE 'T013_NAMESPACE|T013_REPLICAS|T013_IMAGE|T013_APP' "$WORKLOAD"
 
 echo "-- A4 语法 / 风格 / 冻结资产"
-for p in "$PLAY_TAINT" "$PLAY_TAINT_NODE"; do
+for p in "$PLAY_TAINT" "$PLAY_TAINT_NODE" "$PLAY_TAINT_REAL"; do
   check "syntax-check $p" "$ANSIBLE_PLAYBOOK" -i "$INV" --syntax-check "$p"
 done
 check "syntax-check $PLAY_CP" "$ANSIBLE_PLAYBOOK" -i "$INV" --syntax-check "$PLAY_CP"
-check "yamllint role + tests/taints" "$YAMLLINT" -c .yamllint "$ROLE" tests/taints
-check "已 PASS 的 role 未被修改" git diff --quiet HEAD -- \
-  roles/base roles/download roles/pki roles/etcd roles/haproxy roles/keepalived \
-  roles/kube-apiserver roles/kube-controller-manager roles/kube-scheduler \
-  roles/containerd roles/kubelet roles/kube-proxy roles/cilium roles/cluster-addons
+check "yamllint role + tests/taints + playbooks/taints.yml" \
+  "$YAMLLINT" -c .yamllint "$ROLE" tests/taints "$PLAY_TAINT_REAL"
+check "已 PASS 的 role 未被修改（工作区含未跟踪文件）" \
+  bash -c "[[ -z \"\$(git status --porcelain --untracked-files=all -- \
+    roles/base roles/download roles/pki roles/etcd roles/haproxy roles/keepalived \
+    roles/kube-apiserver roles/kube-controller-manager roles/kube-scheduler \
+    roles/containerd roles/kubelet roles/kube-proxy roles/cilium roles/cluster-addons)\" ]]"
+check "roles/taints 全量文件内容哈希在测试前可计算" test -n "$ROLE_TREE_PRE"
+"$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_TAINT_REAL" --list-tasks --tags taints \
+  >/tmp/opencode/t013_list_tasks.log 2>&1
+check "playbooks/taints.yml --list-tasks --tags taints 非空" \
+  bash -c "grep -qE 'taints:(validate|nodes)' /tmp/opencode/t013_list_tasks.log"
+check "真机入口文档 tests/taints/README.md 指向 playbooks/taints.yml" \
+  grep -q 'playbooks/taints.yml' tests/taints/README.md
+check "真机入口文档 roles/taints/README.md 指向 playbooks/taints.yml" \
+  grep -q 'playbooks/taints.yml' "$ROLE/README.md"
+check "契约 §5 真机命令指向 playbooks/taints.yml" \
+  grep -q 'playbooks/taints.yml' docs/harness/state/contracts/T013.md
 
 echo "-- B0 制品缓存 / 沙箱自举"
+PRE_PORTS="$(snap_get "$PRE_HOST_SNAP" ports)"
 if [[ -n "$PRE_PORTS" ]]; then
   bad "高位端口已被占用（$PRE_PORTS），请先停止残留进程"
   echo "== 汇总: PASS=$pass_count FAIL=$((fail + 1)) =="
@@ -729,6 +825,41 @@ check "缺 kubeconfig → 错误信息提及 kubeconfig" \
   grep -qi 'kubeconfig' /tmp/opencode/t013_ff_kubeconfig.log
 check_eq "缺 kubeconfig 失败 → 污点未变" "$T_HASH_FF" "$(taint_hash)"
 
+rc=0
+ap "$PLAY_TAINT" /tmp/opencode/t013_ff_kubectl.log \
+  -e '{"taints_kubectl":"/tmp/opencode/t013-missing/kubectl"}' || rc=$?
+check "kubectl 不可执行 → exit≠0" test "$rc" -ne 0
+check "kubectl 不可执行 → 错误信息提及 kubectl" \
+  grep -qi 'kubectl' /tmp/opencode/t013_ff_kubectl.log
+check_eq "kubectl 不可执行 → 污点未变" "$T_HASH_FF" "$(taint_hash)"
+
+rc=0
+ap "$PLAY_TAINT" /tmp/opencode/t013_ff_nodes_type.log \
+  -e '{"taints_control_plane_nodes":"cp1"}' || rc=$?
+check "目标节点为字符串（非列表）→ exit≠0" test "$rc" -ne 0
+check "目标节点类型错误 → 错误信息可判定" \
+  grep -qiE 'list|sequence|列表|节点' /tmp/opencode/t013_ff_nodes_type.log
+check_eq "目标节点类型错误 → 污点未变" "$T_HASH_FF" "$(taint_hash)"
+
+echo "-- B11 --check 干跑：rc=0 / changed=0 / 不写真实 API"
+T_HASH_CHK="$(taint_hash)"
+L_HASH_CHK="$(label_hash)"
+rc=0
+ap "$PLAY_TAINT" /tmp/opencode/t013_checkmode.log --check || rc=$?
+check "--check 模式 exit 0" test "$rc" -eq 0
+check_eq "--check 模式 changed=0" 0 "$(changed_of /tmp/opencode/t013_checkmode.log)"
+check_eq "--check 后污点哈希不变" "$T_HASH_CHK" "$(taint_hash)"
+check_eq "--check 后标签哈希不变" "$L_HASH_CHK" "$(label_hash)"
+check "--check 日志无 from_json/解析失败" \
+  bash -c "! grep -qiE 'from_json|Expecting value' /tmp/opencode/t013_checkmode.log"
+if ap "$PLAY_TAINT" /tmp/opencode/t013_taints_run3.log; then
+  ok "check 后真实应用 exit 0"
+else
+  bad "check 后真实应用失败（见 /tmp/opencode/t013_taints_run3.log）"
+fi
+check_eq "check 后真实应用 changed=0（状态已收敛）" 0 \
+  "$(changed_of /tmp/opencode/t013_taints_run3.log)"
+
 echo "-- C1 清理与宿主零污染"
 stop_proc "$SB/usr/local/bin/kubelet"
 stop_proc "$SB/usr/local/bin/containerd"
@@ -737,7 +868,7 @@ stop_proc "$SB/usr/local/bin/kube-controller-manager"
 stop_proc "$SB/usr/local/bin/kube-apiserver"
 stop_proc "$SB/usr/local/bin/etcd"
 restore_kernel_tunables
-cleanup_kubepods_slices
+stop_new_kubepods_slices
 for k in "${!WRAPPER[@]}"; do wait "${WRAPPER[$k]}" 2>/dev/null || true; done
 WRAPPER=()
 all_stopped() {
@@ -750,26 +881,32 @@ all_stopped() {
 check "沙箱进程已全部退出" all_stopped
 check "高位端口全部释放（16443/20250/20248/12379/20257/20259）" wait_ports_free
 check "沙箱 CRI socket 已随进程消失" test ! -S "$SOCK"
+check "kubepods 清理仅停本次新建 slice 且无失败" test -z "$SLICE_STOP_ERRORS"
 
-POST_HOST_UNITS="$(ls /etc/systemd/system/containerd.service /etc/systemd/system/kubelet.service 2>/dev/null | sort | tr '\n' ' ')"
-POST_ETC_K8S="$(test -e /etc/kubernetes && echo exists || echo absent)"
-POST_VAR_LIB_CONTAINERD="$(sudo -n stat -c '%F %a' /var/lib/containerd 2>/dev/null || echo __MISSING__)"
-POST_RUN_CONTAINERD="$(sudo -n stat -c '%F %a' /run/containerd 2>/dev/null || echo __MISSING__)"
-POST_OPT_CNI="$(snapshot_path /opt/cni/bin)"
-POST_PORTS="$(snapshot_ports)"
-check_eq "宿主 /etc/systemd/system 未新增 unit" "$PRE_HOST_UNITS" "$POST_HOST_UNITS"
-check_eq "宿主 /etc/kubernetes 未被创建/改动" "$PRE_ETC_K8S" "$POST_ETC_K8S"
-check_eq "宿主 /var/lib/containerd 未变" "$PRE_VAR_LIB_CONTAINERD" "$POST_VAR_LIB_CONTAINERD"
-check_eq "宿主 /run/containerd 未变" "$PRE_RUN_CONTAINERD" "$POST_RUN_CONTAINERD"
-check_eq "宿主 /opt/cni/bin 未变" "$PRE_OPT_CNI" "$POST_OPT_CNI"
-check_eq "宿主端口快照一致" "$PRE_PORTS" "$POST_PORTS"
-check "宿主 kernel.panic 已恢复" \
-  test "$PRE_KERNEL_PANIC" = "$(cat /proc/sys/kernel/panic 2>/dev/null)"
-check "宿主 kernel.panic_on_oops 已恢复" \
-  test "$PRE_KERNEL_PANIC_ON_OOPS" = "$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null)"
-POST_KUBEPODS_SLICES="$(systemctl list-units --all 'kubepods*' --no-legend 2>/dev/null \
-  | awk '{print $1}' | sort | tr '\n' ' ')"
-check_eq "宿主 kubepods*.slice 已恢复" "$PRE_KUBEPODS_SLICES" "$POST_KUBEPODS_SLICES"
+POST_HOST_SNAP=/tmp/opencode/t013_host_post.txt
+if snapshot_with_retry "$POST_HOST_SNAP"; then
+  ok "宿主快照已复采（内容级，重试机制可用）"
+  check_eq "宿主 /etc/kubernetes 未变（内容哈希）" \
+    "$(snap_get "$PRE_HOST_SNAP" etc_kubernetes)" "$(snap_get "$POST_HOST_SNAP" etc_kubernetes)"
+  check_eq "宿主 /etc/systemd/system unit 集合/内容未变" \
+    "$(snap_get "$PRE_HOST_SNAP" systemd_units)" "$(snap_get "$POST_HOST_SNAP" systemd_units)"
+  check_eq "宿主 /var/lib/containerd 顶层条目未变" \
+    "$(snap_get "$PRE_HOST_SNAP" var_lib_containerd)" "$(snap_get "$POST_HOST_SNAP" var_lib_containerd)"
+  check_eq "宿主 /run/containerd 顶层条目未变" \
+    "$(snap_get "$PRE_HOST_SNAP" run_containerd)" "$(snap_get "$POST_HOST_SNAP" run_containerd)"
+  check_eq "宿主 /opt/cni/bin 未变（内容哈希）" \
+    "$(snap_get "$PRE_HOST_SNAP" opt_cni_bin)" "$(snap_get "$POST_HOST_SNAP" opt_cni_bin)"
+  check_eq "宿主端口快照一致" \
+    "$(snap_get "$PRE_HOST_SNAP" ports)" "$(snap_get "$POST_HOST_SNAP" ports)"
+  check_eq "宿主 kernel.panic 已恢复" "$PRE_KERNEL_PANIC" "$(cat /proc/sys/kernel/panic 2>/dev/null)"
+  check_eq "宿主 kernel.panic_on_oops 已恢复" "$PRE_KERNEL_PANIC_ON_OOPS" \
+    "$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null)"
+  check_eq "宿主 kubepods*.slice 已恢复（active）" \
+    "$PRE_KUBEPODS_SLICES" "$(snap_get "$POST_HOST_SNAP" kubepods_active)"
+else
+  bad "宿主快照复采失败（重试 3 次仍失败，不静默）"
+fi
+check_eq "roles/taints 文件内容在测试期间未被改动" "$ROLE_TREE_PRE" "$(role_tree_hash "$ROLE")"
 
 sudo -n rm -rf "$SB"
 check "沙箱已清理" test ! -e "$SB"

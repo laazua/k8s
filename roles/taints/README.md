@@ -26,7 +26,7 @@
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `taints_kubectl` | `kubectl` | kubectl 可执行文件（沙箱用绝对路径） |
+| `taints_kubectl` | `/usr/local/bin/kubectl` | kubectl 绝对路径（validate 断言可执行） |
 | `taints_kubeconfig` | `/etc/kubernetes/admin.conf` | 访问 API 的 kubeconfig |
 | `taints_kubectl_extra_args` | `[]` | 额外 kubectl 参数（如沙箱 `--cache-dir`） |
 | `taints_control_plane_nodes` | `groups['k8s_master']` | 目标节点列表 |
@@ -52,7 +52,9 @@
 ```
 
 ```bash
-ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags taints
+# 前置：控制面已引导，/etc/kubernetes/admin.conf 存在
+cp inventory/hosts.example inventory/hosts.yml   # 按需填写
+ansible-playbook -i inventory/hosts.yml playbooks/taints.yml --tags taints
 kubectl get nodes -o json | jq '.items[] | {name:.metadata.name, taints:.spec.taints, labels:.metadata.labels}'
 kubectl get pods -o wide   # 业务 Pod 的 NODE 列应只有 node
 ```

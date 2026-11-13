@@ -9,6 +9,36 @@
 
 ---
 
+## [2026-11-13] Generator · T013 r2（修复 r1 D1–D7）→ **ready_for_eval**
+
+- **D1 [BLOCKER] `--check`**：nodes 的 3 个只读 `command` 加 `check_mode: false`；写任务与
+  写后断言加 `when: not ansible_check_mode`；新增 B11（真实 apiserver 上 `--check` rc=0、
+  `changed=0`、污点/标签哈希不变、日志无 `from_json`，随后真实应用 `changed=0`）。
+- **D2 [MAJOR] 真机入口**：新增 `playbooks/taints.yml`（`hosts: k8s_master`/`become`/
+  `roles: [taints]`/`tags: [taints]`）；README 与契约 §5 改为
+  `cp inventory/hosts.example inventory/hosts.yml && ansible-playbook -i inventory/hosts.yml
+  playbooks/taints.yml --tags taints`（需已有 admin.conf）；新增 syntax-check 与
+  `--list-tasks` 非空断言（16 tasks）。
+- **D3–D7**：A4 改「冻结 role `git status` + `roles/taints` 全量 sha256 前后一致」；
+  宿主快照内容级（`/etc/kubernetes`、unit 集合+内容、containerd 目录、端口、sysctl、
+  kubepods）且采集失败重试 3 次显式 FAIL；清理只停「前后差集」的精确 kubepods unit 并记录
+  失败；validate 增 kubectl `stat`+可执行；kubectl 全改 `argv` 列表 + 目标节点列表类型 /
+  key/value 字符集校验（含 3 组负例）。
+- **红 → 绿**：新增 15 条断言先红 **160 PASS / 15 FAIL**（`t013_r2_red2.log`）；
+  `make test-taints` **175/0** ×2（324s / 326s，逐条 `diff` 一致，`t013_r2_green1/2.log`）。
+- **全量**：`make test` **rc=0 / 3693s**，13 套件
+  `27/39/59/100/225/186/269/291/208/229/135/175/31` = **1974 PASS / 0 FAIL**
+  （前 11 套件与 1799 基线一致；taints 144→175；e2e 31）。
+- **门禁**：`make lint` rc=0；`playbooks/taints.yml --syntax-check` rc=0；`--list-tasks` 非空。
+- **受限项不变（契约 §5/§9）**：Pod 不 Running（无镜像）、cp1 合成 Node、单 worker、CM 控制器子集；
+  真机命令已可执行但真实多主机仍待 T016 收敛。
+- **提交号**：本条目所在提交（`git rev-parse HEAD`，信息
+  `T013 r2: 修复 r1 D1–D7（--check/真机入口/测试卫生）`）。
+- **状态**：`contract_status: ready_for_eval` / `eval_round: 2` / `next_action: "eval T013 (r2)"`；
+  roadmap T013 保持 `in-progress`。
+
+---
+
 ## [2026-11-12] Generator · T013 build → **ready_for_eval**
 
 - **交付**：`roles/taints`（defaults/tasks/meta/README）：给 `[k8s_master]` 写真实

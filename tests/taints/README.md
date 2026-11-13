@@ -40,5 +40,23 @@ env -u PYTHONPATH -u ANSIBLE_PLAYBOOK make test-taints
 
 ## 真机
 
-见 `docs/harness/state/contracts/T013.md` §5：真实集群用
-`ansible-playbook ... --tags taints` + `kubectl get pods -o wide` 复验。
+前置：控制面已引导完成，`/etc/kubernetes/admin.conf` 存在（`roles/cluster-addons`）。
+
+```bash
+# 1) 准备 inventory（仓库只提供示例）
+cp inventory/hosts.example inventory/hosts.yml   # 按需填写 master/node 主机
+
+# 2) 只跑调度约束 role（playbooks/taints.yml 已接入 roles/taints）
+ansible-playbook -i inventory/hosts.yml playbooks/taints.yml --tags taints
+
+# 3) 读回真实污点/标签
+kubectl get nodes -o json | jq '.items[] | {name:.metadata.name,
+  taints:.spec.taints, labels:.metadata.labels}'
+
+# 4) 无 toleration 的工作负载（镜像可达时 Pod 会 Running）
+kubectl create deployment t013-real --image=<可达镜像> --replicas=3
+kubectl get pods -o wide    # NODE 列应只有 node
+```
+
+受限项见 `docs/harness/state/contracts/T013.md` §5：无镜像时 Pod 只验证调度绑定
+（`spec.nodeName`），不验证 Running；沙箱 master 节点为合成 Node 对象。

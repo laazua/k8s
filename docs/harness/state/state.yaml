@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T013      # 例如 T001
-contract_status: changes_requested  # T013 r1 = CHANGES_REQUESTED（D1 --check rc=2）
-eval_round: 1          # T013 评估轮次（r1 已出结论，修复后进入 r2）
-next_action: "fix T013 D1–D7（r1 评估）"
+contract_status: ready_for_eval  # T013 r2 修复完成，待 Evaluator
+eval_round: 2          # r1 = CHANGES_REQUESTED（D1–D7），r2 待评估
+next_action: "eval T013 (r2)"
 
 # 计划摘要（planner 写）
 planned_tasks: 17
@@ -30,8 +30,17 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: ["T013 r1 D1: --check 模式 rc=2（BLOCKER）", "T013 r1 D2: 真机复验命令空跑（MAJOR）"]
+blockers: []          # r1 D1–D7 已修复；待 r2 评估
 notes: |
+  **T013 r2（修复 r1 D1–D7）→ ready_for_eval（2026-11-13）**：
+  - 修复：`--check` rc=0/changed=0（只读 command `check_mode: false`、写任务
+    `not ansible_check_mode`）；新增 `playbooks/taints.yml` 真机入口；A4 改内容哈希 +
+    `git status`；宿主快照内容级 + 重试显式 FAIL；只停本次新建 kubepods slice；
+    kubectl stat/可执行 fail-fast；kubectl 全改 `argv` + 节点列表/字符集校验。
+  - 红（新增 15 条断言）：**160 PASS / 15 FAIL**；绿：`make test-taints` **175/0** ×2
+    （324s/326s，逐条 diff 一致）；全量 `make test` **rc=0 / 3693s**，
+    `27/39/59/100/225/186/269/291/208/229/135/175/31` = **1974 PASS / 0 FAIL**。
+  - 断言总数 144 → 175（只增不减）；`make lint` rc=0。
   **T013（调度约束）build 完成 → ready_for_eval（2026-11-12）**：
   - 交付 `roles/taints`（控制面 `NoSchedule` 污点 + 角色标签，先读后写幂等，fail-fast）+
     `tests/taints` **144 断言**（真实 etcd/apiserver/CM/scheduler/containerd/kubelet，
@@ -106,4 +115,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-12T17:05:00Z"   # ISO8601
+updated: "2026-11-13T02:28:12Z"   # ISO8601

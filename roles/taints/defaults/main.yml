@@ -11,7 +11,8 @@
 # =============================================================================
 
 # --- kubectl / kubeconfig ---------------------------------------------------
-taints_kubectl: kubectl
+# 必须是绝对路径（validate 会 stat 并断言可执行）。
+taints_kubectl: /usr/local/bin/kubectl
 taints_kubeconfig: /etc/kubernetes/admin.conf
 # 额外 kubectl 参数（例如沙箱缓存目录：["--cache-dir", "/tmp/.../cache"]）
 taints_kubectl_extra_args: []
@@ -34,6 +35,9 @@ taints_allowed_effects:
   - NoSchedule
   - PreferNoSchedule
   - NoExecute
+# Kubernetes 标识符字符集（key 允许一个 DNS 前缀；value 允许为空）。
+taints_key_pattern: '^([A-Za-z0-9][-A-Za-z0-9_.]*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$'
+taints_value_pattern: '^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$'
 # 是否写入污点（false 时只管理标签）
 taints_manage_taint: true
 
