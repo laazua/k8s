@@ -1,0 +1,212 @@
+---
+# =============================================================================
+# roles/add-node:validate — 前置校验（fail fast；任何失败都不落盘、不签发）
+#   1) 目标主机必须显式属于 add_node_target_group，且不得命中 add_node_forbidden_groups
+#   2) 既有集群 CA 证书必须存在（**绝不新建 CA**）
+#   3) sign 模式要求 CA 私钥存在；preissued 模式要求 kubelet 证书/私钥已分发
+#   4) kubelet 版本与集群 minor 兼容（add_node_allow_minor_skew）
+#   5) verify 开启时，控制端的 kubeconfig / kubectl 必须可用（worker 不要 admin 凭据）
+#   6) 判定节点是否「已加入」→ 显式跳过证书签发（幂等；不静默）
+#   只读任务一律 check_mode: false，保证 --check 下仍能拿到判定结果。
+# =============================================================================
+
+- name: "add-node:validate | 暴露运行时根前缀与产物路径（供 playbook 复用）"
+  ansible.builtin.set_fact:
+    add_node_runtime_root: "{{ add_node_root_prefix }}"
+    add_node_runtime_pki_dir: "{{ add_node_pki_dir }}"
+    add_node_runtime_ca_cert: "{{ add_node_ca_cert }}"
+    add_node_runtime_kubelet_cert: "{{ add_node_kubelet_cert }}"
+    add_node_runtime_kubelet_key: "{{ add_node_kubelet_key }}"
+    add_node_runtime_kubelet_kubeconfig: "{{ add_node_kubelet_kubeconfig }}"
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 断言目标主机属于 {{ add_node_target_group }} 分组"
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups[add_node_target_group] | default([]))
+    fail_msg: >-
+      主机 {{ inventory_hostname }} 不在分组 '{{ add_node_target_group }}' 中：
+      add-node 只对 inventory 中明确登记为工作节点的主机执行
+      （防止把控制面/etcd 或未登记主机当作新节点）。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 统计目标主机命中的禁止分组"
+  ansible.builtin.set_fact:
+    add_node_forbidden_hits: >-
+      {{ (add_node_forbidden_hits | default([]))
+         + ([item] if inventory_hostname in (groups[item] | default([])) else []) }}
+  loop: "{{ add_node_forbidden_groups }}"
+  loop_control:
+    label: "{{ item }}"
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 断言目标主机未命中禁止分组（控制面/etcd 不得当新节点）"
+  ansible.builtin.assert:
+    that:
+      - (add_node_forbidden_hits | default([])) | length == 0
+    fail_msg: >-
+      主机 {{ inventory_hostname }} 同时属于禁止分组
+      {{ add_node_forbidden_hits | join(', ') }}（add_node_forbidden_groups={{ add_node_forbidden_groups }}）：
+      add-node 只做 worker 扩容，不做控制面/etcd 扩容。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 检查既有集群 CA 证书（{{ add_node_ca_cert }}）"
+  ansible.builtin.stat:
+    path: "{{ add_node_ca_cert }}"
+  register: add_node_ca_cert_stat
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 缺少集群 CA 证书 → 立即失败（绝不重建 CA）"
+  ansible.builtin.assert:
+    that:
+      - add_node_ca_cert_stat.stat.exists
+      - add_node_ca_cert_stat.stat.isreg | default(false)
+    fail_msg: >-
+      缺少集群 CA 证书 {{ add_node_ca_cert }}（或不是普通文件）。
+      add-node 只消费既有集群 CA，**不会也不允许新建 CA**；
+      请由控制面把 ca.crt 分发到该路径后重试。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 断言证书模式合法（sign / preissued）"
+  ansible.builtin.assert:
+    that:
+      - add_node_cert_mode in ['sign', 'preissued']
+    fail_msg: >-
+      add_node_cert_mode='{{ add_node_cert_mode }}' 非法：仅支持 sign（本地用集群 CA 签发）
+      或 preissued（只校验已分发证书）。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 检查 sign 模式所需的集群 CA 私钥（{{ add_node_ca_key }}）"
+  ansible.builtin.stat:
+    path: "{{ add_node_ca_key }}"
+  register: add_node_ca_key_stat
+  when: add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | sign 模式缺 CA 私钥 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - add_node_ca_key_stat.stat.exists
+      - add_node_ca_key_stat.stat.isreg | default(false)
+    fail_msg: >-
+      add_node_cert_mode=sign 需要集群 CA 私钥 {{ add_node_ca_key }}，但文件不存在。
+      **不会新建 CA/私钥**；可改用 add_node_cert_mode=preissued（推荐生产，
+      由控制面签发后分发 kubelet 证书，节点无需 CA 私钥）。
+    quiet: true
+  when: add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 检查 preissued 模式所需的 kubelet 证书/私钥"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ add_node_kubelet_cert }}"
+    - "{{ add_node_kubelet_key }}"
+  loop_control:
+    label: "{{ item }}"
+  register: add_node_preissued_stat
+  when: add_node_cert_mode == 'preissued'
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | preissued 模式缺证书 → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - add_node_preissued_stat.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      add_node_cert_mode=preissued 要求节点上已有由集群 CA 签发的 kubelet 证书/私钥：
+      {{ add_node_kubelet_cert }} / {{ add_node_kubelet_key }} 缺失。
+      请先在控制面签发并分发（CN={{ add_node_kubelet_common_name }}、
+      O={{ add_node_kubelet_organization }}）。
+    quiet: true
+  when: add_node_cert_mode == 'preissued'
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 断言版本号格式（x.y.z）"
+  ansible.builtin.assert:
+    that:
+      - add_node_cluster_version is match('^v?[0-9]+\.[0-9]+\.[0-9]+')
+      - add_node_kubelet_version is match('^v?[0-9]+\.[0-9]+\.[0-9]+')
+    fail_msg: >-
+      版本号格式非法：集群={{ add_node_cluster_version }}、
+      kubelet={{ add_node_kubelet_version }}（期望 x.y.z 或 vx.y.z）。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 解析集群与 kubelet 的 minor 版本"
+  ansible.builtin.set_fact:
+    add_node_cluster_minor: >-
+      {{ (add_node_cluster_version | string | regex_replace('^v', '') | split('.'))[1] | int }}
+    add_node_kubelet_minor: >-
+      {{ (add_node_kubelet_version | string | regex_replace('^v', '') | split('.'))[1] | int }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 断言 kubelet 版本与集群 minor 兼容"
+  ansible.builtin.assert:
+    that:
+      - ([add_node_cluster_minor - add_node_kubelet_minor,
+          add_node_kubelet_minor - add_node_cluster_minor] | max)
+        <= (add_node_allow_minor_skew | int)
+    fail_msg: >-
+      kubelet 版本 {{ add_node_kubelet_version }} 与集群版本 {{ add_node_cluster_version }}
+      的 minor 相差超过 add_node_allow_minor_skew={{ add_node_allow_minor_skew }}。
+      kubelet 不得比 apiserver 新，也不得跨多个 minor；请统一版本或显式放宽该开关。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 检查 verify 所需的 kubeconfig / kubectl（控制端）"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: "{{ add_node_verify_delegate }}"
+  loop:
+    - "{{ add_node_verify_kubeconfig }}"
+    - "{{ add_node_verify_kubectl }}"
+  loop_control:
+    label: "{{ item }}"
+  register: add_node_verify_prereq
+  when: add_node_verify_registration | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | verify 缺 kubeconfig/kubectl → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - (item.item != add_node_verify_kubectl) or (item.stat.executable | default(false))
+    fail_msg: >-
+      add_node_verify_registration=true，但控制端缺少 {{ item.item }}（不存在或不可执行）。
+      verify 需要 kubeconfig（add_node_verify_kubeconfig）与 kubectl
+      （add_node_verify_kubectl）；worker 上不应放置 admin 凭据。
+    quiet: true
+  loop: "{{ add_node_verify_prereq.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: add_node_verify_registration | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 检查本节点 kubelet 证书/私钥（判定节点是否已收敛）"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ add_node_kubelet_cert }}"
+    - "{{ add_node_kubelet_key }}"
+  loop_control:
+    label: "{{ item }}"
+  register: add_node_kubelet_cred
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总节点是否已收敛（证书与私钥同时存在）"
+  ansible.builtin.set_fact:
+    add_node_already_joined: >-
+      {{ (add_node_kubelet_cred.results | selectattr('stat.exists') | list | length) == 2 }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 节点已收敛时显式跳过证书签发（幂等，不静默）"
+  ansible.builtin.debug:
+    msg: >-
+      节点 {{ add_node_node_name }} 已加入（kubelet 证书已存在），跳过签发；
+      继续以幂等方式收敛 containerd/kubelet 产物。
+  when: add_node_already_joined | bool
+  tags: ["add-node", "add-node:validate"]

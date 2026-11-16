@@ -1,0 +1,45 @@
+---
+# =============================================================================
+#  T014 沙箱「既有 worker 节点 node1」— containerd 段
+#   - 证书从集群 PKI 复制到节点自己的 PKI 目录（模拟运维分发）；
+#   - root/socket/端口全部独立于新节点 node2（node2 用 20251/20249）；
+#   - 不调用 systemctl：进程由测试从渲染出的 unit ExecStart 拉起；
+#   - failSwapOn=false（共享机禁止 swapoff）；放宽磁盘驱逐阈值（宿主余量 <15%）。
+#
+#  注意：kubelet 段在 sandbox_node1_kubelet.yml。kubelet role 的 validate 要求 CRI
+#  socket 已存在，而沙箱没有 systemd 来启动 containerd，因此必须由测试在两段之间
+#  从渲染出的 unit 拉起 containerd（T008 同一范式）。
+# =============================================================================
+- name: T014 sandbox existing node1 containerd
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    node_root: "{{ sandbox_root }}/node1"
+    containerd_root_prefix: "{{ node_root }}"
+    containerd_manage_service: false
+    containerd_verify_endpoint: false
+  pre_tasks:
+    - name: "T014 node1 | 创建节点 PKI 目录（模拟分发的目标目录）"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+      loop:
+        - "{{ node_root }}/etc/kubernetes/pki"
+        - "{{ node_root }}/etc/kubernetes/pki/kubelet"
+    - name: "T014 node1 | 复制集群 CA 与 node1 kubelet 证书到节点 PKI 目录（模拟分发）"
+      ansible.builtin.copy:
+        src: "{{ sandbox_root }}/etc/kubernetes/pki/{{ item.src }}"
+        dest: "{{ node_root }}/etc/kubernetes/pki/{{ item.dest }}"
+        remote_src: true
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: ca.crt, dest: ca.crt, mode: "0644" }
+        - { src: "kubelet/node1.crt", dest: "kubelet/node1.crt", mode: "0644" }
+        - { src: "kubelet/node1.key", dest: "kubelet/node1.key", mode: "0600" }
+  roles:
+    - role: containerd

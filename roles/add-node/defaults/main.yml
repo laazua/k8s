@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# roles/add-node — 新增 worker 节点（join）默认变量
+#
+# 设计要点：
+#   1) 只消费既有集群：**绝不重建 CA**。sign 模式在节点本地用集群 CA 私钥签发
+#      本节点 kubelet 证书；preissued 模式只校验运维分发的证书（节点无需 CA 私钥）。
+#   2) 路径/分组/版本/verify 参数全部变量化；`add_node_root_prefix` 为沙箱前缀
+#      （生产留空），把 CA/证书/kubelet 产物整体重定向。
+#   3) 幂等：证书走 pki 的「有效且匹配 → 不重签」判定（显式传 pki_ca_rebuilt=false），
+#      kubelet/containerd 产物走内容比较；已加入的节点显式打印「已加入」并跳过签发。
+#   4) fail-fast：目标不在 add_node_target_group、命中 add_node_forbidden_groups、
+#      缺 CA 证书 / sign 模式缺 CA 私钥 / preissued 缺证书、kubelet 版本 minor 不兼容、
+#      verify 开启但 kubeconfig/kubectl 不可用 → 在落盘前失败。
+# =============================================================================
+
+# --- 沙箱前缀（仅测试；生产保持空串，不要加尾斜杠）--------------------------
+add_node_root_prefix: ""
+
+# --- 目标节点 / 分组守卫 -----------------------------------------------------
+add_node_node_name: "{{ inventory_hostname }}"
+add_node_target_group: k8s_node
+add_node_forbidden_groups:
+  - k8s_master
+  - etcd
+
+# --- 证书：只签发，不建 CA ---------------------------------------------------
+# sign      = 用集群 CA 私钥在本节点签发 kubelet 证书（默认，简单路径）
+# preissued = 只校验运维已分发的 kubelet 证书（节点上不需要 CA 私钥，推荐生产）
+add_node_cert_mode: sign
+add_node_config_dir: "{{ k8s_config_dir | default('/etc/kubernetes') }}"
+add_node_pki_dir: "{{ add_node_root_prefix }}{{ add_node_config_dir }}/pki"
+add_node_ca_cert: "{{ add_node_pki_dir }}/ca.crt"
+add_node_ca_key: "{{ add_node_pki_dir }}/ca.key"
+add_node_kubelet_cert: "{{ add_node_pki_dir }}/kubelet/{{ add_node_node_name }}.crt"
+add_node_kubelet_key: "{{ add_node_pki_dir }}/kubelet/{{ add_node_node_name }}.key"
+add_node_kubelet_common_name: "system:node:{{ add_node_node_name }}"
+add_node_kubelet_organization: system:nodes
+add_node_kubelet_extra_sans: []
+add_node_node_ip: "{{ ansible_host | default(add_node_node_name) }}"
+add_node_pki_build_dir: "{{ add_node_root_prefix }}/var/cache/kubernetes-pki"
+
+# --- 节点产物路径（kubelet role 消费；由 validate 以 fact 暴露给 playbook）----
+add_node_kubelet_kubeconfig: "{{ add_node_root_prefix }}/var/lib/kubelet/kubelet.conf"
+add_node_kubelet_kubeconfig_mode: "0600"
+
+# --- 版本兼容（kubelet 与集群 minor 差不得超过 skew）-------------------------
+add_node_cluster_version: "{{ k8s_version | default('1.31.0') }}"
+add_node_kubelet_version: "{{ kubelet_version | default(add_node_cluster_version) }}"
+add_node_allow_minor_skew: 0
+
+# --- 主机级准备（base role）开关：沙箱必须可关 -------------------------------
+add_node_manage_host: true
+
+# --- 注册校验（控制端执行；worker 不需要 admin 凭据）-------------------------
+add_node_verify_registration: true
+add_node_verify_delegate: localhost
+add_node_verify_kubeconfig: "{{ add_node_root_prefix }}{{ add_node_config_dir }}/admin.conf"
+add_node_verify_kubectl: "{{ add_node_root_prefix }}{{ k8s_bin_dir | default('/usr/local/bin') }}/kubectl"
+add_node_verify_retries: 60
+add_node_verify_delay: 2
+add_node_verify_timeout: 10

@@ -9,6 +9,38 @@
 
 ---
 
+## [2026-11-16] Generator · T014（加节点流程）→ **ready_for_eval**
+
+- **交付**：`roles/add-node/`（`defaults` 全变量化；`validate` 分组/CA/版本/证书预检；
+  `cert` 复用 `pki:tasks_from: cert` **只签本节点 kubelet 证书**，显式
+  `pki_ca_rebuilt: {kubernetes: false}`，**绝不** include `pki:ca|main`；`verify` 在控制端
+  `delegate_to` 读回 Node/Ready/reason）+ 真实入口 `playbooks/add-node.yml`
+  （`hosts: k8s_node`、`serial: 1`、`tags: [add-node]`；顺序
+  validate→cert→containerd→kubelet→verify；`base` 由 `add_node_manage_host` 门控）。
+- **测试**：`tests/add-node/test_add_node_flow.sh` **231 断言**（SKIP=2 单列）+ 4 个沙箱 play
+  （`sandbox_stack` / `sandbox_node1` / `sandbox_node1_kubelet` / `sandbox_node2_containerd` /
+  `sandbox_add_node_nonmember`）+ `inventory.ini`（`ansible_connection=local`，沙箱专用）。
+- **Makefile**：新增 `test-add-node`，并挂到 `make test`（第 13 个套件，在 `test-taints` 后）。
+- **红 → 绿**：role 未实现 **138 PASS / 93 FAIL**（`/tmp/opencode/t014_red3.log`）→
+  `make test-add-node` **231/0/2**；首绿唯一 FAIL 是 Ansible 打印 skipped 任务名含「已加入」
+  被误判，改任务名措辞（消息体保留「已加入」，断言未放宽）后全绿。
+- **复跑**：`231/0/2` ×2（645s / 651s），去 ANSI 后逐条 diff **仅沙箱临时目录名 2 行不同**。
+- **全量**：`make test` **rc=0 / 4284s**，14 套件 = `27/39/59/100/225/186/269/291/208/229/135/175/231/31`
+  = **2205 PASS / 0 FAIL**；`make lint` **rc=0**。
+- **牙齿**：B7 篡改 `kubelet.conf` 后重跑必须 `changed>0` 并复原；C7 比较器自检 + 快照空值
+  显式 FAIL；D1–D6 六组 fail-fast 断言「rc≠0 + 关键字 + 未落盘/未建新 CA」；C5/C6 既有
+  node1/apiserver/etcd 的 PID/启动时间/配置哈希/Node UID 全部 `check_eq`（不静默）。
+- **受限（已在契约 §5/§9 声明）**：无镜像 → 系统 Pod 不 Running（SKIP=2）；单宿主双运行时；
+  无 systemd（handler 重启路径未验）；沙箱不跑 `base`；`preissued` 成功路径未端到端；
+  `--check` 不覆盖 containerd/kubelet 写任务；未做实现级 mutation campaign。
+- **遗留 / 风险**：`kubepods.slice` 双 kubelet 共享（清理只停本次新建 slice）；`serial: 1`
+  多新节点批次未实测；`preissued` 推荐路径需在 T016 文档写清。
+- **状态**：`phase: EVALUATING` / `contract_status: ready_for_eval` / `eval_round: 1` /
+  `next_action: "eval T014"`；roadmap T014 → `in-progress`（未自行判 PASS）。
+- **下一步**：Evaluator r1（建议先按契约 §10 做 1–2 个实现级变异，再按 §9 复核受限项）。
+
+---
+
 ## [2026-11-13] Planner · T013 r2 评估收口 → 推进 T014
 
 - **决策**：T013 r2 = PASS **予以接受**（r1 FAIL 的 D1 BLOCKER / D2 MAJOR 均已关闭）。

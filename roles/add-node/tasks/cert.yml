@@ -1,0 +1,118 @@
+---
+# =============================================================================
+# roles/add-node:cert — 只签发本节点 kubelet 证书（**绝不重建 CA**）
+#   - sign 模式：include pki 的 `tasks_from: cert`，显式传 pki_ca_rebuilt={kubernetes:false}
+#     （pki 的缺省 true 会让证书每次重签，破坏幂等）；
+#   - 签发前后对 CA 证书/私钥做 sha256 内容比对，任何变化即失败（动态反证「未重建 CA」）；
+#   - preissued 模式：什么都不签，只由 validate 校验已分发证书；
+#   - 已加入的节点整段跳过（validate 已显式打印「已加入」）。
+# =============================================================================
+
+- name: "add-node:cert | 读取签发前的 CA 证书哈希（只读，check 模式也执行）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_ca_cert }}"
+  register: add_node_ca_cert_before
+  changed_when: false
+  check_mode: false
+  when: not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 读取签发前的 CA 私钥哈希（sign 模式）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_ca_key }}"
+  register: add_node_ca_key_before
+  changed_when: false
+  check_mode: false
+  when:
+    - not (add_node_already_joined | bool)
+    - add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 记录 CA 证书/私钥哈希基线"
+  ansible.builtin.set_fact:
+    add_node_ca_cert_sha: "{{ add_node_ca_cert_before.stdout.split()[0] }}"
+    add_node_ca_key_sha: >-
+      {{ (add_node_ca_key_before.stdout | default('')).split()[0]
+         if (add_node_ca_key_before.stdout | default('') | length > 0) else '' }}
+  when: not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 由既有集群 CA 只签发本节点 kubelet 证书（不建 CA）"
+  ansible.builtin.include_role:
+    name: pki
+    tasks_from: cert
+  vars:
+    pki_root_prefix: "{{ add_node_root_prefix }}"
+    pki_ca_rebuilt:
+      kubernetes: false
+    pki_cert:
+      name: "kubelet/{{ add_node_node_name }}"
+      cert: "{{ add_node_kubelet_cert }}"
+      key: "{{ add_node_kubelet_key }}"
+      common_name: "{{ add_node_kubelet_common_name }}"
+      organization: "{{ add_node_kubelet_organization }}"
+      ca: kubernetes
+      extended_key_usage: "serverAuth,clientAuth"
+      sans: >-
+        {{ ([add_node_node_name, add_node_node_ip, 'localhost', '127.0.0.1']
+            + add_node_kubelet_extra_sans) | unique | list }}
+  when:
+    - not (add_node_already_joined | bool)
+    - add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 读取签发后的 CA 证书哈希"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_ca_cert }}"
+  register: add_node_ca_cert_after
+  changed_when: false
+  check_mode: false
+  when: not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 断言 CA 证书内容哈希未变（签发不会重建 CA）"
+  ansible.builtin.assert:
+    that:
+      - add_node_ca_cert_after.stdout.split()[0] == add_node_ca_cert_sha
+    fail_msg: >-
+      集群 CA 证书 {{ add_node_ca_cert }} 在签发过程中被修改/重建
+      （before={{ add_node_ca_cert_sha }}，after={{ add_node_ca_cert_after.stdout.split()[0] }}）。
+      add-node 只允许用既有 CA 签发 leaf，绝不重建 CA。
+    quiet: true
+  when: not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 读取签发后的 CA 私钥哈希（sign 模式）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_ca_key }}"
+  register: add_node_ca_key_after
+  changed_when: false
+  check_mode: false
+  when:
+    - not (add_node_already_joined | bool)
+    - add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 断言 CA 私钥内容哈希未变（未轮换/未重建）"
+  ansible.builtin.assert:
+    that:
+      - add_node_ca_key_after.stdout.split()[0] == add_node_ca_key_sha
+    fail_msg: >-
+      集群 CA 私钥 {{ add_node_ca_key }} 在签发过程中被修改/轮换
+      （before={{ add_node_ca_key_sha }}，after={{ add_node_ca_key_after.stdout.split()[0] }}）。
+      add-node 不得重建或轮换集群 CA。
+    quiet: true
+  when:
+    - not (add_node_already_joined | bool)
+    - add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 清理 PKI 构建目录（CSR/序列号，不留在节点上）"
+  ansible.builtin.file:
+    path: "{{ add_node_pki_build_dir }}"
+    state: absent
+  when:
+    - not (add_node_already_joined | bool)
+    - add_node_cert_mode == 'sign'
+    - not ansible_check_mode
+  tags: ["add-node", "add-node:cert"]

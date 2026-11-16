@@ -1,0 +1,15 @@
+---
+# =============================================================================
+#  T014 fail-fast：把 roles/add-node 应用到不在 [k8s_node] 的主机 → 必须失败
+#   - hosts= local（localhost），inventory_hostname 不属于 [k8s_node]；
+#   - role 的 validate 必须在任何落盘/签发之前拒绝执行。
+# =============================================================================
+- name: T014 add-node on non-k8s_node host (must fail)
+  hosts: local
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    add_node_root_prefix: "{{ sandbox_root }}/nonmember"
+  roles:
+    - role: add-node

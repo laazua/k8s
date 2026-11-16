@@ -1,0 +1,17 @@
+---
+# =============================================================================
+# roles/add-node — 入口
+#   validate → 分组/CA/证书模式/版本/verify 前置校验（fail fast，不落盘）
+#   cert     → 只签发本节点 kubelet 证书（不建 CA），并做 CA 哈希反证
+#   verify   → 由 playbook 的 post_tasks 调用（tasks_from: verify），控制端读回注册结果
+#
+# 顺序契约：validate → cert → containerd → kubelet → verify（由 playbooks/add-node.yml 表达）
+# =============================================================================
+
+- name: "add-node:validate | 前置校验（fail fast）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:cert | 只签发本节点 kubelet 证书（不重建 CA）"
+  ansible.builtin.import_tasks: cert.yml
+  tags: ["add-node", "add-node:cert"]

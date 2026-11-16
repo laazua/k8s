@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T014      # 例如 T001
-contract_status: accepted  # T013 r2 = PASS（accepted）；T014 契约待建立
-eval_round: 1          # T013 r2 = PASS（r1 FAIL → r2 PASS）
-next_action: "build T014"
+contract_status: ready_for_eval  # T014 实现+自测完成，待 Evaluator r1
+eval_round: 1          # T014 r1 待评估
+next_action: "eval T014"
 
 # 计划摘要（planner 写）
 planned_tasks: 17
@@ -30,8 +30,20 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T013 r2 = PASS 已接受；T014 可开工
+blockers: []          # 无阻塞；T014 已交付待评估
 notes: |
+  **T014（加节点流程）build 完成 → ready_for_eval（2026-11-16）**：
+  - 交付 `roles/add-node`（validate/cert/verify，只签本节点 kubelet 证书、
+    `pki_ca_rebuilt: {kubernetes: false}` 绝不重建 CA）+ 真实入口 `playbooks/add-node.yml`
+    （`hosts: k8s_node`、`serial: 1`、tags，顺序 validate→cert→containerd→kubelet→verify）+
+    `tests/add-node` **231 断言**（SKIP=2 单列）+ Makefile `test-add-node` 并挂入 `make test`。
+  - 红：role 未实现时 **138 PASS / 93 FAIL**；绿：`make test-add-node` **231/0/2**
+    ×2（645s/651s，逐条 diff 仅沙箱临时目录名 2 行不同）。
+  - 全量 `make test` **rc=0 / 4284s**，14 套件 = **2205 PASS / 0 FAIL**；`make lint` rc=0。
+  - 沙箱事实：node1/node2 为同宿主双运行时（真实 etcd+apiserver+kubelet），无 systemd、
+    无镜像；受限项与真机复验步骤见契约 §5/§9。
+  - 遗留（非阻塞）：`preissued` 成功路径未端到端、`--check` 不覆盖 containerd/kubelet
+    写任务、未做实现级 mutation campaign → 见契约 §9。
   **T013（调度约束）r2 = PASS（accepted）**，被测 `2e3ea76`（评估 `2026-11-13`，
   报告 `docs/harness/state/reports/T013-r2.md`）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。

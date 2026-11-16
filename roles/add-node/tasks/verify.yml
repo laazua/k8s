@@ -1,0 +1,134 @@
+---
+# =============================================================================
+# roles/add-node:verify — 控制端读回新节点注册结果（只读）
+#   - 在 add_node_verify_delegate（默认 localhost）用运维侧 kubectl + kubeconfig 执行；
+#     worker 上不需要也不应有 admin 凭据；
+#   - 断言 node/<new> 存在、Ready 条件存在且带可诊断 reason（无 CNI 时 NotReady 可接受）；
+#   - 断言节点 kubelet.conf 权限 0600、节点上没有 admin 凭据（最小权限）；
+#   - 只读命令一律 check_mode: false / changed_when: false。
+# =============================================================================
+
+- name: "add-node:verify | 检查 verify 所需的 kubeconfig / kubectl（控制端）"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: "{{ add_node_verify_delegate }}"
+  loop:
+    - "{{ add_node_verify_kubeconfig }}"
+    - "{{ add_node_verify_kubectl }}"
+  loop_control:
+    label: "{{ item }}"
+  register: add_node_verify_stat
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 缺 kubeconfig/kubectl → 立即失败"
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - (item.item != add_node_verify_kubectl) or (item.stat.executable | default(false))
+    fail_msg: >-
+      verify 需要控制端的 kubeconfig（add_node_verify_kubeconfig）与 kubectl
+      （add_node_verify_kubectl）；{{ item.item }} 不存在或不可执行。
+    quiet: true
+  loop: "{{ add_node_verify_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 读回 node/{{ add_node_node_name }} 的 Ready 条件（kubectl argv）"
+  ansible.builtin.command:
+    argv:
+      - "{{ add_node_verify_kubectl }}"
+      - "--kubeconfig"
+      - "{{ add_node_verify_kubeconfig }}"
+      - "--request-timeout"
+      - "{{ add_node_verify_timeout }}s"
+      - "get"
+      - "node"
+      - "{{ add_node_node_name }}"
+      - "-o"
+      - 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'
+  delegate_to: "{{ add_node_verify_delegate }}"
+  register: add_node_verify_ready
+  changed_when: false
+  check_mode: false
+  retries: "{{ add_node_verify_retries }}"
+  delay: "{{ add_node_verify_delay }}"
+  until: >-
+    add_node_verify_ready.rc == 0
+    and (add_node_verify_ready.stdout | trim | length > 0)
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 读回 node/{{ add_node_node_name }} 的 Ready reason（kubectl argv）"
+  ansible.builtin.command:
+    argv:
+      - "{{ add_node_verify_kubectl }}"
+      - "--kubeconfig"
+      - "{{ add_node_verify_kubeconfig }}"
+      - "--request-timeout"
+      - "{{ add_node_verify_timeout }}s"
+      - "get"
+      - "node"
+      - "{{ add_node_node_name }}"
+      - "-o"
+      - 'jsonpath={.status.conditions[?(@.type=="Ready")].reason}'
+  delegate_to: "{{ add_node_verify_delegate }}"
+  register: add_node_verify_reason
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 断言新节点已注册且 Ready 条件可判定"
+  ansible.builtin.assert:
+    that:
+      - add_node_verify_ready.rc == 0
+      - add_node_verify_ready.stdout | trim in ['True', 'False']
+    fail_msg: >-
+      未从集群读回 node/{{ add_node_node_name }} 的 Ready 条件
+      （rc={{ add_node_verify_ready.rc | default('?') }}，
+      stdout={{ add_node_verify_ready.stdout | default('') | trim }}，
+      stderr={{ add_node_verify_ready.stderr | default('') | trim }}）。
+    quiet: true
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 报告注册结果（节点 / Ready / reason）"
+  ansible.builtin.debug:
+    msg: >-
+      节点 {{ add_node_node_name }} 已注册：Ready={{ add_node_verify_ready.stdout | trim }}，
+      reason={{ add_node_verify_reason.stdout | default('') | trim | default('none', true) }}；
+      无 CNI 时 Ready=False/KubeletNotReady 属预期（系统 Pod 不 Running 的限制见契约 §5）。
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 检查节点上 kubelet.conf 权限"
+  ansible.builtin.stat:
+    path: "{{ add_node_kubelet_kubeconfig }}"
+  register: add_node_verify_kubeconfig_stat
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 断言 kubelet.conf 存在且权限 0600"
+  ansible.builtin.assert:
+    that:
+      - add_node_verify_kubeconfig_stat.stat.exists
+      - add_node_verify_kubeconfig_stat.stat.mode == '0600'
+    fail_msg: >-
+      节点 kubelet.conf {{ add_node_kubelet_kubeconfig }} 缺失或权限不是 0600
+      （实际 {{ add_node_verify_kubeconfig_stat.stat.mode | default('missing') }}）。
+      kubelet 凭据必须仅 root 可读。
+    quiet: true
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 检查节点上是否存在 admin 凭据（不应存在）"
+  ansible.builtin.stat:
+    path: "{{ add_node_root_prefix }}{{ add_node_config_dir }}/admin.conf"
+  register: add_node_verify_admin_stat
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 断言新节点没有 admin 凭据（最小权限）"
+  ansible.builtin.assert:
+    that:
+      - not add_node_verify_admin_stat.stat.exists
+    fail_msg: >-
+      新节点上发现 admin 凭据 {{ add_node_root_prefix }}{{ add_node_config_dir }}/admin.conf：
+      worker 只应持有 kubelet 身份，admin.conf 必须留在控制面。
+    quiet: true
+  tags: ["add-node", "add-node:verify"]

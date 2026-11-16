@@ -1,12 +1,48 @@
 ---
-# 新增节点入口（骨架占位：由 T014 实现）
-# 用法: ansible-playbook -i inventory/hosts.ini playbooks/add-node.yml -l <new-node>
-- name: Add new worker node
+# =============================================================================
+#  T014 新增 worker 节点入口（真实实现，非占位）
+#
+#  用法（真机）：
+#    cp inventory/hosts.example inventory/hosts.yml   # 新节点填进 [k8s_node]
+#    ansible-playbook -i inventory/hosts.yml playbooks/add-node.yml -l <new-node>
+#    # 推荐生产路径（节点无 CA 私钥）：-e add_node_cert_mode=preissued
+#
+#  顺序契约：add-node:validate → add-node:cert → containerd → kubelet → add-node:verify
+#  幂等：同一命令连跑第二次 changed=0，不重启 kubelet，不重建 CA。
+#  零影响：只写目标节点自身产物，不触碰既有控制面/既有节点。
+#  --check：add-node 的只读判定真实执行（check_mode: false）；containerd/kubelet 的
+#           写任务在 check 模式整体跳过（其 validate 依赖只读 command，Ansible 在
+#           check 模式会跳过 command，故不在 check 模式下复用——见契约 §9）。
+# =============================================================================
+- name: Add new worker node to existing cluster
   hosts: k8s_node
   become: true
   gather_facts: true
+  serial: 1
   tags: [add-node]
-  tasks:
-    - name: Placeholder - join flow pending (T014)
-      ansible.builtin.debug:
-        msg: "add-node skeleton: join flow pending (T014)"
+  roles:
+    - role: base
+      when: (add_node_manage_host | default(true)) | bool
+      tags: ["add-node"]
+    - role: add-node
+      tags: ["add-node"]
+    - role: containerd
+      when: not ansible_check_mode
+      tags: ["add-node"]
+      vars:
+        containerd_root_prefix: "{{ add_node_runtime_root }}"
+    - role: kubelet
+      when: not ansible_check_mode
+      tags: ["add-node"]
+      vars:
+        kubelet_root_prefix: "{{ add_node_runtime_root }}"
+        kubelet_pki_dir: "{{ add_node_runtime_pki_dir }}"
+        kubelet_client_ca_file: "{{ add_node_runtime_ca_cert }}"
+        kubelet_client_cert_file: "{{ add_node_runtime_kubelet_cert }}"
+        kubelet_client_key_file: "{{ add_node_runtime_kubelet_key }}"
+  post_tasks:
+    - name: "add-node:verify | 控制端读回 node/Ready/reason（可关：add_node_verify_registration）"
+      ansible.builtin.import_role:
+        name: add-node
+        tasks_from: verify
+      when: add_node_verify_registration | bool

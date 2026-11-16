@@ -1,0 +1,23 @@
+---
+# =============================================================================
+#  T014 沙箱预置 node2 运行时（containerd）
+#
+#  为什么单独预置：共享开发机禁止 systemctl，沙箱的 containerd 由测试从渲染出的
+#  unit ExecStart 拉起（T008/T013 同一范式）。而 kubelet role 的 validate 要求
+#  CRI socket **已存在**；生产里由 containerd 的 systemd 服务在 kubelet 之前启动，
+#  沙箱没有 systemd，所以必须先渲染并拉起 containerd，再执行 playbooks/add-node.yml。
+#  本 play 与 add-node 入口使用**同一 role 与同一组变量**，因此 add-node 首跑时
+#  containerd 段全部 changed=0（不改变「首跑真实签发证书 + 装配 kubelet」的判定）。
+# =============================================================================
+- name: T014 sandbox node2 containerd（预置运行时）
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    node_root: "{{ sandbox_root }}/node2"
+    containerd_root_prefix: "{{ node_root }}"
+    containerd_manage_service: false
+    containerd_verify_endpoint: false
+  roles:
+    - role: containerd

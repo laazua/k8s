@@ -1,0 +1,70 @@
+---
+# =============================================================================
+#  T014 沙箱「既有集群」：kubectl + pki + 单成员 TLS etcd + kube-apiserver
+#   - pki 只为 [k8s_existing_node]（node1）预签 kubelet 证书：
+#     新节点 node2 的证书必须由 add-node 流程签发，否则「首跑 changed>0」不可判定。
+#   - pki 不把 worker 写进 apiserver SAN（与 T007/T008 沙箱一致）。
+#   - 所有落盘由 sandbox_root 重定向；不调用 systemctl。
+# =============================================================================
+- name: T014 sandbox kubectl
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    download_root_prefix: "{{ sandbox_root }}"
+    download_cache_dir: "{{ sandbox_root }}/opt/k8s/artifacts"
+    download_items:
+      - name: kubectl
+        url: "{{ kubectl_url }}"
+        sha256: "{{ kubectl_sha256 }}"
+        mode: "0755"
+  roles:
+    - role: download
+  post_tasks:
+    - name: "T014 sandbox kubectl | 确保沙箱 bin 目录存在"
+      ansible.builtin.file:
+        path: "{{ sandbox_root }}/usr/local/bin"
+        state: directory
+        mode: "0755"
+    - name: "T014 sandbox kubectl | 从制品缓存安装到沙箱 bin（缓存命中 → 零网络）"
+      ansible.builtin.copy:
+        src: "{{ download_cache_dir }}/kubectl"
+        dest: "{{ sandbox_root }}/usr/local/bin/kubectl"
+        remote_src: true
+        mode: "0755"
+        owner: root
+        group: root
+
+- name: T014 sandbox pki（只为既有节点 node1 预签证书）
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    pki_root_prefix: "{{ sandbox_root }}"
+    pki_include_nodes_in_apiserver_sans: false
+    pki_node_group: k8s_existing_node
+  roles:
+    - role: pki
+
+- name: T014 sandbox etcd (single TLS member)
+  hosts: etcd
+  connection: local
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    etcd_root_prefix: "{{ sandbox_root }}"
+    etcd_user: "65534"
+    etcd_user_group: "65534"
+    etcd_manage_user: false
+    etcd_manage_service: false
+    etcd_instance_layout: co-located
+    etcd_min_members: 1
+    etcd_listen_address: 127.0.0.1
+    etcd_listen_peer_address: 127.0.0.1
+  roles:
+    - role: etcd
+
+- import_playbook: ../node/sandbox_apiserver.yml

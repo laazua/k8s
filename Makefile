@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-e2e smoke-e2e clean
+.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-add-node test-e2e smoke-e2e clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -52,6 +52,7 @@ test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/cilium/test_cilium_role.sh
 	tests/cluster-addons/test_cluster_addons_role.sh
 	tests/taints/test_taints_role.sh
+	tests/add-node/test_add_node_flow.sh
 	tests/e2e/test_smoke_contract.sh
 
 test-download: ## 运行 download role 测试套件（全离线 mock 源/代理）
@@ -83,6 +84,9 @@ test-cluster-addons: ## 运行 cluster-addons 测试套件（kubeconfig/RBAC 真
 
 test-taints: ## 运行调度约束测试套件（真实 apiserver/CM/scheduler/kubelet + 真实调度判定）
 	tests/taints/test_taints_role.sh
+
+test-add-node: ## 运行加节点流程测试套件（真实 kubelet 注册 node2 + 幂等/零影响/fail-fast）
+	tests/add-node/test_add_node_flow.sh
 
 test-e2e: ## 运行 e2e 冒烟脚本契约验收（静态 + 沙箱全链路，约 6 分钟）
 	tests/e2e/test_smoke_contract.sh

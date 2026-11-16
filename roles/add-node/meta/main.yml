@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: add-node
+  author: harness-generator
+  description: 新增 worker 节点（只消费既有集群 CA 签发本节点 kubelet 证书 + 幂等 join 收敛）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - scale
+    - kubelet
+
+dependencies: []
