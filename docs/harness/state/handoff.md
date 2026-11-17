@@ -9,6 +9,19 @@
 
 ---
 
+## [2026-11-17] Planner · T014 r1 评估收口 → 推进 T015，新增 T018
+
+- **决策**：T014 r1 = PASS **予以接受**；报告 `reports/T014-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
+- **roadmap v1.6**：T014 → `done`（目标验收保留 + 已验/受限分栏）；新增 **T018**（零影响快照空值显式失败、
+  证书幂等真实性、D3–D8），T016 依赖追加 T018；任务数 **18**。
+- **spec v1.8**：A14 判定细化为「真实 kubelet 注册 + 既有节点零影响（PID/启动时间/哈希/Node UID）+ 二次 changed=0」；
+  成本基线 **14 套件 / 2205 断言 / ~71m24s**（`test-add-node` 231、~10.8 分钟、SKIP=2）。
+- **状态**：`phase: BUILDING` / `active_task: T015` / `contract_status: accepted`（T014）/
+  `next_action: "build T015"` / `done_tasks: 14` / `planned_tasks: 18`。
+- **下一步**：T015（升级与回滚）；T017/T018 仍为 T016 强制前置。
+
+---
+
 ## [2026-11-16] Generator · T014（加节点流程）→ **ready_for_eval**
 
 - **交付**：`roles/add-node/`（`defaults` 全变量化；`validate` 分组/CA/版本/证书预检；
