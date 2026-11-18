@@ -1,0 +1,55 @@
+---
+# =============================================================================
+#  T015 沙箱工作节点 node1 — containerd 段
+#   - 独立 root/端口（node1：20250/20248），与宿主 / 控制面隔离；
+#   - 证书从集群 PKI 复制到节点自己的 PKI 目录（模拟运维分发）；
+#   - 不调用 systemctl：进程由测试从渲染出的 unit ExecStart 拉起；
+#   - failSwapOn=false；放宽磁盘驱逐阈值（宿主根盘余量 <15%，T013 教训）。
+#
+#  kubelet 段见 sandbox_node1_kubelet.yml（kubelet role 的 validate 要求 CRI socket 已存在）。
+# =============================================================================
+- name: T015 sandbox node1 containerd
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    node_root: "{{ sandbox_root }}/node1"
+    containerd_root_prefix: "{{ node_root }}"
+    containerd_manage_service: false
+    containerd_verify_endpoint: false
+  pre_tasks:
+    - name: "T015 node1 | 创建节点 PKI 目录（模拟分发的目标目录）"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+      loop:
+        - "{{ node_root }}/etc/kubernetes/pki"
+        - "{{ node_root }}/etc/kubernetes/pki/kubelet"
+    - name: "T015 node1 | 复制集群 CA 与 node1 kubelet 证书到节点 PKI 目录（模拟分发）"
+      ansible.builtin.copy:
+        src: "{{ sandbox_root }}/etc/kubernetes/pki/{{ item.src }}"
+        dest: "{{ node_root }}/etc/kubernetes/pki/{{ item.dest }}"
+        remote_src: true
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: ca.crt, dest: ca.crt, mode: "0644" }
+        - { src: "kubelet/node1.crt", dest: "kubelet/node1.crt", mode: "0644" }
+        - { src: "kubelet/node1.key", dest: "kubelet/node1.key", mode: "0600" }
+  roles:
+    - role: containerd
+  post_tasks:
+    - name: "T015 node1 | 确保沙箱 bin 目录存在"
+      ansible.builtin.file:
+        path: "{{ node_root }}/usr/local/bin"
+        state: directory
+        mode: "0755"
+    - name: "T015 node1 | 安装基线 kube-proxy 二进制（节点组件；不启服务）"
+      ansible.builtin.copy:
+        src: "{{ node_root }}/opt/k8s/artifacts/kube-proxy"
+        dest: "{{ node_root }}/usr/local/bin/kube-proxy"
+        remote_src: true
+        mode: "0755"

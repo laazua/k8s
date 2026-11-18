@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# roles/upgrade:binaries — 安装目标版本二进制（强 sha256 + --version 双断言）
+#
+#   每个组件：
+#     1) 制品就位（复用 download role：缓存命中零网络 / 代理 / sha256 强校验）
+#     2) 制品 sha256 == 官方固定值（不符即失败，不落成品）
+#     3) 制品 `--version` == 目标版本（防「sha 对但版本错」的错配制品）
+#     4) 安装到 bin 目录（内容不变 → changed=0，不触发重启）
+#     5) 计划变更（check 模式下也可观测 changed）
+#
+#   写入任务 `not ansible_check_mode`；读取任务 `check_mode: false`。
+# =============================================================================
+
+- name: "upgrade:binaries | 断言目标版本的官方 sha256 已固定（全部组件）"
+  ansible.builtin.assert:
+    that:
+      - ((upgrade_known_sha256[upgrade_version] | default({}))[item] | default('')) is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      目标版本 {{ upgrade_version }} 的 {{ item }} sha256 未固定（upgrade_known_sha256）。
+      离线/生产升级必须固定官方哈希，拒绝在无强校验的情况下替换二进制
+    quiet: true
+  loop: "{{ upgrade_components }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "upgrade:binaries | 确保制品与安装目录存在"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  loop:
+    - "{{ upgrade_artifact_dir }}"
+    - "{{ upgrade_staging_dir }}"
+    - "{{ upgrade_bin_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:binaries | 逐个组件获取并安装（{{ upgrade_components | join(',') }}）"
+  ansible.builtin.include_tasks: component.yml
+  loop: "{{ upgrade_components }}"
+  loop_control:
+    loop_var: upgrade_component
+    label: "{{ upgrade_component }}"

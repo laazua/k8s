@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/upgrade:handlers — 二进制变更后重启（仅生产；沙箱 upgrade_manage_service=false）
+# =============================================================================
+
+- name: "upgrade | 重启变更的组件"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: "{{ upgrade_service_names }}"
+  loop_control:
+    label: "{{ item }}"
+  when: upgrade_manage_service | bool

@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T015      # 例如 T001
-contract_status: accepted  # T014 r1 = PASS（accepted）；T015 契约待建立
-eval_round: 1          # T014 r1 = PASS
-next_action: "build T015"
+contract_status: ready_for_eval  # T015 实现+自测完成，待独立评估（T014 = accepted）
+eval_round: 1          # T015 待第 1 轮评估
+next_action: "eval T015"
 
 # 计划摘要（planner 写）
 planned_tasks: 18
@@ -30,8 +30,22 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T014 r1 = PASS 已接受；T015 可开工
+blockers: []          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
 notes: |
+  **T015（版本升级与回滚）build 完成 → ready_for_eval（2026-11-18）**：
+  - 交付 `roles/upgrade`（validate/backup/binaries/component/verify/rollback_validate/rollback，
+    upgrade 与 rollback 同 role 由 `upgrade_action` 分派）+ 真实入口 `playbooks/upgrade.yml`
+    （两 play：`hosts: k8s_master` / `hosts: k8s_node`，各 `serial: 1`，tags 全接线）+
+    `tests/upgrade` **268 断言**（SKIP=2 单列）+ Makefile `test-upgrade` 并挂入 `make test`。
+  - 门禁：`make test-upgrade` **268/0/2** ×2（613s/612s，逐条 diff 仅 PID 4 行）；
+    `make lint` rc=0；全量 `make test` rc=0 / 4899s，15 套件 = **2473 PASS / 0 FAIL**。
+  - 红（role/入口缺席）：123/144/2 → 修正测试自举后 161/105/2；首绿前修复 5 组缺陷
+    （制品探针不可执行 + kubectl `version --client`、备份 label/`find` 模板、etcd restore
+    `--initial-cluster`+`--initial-advertise-peer-urls`、测试 `-e` JSON 与版本刷新等待、
+    沙箱 nodeIP 非 loopback）见契约 §8.1。
+  - 受限：单宿主单节点、无 CNI/镜像、无 systemd 启停、etcd 单成员、未做系统化变异、
+    `upgrade_manage_service=true` 未验证 → 契约 §5/§9。
+  - 门禁首次跑因宿主 `/` 仅剩 1.8G 级联出 22 条假 FAIL（非代码缺陷）；已加磁盘前置守卫（≥6G）。
   **T014（加节点流程）r1 = PASS（accepted）**，被测 `91c7a61`（评估 `2026-11-17`，
   报告 `docs/harness/state/reports/T014-r1.md`）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
@@ -143,4 +157,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-17T03:20:00Z"   # ISO8601
+updated: "2026-11-18T04:20:00Z"   # ISO8601

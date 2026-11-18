@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# roles/upgrade:tasks — 编排
+#
+#   upgrade : validate → backup → binaries → verify
+#   rollback: validate → rollback_validate → rollback
+#
+#   备份是升级的硬前置：备份任务内的任何断言失败都会中止 play，
+#   安装任务不会执行（不会出现「没备份就升级」）。
+# =============================================================================
+
+- name: "upgrade | 校验（动作 / 版本格式 / minor 门禁 / 备份保留数）"
+  ansible.builtin.import_tasks: validate.yml
+  tags: ["upgrade", "upgrade:validate"]
+
+- name: "upgrade | 升级前备份（etcd 快照 + PKI + kubeconfig + 旧二进制）"
+  ansible.builtin.import_tasks: backup.yml
+  when:
+    - upgrade_action == 'upgrade'
+    - upgrade_needed | bool
+  tags: ["upgrade", "upgrade:backup"]
+
+- name: "upgrade | 安装目标版本二进制"
+  ansible.builtin.import_tasks: binaries.yml
+  when:
+    - upgrade_action == 'upgrade'
+    - upgrade_needed | bool
+  tags: ["upgrade", "upgrade:binaries"]
+
+- name: "upgrade | 回滚前置校验（备份目录/清单/sha256/快照）"
+  ansible.builtin.import_tasks: rollback_validate.yml
+  when: upgrade_action == 'rollback'
+  tags: ["upgrade", "upgrade:rollback"]
+
+- name: "upgrade | 回滚（旧二进制 + etcd 快照 + 证书）"
+  ansible.builtin.import_tasks: rollback.yml
+  when: upgrade_action == 'rollback'
+  tags: ["upgrade", "upgrade:rollback"]
+
+- name: "upgrade | 升级后验证（二进制版本 / 集群版本 / 节点 Ready）"
+  ansible.builtin.import_tasks: verify.yml
+  when: upgrade_action == 'upgrade'
+  tags: ["upgrade", "upgrade:verify"]

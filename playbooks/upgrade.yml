@@ -1,13 +1,33 @@
 ---
-# 版本升级入口（骨架占位：由 T015 实现）
-# 用法: ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml -e k8s_version=<new>
-- name: Upgrade Kubernetes cluster
-  hosts: k8s_cluster
-  become: true
-  gather_facts: true
+# =============================================================================
+#  版本升级 / 回滚（真实入口）
+#
+#  升级：ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml -e k8s_version=1.32.13
+#  干跑：... -e k8s_version=1.32.13 --check
+#  回滚：... -e upgrade_action=rollback -e upgrade_rollback_dir=<备份目录>
+#
+#  顺序：控制面滚动（serial: 1）→ 工作节点滚动（serial: 1）。
+#  每个主机上：validate → backup（etcd 快照 + PKI + kubeconfig + 旧二进制）→
+#              binaries（sha256 + --version 双断言）→ verify（版本 / Ready）。
+#  幂等：已在目标版本（二进制与集群版本都一致）→ changed=0、不备份、不重启。
+# =============================================================================
+
+- name: "升级/回滚 | 控制面（滚动 serial: 1）"
+  hosts: k8s_master
   serial: 1
-  tags: [upgrade]
-  tasks:
-    - name: Placeholder - upgrade flow pending (T015)
-      ansible.builtin.debug:
-        msg: "upgrade skeleton: rolling upgrade pending (T015)"
+  become: true
+  gather_facts: false
+  tags: ["upgrade"]
+  roles:
+    - role: upgrade
+      tags: ["upgrade"]
+
+- name: "升级/回滚 | 工作节点（滚动 serial: 1）"
+  hosts: k8s_node
+  serial: 1
+  become: true
+  gather_facts: false
+  tags: ["upgrade"]
+  roles:
+    - role: upgrade
+      tags: ["upgrade"]

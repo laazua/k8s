@@ -1,0 +1,137 @@
+---
+# =============================================================================
+# roles/upgrade — 默认变量（版本升级与回滚）
+#
+# 设计要点：
+#   1) 一个 role 承载 upgrade 与 rollback 两个动作（upgrade_action 分派），
+#      两者复用同一套路径/版本/验证变量，避免判定漂移。
+#   2) 「已安装版本」以本机二进制 `--version` 为准，集群 `/version` 只作交叉校验；
+#      两者都等于目标才短路（changed=0、不备份、不重启）。
+#   3) 备份是升级的**硬前置**：etcd 快照 + PKI + kubeconfig + 旧二进制 + MANIFEST + SHA256SUMS，
+#      任一校验失败即中止（后续安装任务不会执行）。
+#   4) 版本 / 组件清单 / 路径 / 端口 / 超时 / 服务管理全部变量化；
+#      tasks 中禁止硬编码版本与路径。
+#   5) 沙箱前缀 upgrade_root_prefix（生产留空）把二进制/PKI/kubeconfig/制品整体重定向；
+#      systemd 副作用由 upgrade_manage_service 控制（沙箱 false，由测试拉起进程）。
+# =============================================================================
+
+# --- 动作：upgrade | rollback -------------------------------------------------
+upgrade_action: upgrade
+
+# --- 目标版本与升级门禁 -------------------------------------------------------
+upgrade_version: "{{ k8s_version | default('') }}"
+upgrade_allow_minor_jump: false
+upgrade_allow_downgrade: false
+upgrade_arch: "{{ k8s_arch | default('amd64') }}"
+
+# --- 组件清单（可配）----------------------------------------------------------
+upgrade_control_plane_components:
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+  - kubectl
+upgrade_node_components:
+  - kubelet
+  - kube-proxy
+# 由 inventory 分组自动判定当前主机角色（cp / worker）
+upgrade_is_worker: "{{ inventory_hostname in (groups['k8s_node'] | default([])) }}"
+upgrade_components: "{{ upgrade_node_components if upgrade_is_worker else upgrade_control_plane_components }}"
+# 版本探测参数（kubectl 不支持 --version，只能 `kubectl version --client`）
+upgrade_component_version_args:
+  kubectl: ["version", "--client"]
+# 版本探针：控制面取 kube-apiserver、节点取 kubelet（清单首项）
+upgrade_version_probe_component: "{{ upgrade_components | first }}"
+
+# --- 沙箱前缀 / 路径（生产留空）------------------------------------------------
+upgrade_root_prefix: ""
+upgrade_root_owner: root
+upgrade_root_group: root
+upgrade_bin_dir: "{{ upgrade_root_prefix }}/usr/local/bin"
+upgrade_artifact_dir: "{{ upgrade_root_prefix }}/opt/k8s/artifacts"
+# 可执行探针暂存目录（缓存制品可能 0644；探测前复制为 0755，不改缓存本身）
+upgrade_staging_dir: "{{ upgrade_root_prefix }}/opt/k8s/staging"
+upgrade_pki_dir: "{{ upgrade_root_prefix }}/etc/kubernetes/pki"
+# kubeconfig / 节点配置文件（相对系统根的路径；任务内拼 upgrade_root_prefix）
+upgrade_kubeconfig_files_control_plane:
+  - /etc/kubernetes/admin.conf
+  - /etc/kubernetes/controller-manager.conf
+  - /etc/kubernetes/scheduler.conf
+upgrade_kubeconfig_files_node:
+  - /var/lib/kubelet/kubelet.conf
+  - /var/lib/kubelet/config.yaml
+upgrade_kubeconfig_files: >-
+  {{ upgrade_kubeconfig_files_node if upgrade_is_worker
+     else upgrade_kubeconfig_files_control_plane }}
+upgrade_kubectl: "{{ upgrade_root_prefix }}/usr/local/bin/kubectl"
+upgrade_kubeconfig: "{{ upgrade_root_prefix }}/etc/kubernetes/admin.conf"
+
+# --- 制品来源（官方二进制 + 强制 sha256；可指向镜像/本地目录）-------------------
+upgrade_download_url_base: "https://dl.k8s.io"
+upgrade_download_timeout: 120
+upgrade_download_retries: 3
+upgrade_download_retry_delay: 2
+# 官方 sha256 固定表（离线可复现；新版本必须显式补充，否则拒绝升级）
+upgrade_known_sha256:
+  "1.31.0":
+    kube-apiserver: "9016f6048ff9827ef58934e98f28a8026634c10b4e6fcc1df49451038a23a9aa"
+    kube-controller-manager: "9cf02d0ebf704ffdc727d0ad02e64bc5621f8013c4034b568bf7c939fe150490"
+    kube-scheduler: "1e519991d41389bb885df59c19389afe847dad511992d009ff766bc7f3992f89"
+    kubelet: "39e7f1c61c8389ea7680690f8bd5dd733672fa16875ae598df0fd8c205df57a9"
+    kubectl: "7c27adc64a84d1c0cc3dcf7bf4b6e916cc00f3f576a2dbac51b318d926032437"
+    kube-proxy: "b4b4ecbfeb9f8897b672ff8fa53f3288580b361340d7b2daa40b476e2f2967ca"
+  "1.32.13":
+    kube-apiserver: "02d8dfd91bd567f962bd41037a9658a5ceb7eae9fb841eb147b1090da1cc9602"
+    kube-controller-manager: "475223ea82ecaa1d8c602bc4533d9084bd2ebfa268946ad878c1f1574164cf7a"
+    kube-scheduler: "f28eae8144413156dd28c1758f148fc55732ab07b2f485599a8ca1340fe10b50"
+    kubelet: "4bc04c3f50725fa29ac9f0626c553941cfe07d128b3a313b7f5d176b07ab786e"
+    kubectl: "db2ae479a63f3665d7f704ab18c0d4d4050144237980763221835b7305703c4c"
+    kube-proxy: "8e28ebdb8bad2db9d84093b216d4f04eddcac3acf5b67b539fd8b14478019d64"
+
+# --- 升级前备份 ---------------------------------------------------------------
+upgrade_backup_root: "{{ upgrade_root_prefix }}/var/backups/kubernetes/upgrade"
+upgrade_backup_retention: 5
+upgrade_backup_etcd: "{{ not (upgrade_is_worker | bool) }}"
+upgrade_backup_pki: true
+upgrade_backup_min_files: 4
+
+# --- etcd 连接（备份快照用）----------------------------------------------------
+upgrade_etcdctl: "{{ upgrade_root_prefix }}/usr/local/bin/etcdctl"
+upgrade_etcd_endpoints: ["https://127.0.0.1:2379"]
+upgrade_etcd_ca_file: "{{ upgrade_pki_dir }}/etcd/ca.crt"
+upgrade_etcd_cert_file: "{{ upgrade_pki_dir }}/apiserver-etcd-client.crt"
+upgrade_etcd_key_file: "{{ upgrade_pki_dir }}/apiserver-etcd-client.key"
+upgrade_etcd_snapshot_timeout: 120
+
+# --- 验证 ---------------------------------------------------------------------
+upgrade_verify_cluster_version: true
+upgrade_require_ready_nodes: true
+upgrade_expected_nodes: "{{ groups['k8s_node'] | default([]) }}"
+# 是否需要变更（validate 阶段由二进制/集群版本计算；默认 true 便于单跑子 tag）
+upgrade_needed: true
+
+# --- 服务管理（生产 true；沙箱 false，进程由测试拉起）----------------------------
+upgrade_manage_service: true
+upgrade_service_names_control_plane:
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+upgrade_service_names_node:
+  - kubelet
+  - kube-proxy
+upgrade_service_names: >-
+  {{ upgrade_service_names_node if upgrade_is_worker
+     else upgrade_service_names_control_plane }}
+upgrade_etcd_service_name: etcd
+
+# --- 回滚 ---------------------------------------------------------------------
+upgrade_rollback_dir: ""
+# 替换 etcd 数据目录前必须确认 etcd 已停止（沙箱显式 ack；生产由 role 停服务）
+upgrade_rollback_etcd_offline_ack: false
+upgrade_rollback_etcd_data_dir: "{{ upgrade_root_prefix }}/var/lib/etcd"
+upgrade_rollback_etcd_member_name: default
+# restore 的初始集群（名称必须与快照中的成员名一致；单成员用本机 peer URL 即可）
+upgrade_rollback_etcd_initial_peer_url: "http://localhost:2380"
+upgrade_rollback_etcd_initial_cluster: "{{ upgrade_rollback_etcd_member_name }}={{ upgrade_rollback_etcd_initial_peer_url }}"
+upgrade_rollback_etcd_data_owner: etcd
+upgrade_rollback_etcd_data_group: etcd
+upgrade_rollback_etcd_data_mode: "0700"

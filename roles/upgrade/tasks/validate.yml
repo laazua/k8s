@@ -1,0 +1,151 @@
+---
+# =============================================================================
+# roles/upgrade:validate — 零副作用前置校验
+#   1) 动作合法（upgrade | rollback）
+#   2) 目标版本格式 X.Y.Z（拒绝两段式 / v 前缀 / -rc 等预发布后缀）
+#   3) 相邻 minor（跨多个 minor 需显式 upgrade_allow_minor_jump=true）
+#   4) 不允许降级（需显式 upgrade_allow_downgrade=true）
+#   5) 备份保留数裁剪（幂等；check 模式跳过）
+#   6) 计算 upgrade_needed（本机二进制 --version 为准，集群 /version 交叉校验）
+#
+#   所有读取任务 check_mode: false（--check 下也要真实读取，供计划变更判定）。
+# =============================================================================
+
+- name: "upgrade:validate | 断言动作合法（upgrade | rollback）"
+  ansible.builtin.assert:
+    that:
+      - upgrade_action in ['upgrade', 'rollback']
+    fail_msg: "upgrade_action='{{ upgrade_action }}' 非法：只支持 upgrade 或 rollback"
+    quiet: true
+
+- name: "upgrade:validate | 断言目标版本格式（X.Y.Z，无 v 前缀 / 预发布后缀）"
+  ansible.builtin.assert:
+    that:
+      - upgrade_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+    fail_msg: >-
+      升级目标版本格式非法：'{{ upgrade_version }}'。
+      期望三段数字 X.Y.Z（不带 v 前缀、不带 -rc/-alpha/-beta 等预发布后缀）
+    quiet: true
+  when: upgrade_action == 'upgrade'
+
+- name: "upgrade:validate | 读取已安装探针组件版本（{{ upgrade_version_probe_component }}）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_bin_dir }}/{{ upgrade_version_probe_component }}"
+      - "--version"
+  register: upgrade_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "upgrade:validate | 解析已安装版本（缺失视为未安装，不阻断首次部署）"
+  ansible.builtin.set_fact:
+    upgrade_current_version: >-
+      {{ (upgrade_probe.stdout | default('')
+          | regex_search('v[0-9]+\.[0-9]+\.[0-9]+')
+          | default('', true))
+         | regex_replace('^v', '') }}
+
+- name: "upgrade:validate | 断言未跨多个 minor（除非显式允许）"
+  ansible.builtin.assert:
+    that:
+      - (upgrade_version.split('.')[1] | int) - (upgrade_current_version.split('.')[1] | int) <= 1
+      - (upgrade_version.split('.')[0] | int) == (upgrade_current_version.split('.')[0] | int)
+    fail_msg: >-
+      目标 {{ upgrade_version }} 与当前 {{ upgrade_current_version }} 不是相邻 minor 升级；
+      跨多个 minor 需显式 -e upgrade_allow_minor_jump=true
+    quiet: true
+  when:
+    - upgrade_action == 'upgrade'
+    - upgrade_current_version | length > 0
+    - not (upgrade_allow_minor_jump | bool)
+
+- name: "upgrade:validate | 断言不降级（除非显式允许）"
+  ansible.builtin.assert:
+    that:
+      - (upgrade_version.split('.') | map('int') | list)
+        >= (upgrade_current_version.split('.') | map('int') | list)
+    fail_msg: >-
+      目标是降级：{{ upgrade_current_version }} → {{ upgrade_version }}（downgrade）；
+      需显式 -e upgrade_allow_downgrade=true 才允许
+    quiet: true
+  when:
+    - upgrade_action == 'upgrade'
+    - upgrade_current_version | length > 0
+    - not (upgrade_allow_downgrade | bool)
+
+- name: "upgrade:validate | 读取集群 /version（交叉校验，非本机二进制）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_kubectl }}"
+      - "--kubeconfig"
+      - "{{ upgrade_kubeconfig }}"
+      - "get"
+      - "--raw"
+      - "/version"
+  register: upgrade_cluster_version_raw
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - upgrade_action == 'upgrade'
+    - not (upgrade_is_worker | bool)
+    - upgrade_verify_cluster_version | bool
+
+- name: "upgrade:validate | 解析集群 gitVersion"
+  ansible.builtin.set_fact:
+    upgrade_cluster_version: >-
+      {{ (upgrade_cluster_version_raw.stdout | default('')
+          | regex_search('"gitVersion".*"v[0-9]+\.[0-9]+\.[0-9]+"')
+          | default('', true))
+         | regex_replace('^.*"v', '')
+         | regex_replace('"$', '') }}
+  when:
+    - upgrade_action == 'upgrade'
+    - not (upgrade_is_worker | bool)
+    - upgrade_verify_cluster_version | bool
+
+- name: "upgrade:validate | 判定是否需要升级（二进制版本 + 集群版本都等于目标才短路）"
+  ansible.builtin.set_fact:
+    upgrade_needed: >-
+      {{ (upgrade_current_version | length == 0)
+         or (upgrade_current_version != upgrade_version)
+         or ((upgrade_cluster_version | default('')) not in ['', upgrade_version]) }}
+
+- name: "upgrade:validate | 版本判定结果"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}：已安装 {{ upgrade_current_version | default('', true) or '未安装' }}
+      → 目标 v{{ upgrade_version }}；集群版本 {{ upgrade_cluster_version | default('未校验') }}；
+      需要升级 = {{ upgrade_needed }}
+
+- name: "upgrade:validate | 检查备份根目录（不存在 = 首次升级）"
+  ansible.builtin.stat:
+    path: "{{ upgrade_backup_root }}"
+  register: upgrade_backup_root_stat
+  check_mode: false
+  when: upgrade_action == 'upgrade'
+
+- name: "upgrade:validate | 列出既有备份目录（保留数裁剪）"
+  ansible.builtin.find:
+    paths: ["{{ upgrade_backup_root }}"]
+    file_type: directory
+    recurse: false
+  register: upgrade_backup_existing
+  check_mode: false
+  when:
+    - upgrade_action == 'upgrade'
+    - upgrade_backup_root_stat.stat.isdir | default(false)
+
+- name: "upgrade:validate | 裁剪超出保留数的旧备份（仅升级动作，check 模式跳过）"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ (upgrade_backup_existing.files | default([]) | map(attribute='path') | sort | reverse | list)
+       [upgrade_backup_retention | int:] }}
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - upgrade_action == 'upgrade'
+    - not ansible_check_mode

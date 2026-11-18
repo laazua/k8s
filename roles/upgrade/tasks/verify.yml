@@ -1,0 +1,147 @@
+---
+# =============================================================================
+# roles/upgrade:verify — 升级后验证
+#   1) 每个组件已安装二进制 `--version` == 目标版本
+#   2) 集群 `/version` 的 gitVersion == 目标版本（交叉校验；沙箱可关）
+#   3) 节点仍注册；Ready 条件存在（严格模式要求 Ready=True，非严格要求 False 时有 reason）
+#
+#   说明：沙箱无 systemd，进程由测试按 unit 重新拉起，因此 role 内的
+#   `/version` 断言在生产由 handler 重启后生效；沙箱由测试在重启后执行同一断言。
+# =============================================================================
+
+- name: "upgrade:verify | 读取已安装二进制版本（全部组件）"
+  ansible.builtin.command:
+    argv: >-
+      {{ [upgrade_bin_dir ~ '/' ~ item]
+         + (upgrade_component_version_args[item] | default(['--version'])) }}
+  register: upgrade_verify_versions
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  loop: "{{ upgrade_components }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:verify | 断言全部组件已安装版本 = v{{ upgrade_version }}"
+  ansible.builtin.assert:
+    that:
+      - item.rc | default(1) == 0
+      - ('v' ~ upgrade_version) in (item.stdout | default(''))
+    fail_msg: >-
+      {{ item.item }} 未达到目标版本：期望 v{{ upgrade_version }}，
+      实际 '{{ (item.stdout | default('')) | trim }}'（rc={{ item.rc | default('?') }}）
+    quiet: true
+  loop: "{{ upgrade_verify_versions.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:verify | 读取集群 /version（交叉校验）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_kubectl }}"
+      - "--kubeconfig"
+      - "{{ upgrade_kubeconfig }}"
+      - "--request-timeout=10s"
+      - "get"
+      - "--raw"
+      - "/version"
+  register: upgrade_verify_cluster_raw
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - not (upgrade_is_worker | bool)
+    - upgrade_verify_cluster_version | bool
+    - not ansible_check_mode
+
+- name: "upgrade:verify | 断言集群 gitVersion = v{{ upgrade_version }}"
+  ansible.builtin.assert:
+    that:
+      - upgrade_verify_cluster_raw.rc | default(1) == 0
+      - ('"v' ~ upgrade_version ~ '"') in (upgrade_verify_cluster_raw.stdout | default(''))
+    fail_msg: >-
+      集群 /version 未达到 v{{ upgrade_version }}：
+      {{ (upgrade_verify_cluster_raw.stdout | default('')) | trim }}
+    quiet: true
+  when:
+    - not (upgrade_is_worker | bool)
+    - upgrade_verify_cluster_version | bool
+    - not ansible_check_mode
+
+- name: "upgrade:verify | 读取节点状态（Ready / reason / kubeletVersion）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_kubectl }}"
+      - "--kubeconfig"
+      - "{{ upgrade_kubeconfig }}"
+      - "--request-timeout=10s"
+      - "get"
+      - "nodes"
+      - "--no-headers"
+      - "-o=custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type==\"Ready\")].status,REASON:.status.conditions[?(@.type==\"Ready\")].reason,VERSION:.status.nodeInfo.kubeletVersion"
+  register: upgrade_verify_nodes_raw
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - not (upgrade_is_worker | bool)
+    - not ansible_check_mode
+
+- name: "upgrade:verify | 汇总节点行"
+  ansible.builtin.set_fact:
+    upgrade_verify_node_rows: "{{ upgrade_verify_nodes_raw.stdout_lines | default([]) | map('split') | list }}"
+  when:
+    - not (upgrade_is_worker | bool)
+    - not ansible_check_mode
+
+- name: "upgrade:verify | 断言期望节点均已注册"
+  ansible.builtin.assert:
+    that:
+      - item in (upgrade_verify_node_rows | map('first') | list)
+    fail_msg: >-
+      节点 {{ item }} 未注册（当前节点：{{ upgrade_verify_node_rows | map('first') | join(',') }}）
+    quiet: true
+  loop: "{{ upgrade_expected_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - not (upgrade_is_worker | bool)
+    - not ansible_check_mode
+    - upgrade_expected_nodes | length > 0
+
+- name: "upgrade:verify | 断言全部节点 Ready（严格模式）"
+  ansible.builtin.assert:
+    that:
+      - item | length >= 3
+      - item[1] == 'True'
+    fail_msg: >-
+      节点 {{ item[0] | default('?') }} 未 Ready（Ready={{ item[1] | default('?') }},
+      reason={{ item[2] | default('?') }}）：严格模式要求全部节点 Ready=True
+    quiet: true
+  loop: "{{ upgrade_verify_node_rows }}"
+  loop_control:
+    label: "{{ item | first | default('?') }}"
+  when:
+    - not (upgrade_is_worker | bool)
+    - upgrade_require_ready_nodes | bool
+    - not ansible_check_mode
+
+- name: "upgrade:verify | 断言 Ready 条件存在且可诊断（非严格模式）"
+  ansible.builtin.assert:
+    that:
+      - item | length >= 3
+      - item[1] in ['True', 'False']
+      - item[1] == 'True' or item[2] not in ['', '<none>']
+    fail_msg: >-
+      节点 {{ item[0] | default('?') }} 缺少可诊断的 Ready 条件
+      （Ready={{ item[1] | default('?') }}, reason={{ item[2] | default('?') }}）
+    quiet: true
+  loop: "{{ upgrade_verify_node_rows }}"
+  loop_control:
+    label: "{{ item | first | default('?') }}"
+  when:
+    - not (upgrade_is_worker | bool)
+    - not (upgrade_require_ready_nodes | bool)
+    - not ansible_check_mode

@@ -1,0 +1,199 @@
+---
+# =============================================================================
+# roles/upgrade:rollback — 按备份回滚（旧二进制 + etcd 快照 + 证书）
+#
+#   顺序（安全优先）：
+#     1) （生产）停止服务；沙箱要求 upgrade_rollback_etcd_offline_ack=true
+#     2) etcd：etcdctl snapshot restore 到临时目录 → 校验 member/snap/db →
+#        旧数据目录改名 <data_dir>.pre-rollback-<ts> → 恢复目录换入 → 复原属主/权限
+#     3) 旧二进制回装（备份 bin/ 中的全部文件）
+#     4) kubeconfig / 节点配置回装（按 basename 映射回原路径）
+#     5) 证书树回装（备份 pki/ 覆盖当前 PKI）
+#     6) （生产）启动服务
+#
+#   所有写入任务 `not ansible_check_mode`；读取任务 `check_mode: false`。
+# =============================================================================
+
+- name: "upgrade:rollback | 停止服务（生产；沙箱由测试预先停止）"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ upgrade_service_names + ([upgrade_etcd_service_name] if upgrade_backup_etcd | bool else []) }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - upgrade_manage_service | bool
+    - not (upgrade_rollback_etcd_offline_ack | bool)
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 生成回滚标识（UTC 时间戳）"
+  ansible.builtin.command:
+    argv: ["date", "-u", "+%Y%m%dT%H%M%SZ"]
+  register: upgrade_rollback_ts
+  changed_when: false
+  check_mode: false
+
+- name: "upgrade:rollback | 计算恢复目录与旧数据目录后缀"
+  ansible.builtin.set_fact:
+    upgrade_rollback_stamp: "{{ upgrade_rollback_ts.stdout | trim }}"
+    upgrade_rollback_restore_dir: "{{ upgrade_rollback_etcd_data_dir }}.restore-{{ upgrade_rollback_ts.stdout | trim }}"
+
+- name: "upgrade:rollback | etcd 快照恢复（etcdctl snapshot restore 到临时目录）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_etcdctl }}"
+      - "snapshot"
+      - "restore"
+      - "{{ upgrade_rollback_dir }}/etcd-snapshot.db"
+      - "--name={{ upgrade_rollback_etcd_member_name }}"
+      - "--initial-cluster={{ upgrade_rollback_etcd_initial_cluster }}"
+      - "--initial-advertise-peer-urls={{ upgrade_rollback_etcd_initial_peer_url }}"
+      - "--data-dir={{ upgrade_rollback_restore_dir }}"
+  register: upgrade_rollback_restore
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 检查恢复出的数据文件"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_restore_dir }}/member/snap/db"
+  register: upgrade_rollback_restored_db
+  check_mode: false
+  when: upgrade_backup_etcd | bool
+
+- name: "upgrade:rollback | 断言恢复目录可用（member/snap/db 非空）"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_restored_db.stat.exists
+      - upgrade_rollback_restored_db.stat.size | int > 0
+    fail_msg: >-
+      etcd 快照恢复失败：{{ upgrade_rollback_restore_dir }}/member/snap/db 缺失或为空
+    quiet: true
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 检查现有 etcd 数据目录"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_etcd_data_dir }}"
+  register: upgrade_rollback_data_dir
+  check_mode: false
+  when: upgrade_backup_etcd | bool
+
+- name: "upgrade:rollback | 旧数据目录改名（pre-rollback 备份，不删除）"
+  ansible.builtin.command:
+    argv:
+      - "mv"
+      - "{{ upgrade_rollback_etcd_data_dir }}"
+      - "{{ upgrade_rollback_etcd_data_dir }}.pre-rollback-{{ upgrade_rollback_stamp }}"
+  when:
+    - upgrade_backup_etcd | bool
+    - upgrade_rollback_data_dir.stat.exists | default(false)
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 恢复目录换入数据目录"
+  ansible.builtin.command:
+    argv:
+      - "mv"
+      - "{{ upgrade_rollback_restore_dir }}"
+      - "{{ upgrade_rollback_etcd_data_dir }}"
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 恢复 etcd 数据目录属主/权限"
+  ansible.builtin.file:
+    path: "{{ upgrade_rollback_etcd_data_dir }}"
+    state: directory
+    recurse: true
+    owner: "{{ upgrade_rollback_etcd_data_owner }}"
+    group: "{{ upgrade_rollback_etcd_data_group }}"
+    mode: "{{ upgrade_rollback_etcd_data_mode }}"
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 列出备份中的旧二进制"
+  ansible.builtin.find:
+    paths: ["{{ upgrade_rollback_dir }}/bin"]
+    file_type: file
+    recurse: false
+  register: upgrade_rollback_bins
+  check_mode: false
+
+- name: "upgrade:rollback | 断言备份含旧二进制"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_bins.files | default([]) | length > 0
+    fail_msg: >-
+      备份 {{ upgrade_rollback_dir }}/bin 中没有旧二进制，无法回滚
+    quiet: true
+
+- name: "upgrade:rollback | 回装旧二进制（{{ item.path | basename }}）"
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ upgrade_bin_dir }}/{{ item.path | basename }}"
+    remote_src: true
+    mode: "0755"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  loop: "{{ upgrade_rollback_bins.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:rollback | 列出备份中的 kubeconfig"
+  ansible.builtin.find:
+    paths: ["{{ upgrade_rollback_dir }}/kubeconfigs"]
+    file_type: file
+    recurse: false
+  register: upgrade_rollback_kubeconfigs
+  check_mode: false
+
+- name: "upgrade:rollback | 回装 kubeconfig / 节点配置（{{ item | basename }}）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_rollback_dir }}/kubeconfigs/{{ item | basename }}"
+    dest: "{{ upgrade_root_prefix }}{{ item }}"
+    remote_src: true
+    mode: preserve
+  loop: "{{ upgrade_kubeconfig_files }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - (item | basename) in (upgrade_rollback_kubeconfigs.files | default([]) | map(attribute='path') | map('basename') | list)
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 检查备份证书树"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_dir }}/pki"
+  register: upgrade_rollback_pki
+  check_mode: false
+
+- name: "upgrade:rollback | 回装证书树（pki/）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_rollback_dir }}/pki/"
+    dest: "{{ upgrade_pki_dir }}/"
+    remote_src: true
+    mode: preserve
+  when:
+    - upgrade_rollback_pki.stat.exists | default(false)
+    - upgrade_rollback_pki.stat.isdir | default(false)
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 启动服务（生产）"
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop: "{{ ([upgrade_etcd_service_name] if upgrade_backup_etcd | bool else []) + upgrade_service_names }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - upgrade_manage_service | bool
+    - not ansible_check_mode
+
+- name: "upgrade:rollback | 回滚完成"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} 已从 {{ upgrade_rollback_dir }} 回滚
+      （二进制 {{ upgrade_rollback_bins.files | default([]) | length }} 个；
+      etcd 快照恢复 = {{ upgrade_backup_etcd | bool }}）

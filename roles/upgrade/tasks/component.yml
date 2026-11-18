@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# roles/upgrade:binaries — 单组件子流程（由 binaries.yml 以 loop 引入）
+#   输入：upgrade_component
+#   幂等：制品/已安装二进制内容一致 → changed=0；否则 changed=1 并通知重启
+# =============================================================================
+
+- name: "upgrade:binaries | 获取 {{ upgrade_component }} 目标制品（复用 download role）"
+  ansible.builtin.include_role:
+    name: download
+  vars:
+    download_cache_dir: "{{ upgrade_artifact_dir }}"
+    download_timeout: "{{ upgrade_download_timeout }}"
+    download_retries: "{{ upgrade_download_retries }}"
+    download_retry_delay: "{{ upgrade_download_retry_delay }}"
+    download_items:
+      - name: "{{ upgrade_component }}"
+        url: >-
+          {{ upgrade_download_url_base }}/v{{ upgrade_version }}/bin/linux/{{ upgrade_arch }}/{{ upgrade_component }}
+        sha256: "{{ (upgrade_known_sha256[upgrade_version] | default({}))[upgrade_component] | default('') }}"
+        mode: "0644"
+  tags: ["upgrade", "upgrade:binaries"]
+
+- name: "upgrade:binaries | 计算 {{ upgrade_component }} 制品 sha256"
+  ansible.builtin.command:
+    argv: ["sha256sum", "{{ upgrade_artifact_dir }}/{{ upgrade_component }}"]
+  register: upgrade_component_sha
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "upgrade:binaries | 断言 {{ upgrade_component }} 制品 sha256 = 官方固定值"
+  ansible.builtin.assert:
+    that:
+      - upgrade_component_sha.rc | default(1) == 0
+      - (upgrade_component_sha.stdout | default('') | trim | split() | first)
+        == ((upgrade_known_sha256[upgrade_version] | default({}))[upgrade_component] | default(''))
+    fail_msg: >-
+      {{ upgrade_component }} 制品 sha256 校验失败：
+      期望 {{ (upgrade_known_sha256[upgrade_version] | default({}))[upgrade_component] | default('未固定') }}，
+      实际 {{ (upgrade_component_sha.stdout | default('')) | trim }}；
+      制品 {{ upgrade_artifact_dir }}/{{ upgrade_component }}
+    quiet: true
+
+- name: "upgrade:binaries | 准备 {{ upgrade_component }} 可执行探针（缓存制品可能无执行位）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_artifact_dir }}/{{ upgrade_component }}"
+    dest: "{{ upgrade_staging_dir }}/{{ upgrade_component }}"
+    remote_src: true
+    mode: "0755"
+  when: not ansible_check_mode
+
+- name: "upgrade:binaries | 读取 {{ upgrade_component }} 制品版本"
+  ansible.builtin.command:
+    argv: >-
+      {{ [upgrade_staging_dir ~ '/' ~ upgrade_component]
+         + (upgrade_component_version_args[upgrade_component] | default(['--version'])) }}
+  register: upgrade_component_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "upgrade:binaries | 断言 {{ upgrade_component }} 制品版本 = v{{ upgrade_version }}"
+  ansible.builtin.assert:
+    that:
+      - upgrade_component_probe.rc | default(1) == 0
+      - ('v' ~ upgrade_version) in (upgrade_component_probe.stdout | default(''))
+    fail_msg: >-
+      {{ upgrade_component }} 制品版本不符：期望 v{{ upgrade_version }}，
+      实际输出 '{{ (upgrade_component_probe.stdout | default('')) | trim }}'
+      （rc={{ upgrade_component_probe.rc | default('?') }}，
+      stderr='{{ (upgrade_component_probe.stderr | default('')) | trim }}'）
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "upgrade:binaries | 读取已安装 {{ upgrade_component }} 版本"
+  ansible.builtin.command:
+    argv: >-
+      {{ [upgrade_bin_dir ~ '/' ~ upgrade_component]
+         + (upgrade_component_version_args[upgrade_component] | default(['--version'])) }}
+  register: upgrade_component_installed
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "upgrade:binaries | 判定 {{ upgrade_component }} 是否需要变更"
+  ansible.builtin.set_fact:
+    upgrade_component_needs_change: >-
+      {{ (upgrade_component_installed.rc | default(1)) != 0
+         or (('v' ~ upgrade_version) not in (upgrade_component_installed.stdout | default(''))) }}
+
+- name: "upgrade:binaries | 安装 {{ upgrade_component }}（内容不变 → changed=0）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_artifact_dir }}/{{ upgrade_component }}"
+    dest: "{{ upgrade_bin_dir }}/{{ upgrade_component }}"
+    remote_src: true
+    mode: "0755"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  notify: "upgrade | 重启变更的组件"
+  when: not ansible_check_mode
+
+- name: "upgrade:binaries | 计划变更 {{ upgrade_component }}（check 模式 changed 可观测）"
+  ansible.builtin.debug:
+    msg: >-
+      {{ upgrade_component }}：{{ (upgrade_component_installed.stdout | default('未安装')) | trim }}
+      → v{{ upgrade_version }}
+  changed_when: upgrade_component_needs_change | bool

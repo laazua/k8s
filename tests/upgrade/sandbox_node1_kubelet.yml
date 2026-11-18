@@ -1,0 +1,35 @@
+---
+# =============================================================================
+#  T015 沙箱工作节点 node1 — kubelet 段
+#  前置：sandbox_node1.yml 已渲染 containerd，且测试已从 unit 拉起它（socket 存在）。
+#   - 证书消费集群 PKI 分发到 node1 的 kubelet 证书（CN=system:node:node1）；
+#   - 端口 20250/20248（不占 10250/10248）；
+#   - 不调用 systemctl：进程由测试从渲染出的 unit ExecStart 拉起；
+#   - failSwapOn=false；放宽磁盘驱逐阈值（宿主根盘余量 <15%，T013 教训）。
+# =============================================================================
+- name: T015 sandbox node1 kubelet
+  hosts: k8s_node
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    node_root: "{{ sandbox_root }}/node1"
+    kubelet_root_prefix: "{{ node_root }}"
+    kubelet_manage_service: false
+    kubelet_cgroup_driver: "{{ container_runtime_cgroup_driver | default('systemd') }}"
+    kubelet_container_runtime_endpoint: "unix://{{ node_root }}/run/containerd/containerd.sock"
+    kubelet_pki_dir: "{{ node_root }}/etc/kubernetes/pki"
+    kubelet_client_ca_file: "{{ node_root }}/etc/kubernetes/pki/ca.crt"
+    kubelet_client_cert_file: "{{ node_root }}/etc/kubernetes/pki/kubelet/{{ inventory_hostname }}.crt"
+    kubelet_client_key_file: "{{ node_root }}/etc/kubernetes/pki/kubelet/{{ inventory_hostname }}.key"
+    kubelet_node_ip: >-
+      {{ lookup('pipe', "ip -4 route get 1.1.1.1 | awk '{print $7; exit}'") }}
+    kubelet_fail_swap_on: false
+    kubelet_address: >-
+      {{ lookup('pipe', "ip -4 route get 1.1.1.1 | awk '{print $7; exit}'") }}
+    kubelet_port: 20250
+    kubelet_healthz_port: 20248
+    kubelet_extra_args:
+      - "--eviction-hard=imagefs.available<1%,nodefs.available<1%,imagefs.inodesFree<1%,nodefs.inodesFree<1%"
+  roles:
+    - role: kubelet

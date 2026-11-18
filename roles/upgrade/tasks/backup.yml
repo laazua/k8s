@@ -1,0 +1,182 @@
+---
+# =============================================================================
+# roles/upgrade:backup — 升级前自动备份（硬前置，失败即中止）
+#
+#   <backup_root>/<UTC 时间戳>-<hostname>/
+#     ├── etcd-snapshot.db     真实 etcdctl snapshot save（单成员/多成员一致）
+#     ├── bin/                 当前版本二进制（回滚来源）
+#     ├── pki/                 整棵证书树（含私钥，目录 0700）
+#     ├── kubeconfigs/         admin/controller-manager/scheduler 或 kubelet.conf/config.yaml
+#     ├── MANIFEST.txt         原版本/目标版本/主机/组件/etcd endpoints
+#     └── SHA256SUMS           全量内容哈希（回滚前用 sha256sum -c 强校验）
+#
+#   写入任务全部 `not ansible_check_mode`；读取任务 `check_mode: false`。
+# =============================================================================
+
+- name: "upgrade:backup | 生成备份标识（UTC 时间戳 + 主机名）"
+  ansible.builtin.command:
+    argv: ["date", "-u", "+%Y%m%dT%H%M%SZ"]
+  register: upgrade_backup_ts
+  changed_when: false
+  check_mode: false
+
+- name: "upgrade:backup | 计算备份目录"
+  ansible.builtin.set_fact:
+    upgrade_backup_id: "{{ upgrade_backup_ts.stdout | trim }}-{{ inventory_hostname }}"
+    upgrade_backup_dir: "{{ upgrade_backup_root }}/{{ upgrade_backup_ts.stdout | trim }}-{{ inventory_hostname }}"
+
+- name: "upgrade:backup | 创建备份目录（0700，含私钥）"
+  ansible.builtin.file:
+    path: "{{ upgrade_backup_dir }}/{{ item }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  loop: ["", "bin", "pki", "kubeconfigs"]
+  loop_control:
+    label: "{{ upgrade_backup_dir | default(upgrade_backup_root) }}/{{ item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | etcd 快照（etcdctl snapshot save，真实快照）"
+  ansible.builtin.command:
+    argv:
+      - "{{ upgrade_etcdctl }}"
+      - "--endpoints={{ upgrade_etcd_endpoints | join(',') }}"
+      - "--cacert={{ upgrade_etcd_ca_file }}"
+      - "--cert={{ upgrade_etcd_cert_file }}"
+      - "--key={{ upgrade_etcd_key_file }}"
+      - "--command-timeout={{ upgrade_etcd_snapshot_timeout }}s"
+      - "snapshot"
+      - "save"
+      - "{{ upgrade_backup_dir }}/etcd-snapshot.db"
+  register: upgrade_backup_snapshot
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:backup | 备份证书树（pki/，含私钥）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_pki_dir }}/"
+    dest: "{{ upgrade_backup_dir }}/pki/"
+    remote_src: true
+    mode: preserve
+  when:
+    - upgrade_backup_pki | bool
+    - not ansible_check_mode
+
+- name: "upgrade:backup | 备份 kubeconfig（{{ item | basename }}）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_root_prefix }}{{ item }}"
+    dest: "{{ upgrade_backup_dir }}/kubeconfigs/{{ item | basename }}"
+    remote_src: true
+    mode: preserve
+  loop: "{{ upgrade_kubeconfig_files }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 备份当前版本二进制（bin/{{ item }}）"
+  ansible.builtin.copy:
+    src: "{{ upgrade_bin_dir }}/{{ item }}"
+    dest: "{{ upgrade_backup_dir }}/bin/{{ item }}"
+    remote_src: true
+    mode: "0755"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  loop: "{{ upgrade_components }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 写入 MANIFEST.txt（原版本 / 目标版本 / 主机 / 组件）"
+  ansible.builtin.copy:
+    content: |
+      version: {{ upgrade_version }}
+      previous_version: {{ upgrade_current_version | default('', true) }}
+      host: {{ inventory_hostname }}
+      backup_id: {{ upgrade_backup_id }}
+      created_utc: {{ upgrade_backup_ts.stdout | trim }}
+      role: {{ 'worker' if upgrade_is_worker | bool else 'control-plane' }}
+      components: {{ upgrade_components | join(',') }}
+      etcd_endpoints: {{ upgrade_etcd_endpoints | join(',') }}
+      etcd_snapshot: {{ upgrade_backup_etcd | bool }}
+      pki: {{ upgrade_backup_pki | bool }}
+    dest: "{{ upgrade_backup_dir }}/MANIFEST.txt"
+    mode: "0600"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 列出备份文件（用于 SHA256SUMS）"
+  ansible.builtin.find:
+    paths: ["{{ upgrade_backup_dir }}"]
+    file_type: file
+    recurse: true
+  register: upgrade_backup_files
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 计算备份文件 sha256（相对路径，排序稳定）"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['sha256sum'] + (upgrade_backup_files.files | default([])
+         | map(attribute='path')
+         | map('regex_replace', '^' ~ (upgrade_backup_dir | regex_escape) ~ '/', '')
+         | sort | list) }}
+    chdir: "{{ upgrade_backup_dir }}"
+  register: upgrade_backup_sha
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 写入 SHA256SUMS"
+  ansible.builtin.copy:
+    content: "{{ upgrade_backup_sha.stdout }}"
+    dest: "{{ upgrade_backup_dir }}/SHA256SUMS"
+    mode: "0600"
+    owner: "{{ upgrade_root_owner }}"
+    group: "{{ upgrade_root_group }}"
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 校验备份完整性（sha256sum -c，纵深防御）"
+  ansible.builtin.command:
+    argv: ["sha256sum", "-c", "SHA256SUMS", "--quiet"]
+    chdir: "{{ upgrade_backup_dir }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 检查 etcd 快照文件"
+  ansible.builtin.stat:
+    path: "{{ upgrade_backup_dir }}/etcd-snapshot.db"
+  register: upgrade_backup_snapshot_stat
+  check_mode: false
+  when: upgrade_backup_etcd | bool
+
+- name: "upgrade:backup | 断言 etcd 快照非空（空快照 = 备份失败）"
+  ansible.builtin.assert:
+    that:
+      - upgrade_backup_snapshot_stat.stat.exists
+      - upgrade_backup_snapshot_stat.stat.size | int > 1024
+    fail_msg: >-
+      etcd 快照缺失或为空（{{ upgrade_backup_snapshot_stat.stat.size | default(0) }} 字节）：
+      升级前备份失败，拒绝继续升级
+    quiet: true
+  when:
+    - upgrade_backup_etcd | bool
+    - not ansible_check_mode
+
+- name: "upgrade:backup | 断言备份文件数达标"
+  ansible.builtin.assert:
+    that:
+      - upgrade_backup_files.files | default([]) | length >= (upgrade_backup_min_files | int)
+    fail_msg: >-
+      备份目录 {{ upgrade_backup_dir }} 文件数不足（{{ upgrade_backup_files.files | default([]) | length }}
+      < {{ upgrade_backup_min_files }}）：备份不完整，拒绝继续升级
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "upgrade:backup | 备份完成"
+  ansible.builtin.debug:
+    msg: >-
+      已备份到 {{ upgrade_backup_dir }}
+      （文件 {{ upgrade_backup_files.files | default([]) | length }} 个，sha256sum -c 通过）
+  when: not ansible_check_mode

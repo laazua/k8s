@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# roles/upgrade:rollback_validate — 回滚前置校验（零副作用）
+#   备份目录必须存在、MANIFEST.txt / SHA256SUMS 必须齐全、
+#   `sha256sum -c` 必须通过（被篡改的备份直接拒绝），
+#   需要回滚 etcd 时快照必须非空且 etcd 必须已离线（显式 ack 或由 role 停服务）。
+#   全部校验通过之前不覆盖任何已安装文件。
+# =============================================================================
+
+- name: "upgrade:rollback | 断言已指定备份目录"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_dir | length > 0
+    fail_msg: >-
+      回滚必须显式指定备份目录：-e upgrade_rollback_dir=<备份目录>
+      （升级时自动备份到 {{ upgrade_backup_root }}）
+    quiet: true
+
+- name: "upgrade:rollback | 检查备份目录"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_dir }}"
+  register: upgrade_rollback_stat
+  check_mode: false
+
+- name: "upgrade:rollback | 断言备份目录存在且是目录"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_stat.stat.exists
+      - upgrade_rollback_stat.stat.isdir
+    fail_msg: >-
+      回滚备份目录不存在：{{ upgrade_rollback_dir }}。
+      回滚只能基于升级时自动产生的备份（backup 目录），无法凭空回滚
+    quiet: true
+
+- name: "upgrade:rollback | 检查 MANIFEST.txt"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_dir }}/MANIFEST.txt"
+  register: upgrade_rollback_manifest
+  check_mode: false
+
+- name: "upgrade:rollback | 断言 MANIFEST.txt 存在"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_manifest.stat.exists
+    fail_msg: >-
+      备份缺少 MANIFEST.txt：{{ upgrade_rollback_dir }}（备份不完整，拒绝回滚）
+    quiet: true
+
+- name: "upgrade:rollback | 检查 SHA256SUMS"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_dir }}/SHA256SUMS"
+  register: upgrade_rollback_sums
+  check_mode: false
+
+- name: "upgrade:rollback | 断言 SHA256SUMS 存在"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_sums.stat.exists
+    fail_msg: >-
+      备份缺少 SHA256SUMS：{{ upgrade_rollback_dir }}。
+      无法证明备份未被篡改，拒绝回滚
+    quiet: true
+
+- name: "upgrade:rollback | 校验备份 sha256（sha256sum -c，篡改即失败）"
+  ansible.builtin.command:
+    argv: ["sha256sum", "-c", "SHA256SUMS", "--quiet"]
+    chdir: "{{ upgrade_rollback_dir }}"
+  changed_when: false
+
+- name: "upgrade:rollback | 检查 etcd 快照"
+  ansible.builtin.stat:
+    path: "{{ upgrade_rollback_dir }}/etcd-snapshot.db"
+  register: upgrade_rollback_snapshot
+  check_mode: false
+  when: upgrade_backup_etcd | bool
+
+- name: "upgrade:rollback | 断言 etcd 快照存在且非空"
+  ansible.builtin.assert:
+    that:
+      - upgrade_rollback_snapshot.stat.exists
+      - upgrade_rollback_snapshot.stat.size | int > 1024
+    fail_msg: >-
+      回滚需要 etcd 快照，但 {{ upgrade_rollback_dir }}/etcd-snapshot.db
+      缺失或为空（{{ upgrade_rollback_snapshot.stat.size | default(0) }} 字节）
+    quiet: true
+  when: upgrade_backup_etcd | bool
+
+- name: "upgrade:rollback | 断言 etcd 已离线（显式 ack 或由 role 停止服务）"
+  ansible.builtin.assert:
+    that:
+      - (upgrade_rollback_etcd_offline_ack | bool) or (upgrade_manage_service | bool)
+    fail_msg: >-
+      替换 etcd 数据目录前必须停止 etcd：请先停 etcd 并设置
+      -e upgrade_rollback_etcd_offline_ack=true（或 upgrade_manage_service=true 由 role 停止）
+    quiet: true
+  when: upgrade_backup_etcd | bool

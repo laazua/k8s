@@ -1,0 +1,24 @@
+---
+# =============================================================================
+#  T015 沙箱控制面（CM / scheduler 渲染即可）
+#   - 与 T007 同一范式：只渲染 unit/配置，不启进程（共享机禁 systemctl）；
+#   - 目的是让「控制面组件二进制版本」在升级前后可被真实 `--version` 断言；
+#   - apiserver 由 sandbox_stack.yml（import ../node/sandbox_apiserver.yml）负责。
+# =============================================================================
+- name: T015 sandbox kube-controller-manager / kube-scheduler 渲染
+  hosts: k8s_master
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    kube_controller_manager_root_prefix: "{{ sandbox_root }}"
+    kube_scheduler_root_prefix: "{{ sandbox_root }}"
+    kube_controller_manager_manage_service: false
+    kube_scheduler_manage_service: false
+    kube_controller_manager_bind_address: 127.0.0.1
+    kube_controller_manager_secure_port: 20257
+    kube_scheduler_bind_address: 127.0.0.1
+    kube_scheduler_secure_port: 20259
+  roles:
+    - role: kube-controller-manager
+    - role: kube-scheduler

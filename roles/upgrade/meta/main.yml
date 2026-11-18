@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: upgrade
+  author: harness-generator
+  description: 版本升级与回滚（升级前自动备份 etcd/证书 + 滚动替换二进制 + 真实版本判定）
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: ["11", "12"]
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+  galaxy_tags:
+    - kubernetes
+    - upgrade
+    - rollback
+    - etcd
+    - backup
+
+dependencies: []

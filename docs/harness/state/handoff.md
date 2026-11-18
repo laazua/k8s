@@ -9,6 +9,35 @@
 
 ---
 
+## [2026-11-18] Generator · T015（版本升级与回滚）→ **ready_for_eval**
+
+- **交付**：`roles/upgrade`（`validate → backup → binaries → verify`，回滚走
+  `rollback_validate → rollback`，同一 role 由 `upgrade_action` 分派）+ **真实入口**
+  `playbooks/upgrade.yml`（两 play：`hosts: k8s_master` / `hosts: k8s_node`，各 `serial: 1`，
+  tags 全接线）+ `tests/upgrade/`（**268 断言**，SKIP=2 单列）+ Makefile `test-upgrade` 并挂入 `make test`。
+- **验收面**：真实 `etcdctl snapshot save` + PKI + kubeconfig + 旧二进制 → 时间戳目录
+  （`MANIFEST.txt` + `SHA256SUMS`，失败即中止）；版本变更以**本机二进制 `--version`** 为准、
+  集群 `/version` 交叉校验；回滚 = 旧二进制 + **真实 `etcdctl snapshot restore` + 数据目录换入**
+  + 证书（内容哈希逐项可证，升级期写入的 ConfigMap 随 etcd 回退消失）；幂等 `changed=0`；
+  7 类 fail-fast；`--check` rc=0/changed>0 且不落盘；宿主内容级零污染（只停本次新建 kubepods unit）。
+- **门禁**：`make test-upgrade` **268/0/2** ×2（613s / 612s；逐条 diff 仅 bash 打印的 PID 4 行）；
+  `make lint` rc=0；全量 `make test` rc=0 / **4899s**，15 套件 = **2473 PASS / 0 FAIL**
+  （`27/39/59/100/225/186/269/291/208/229/135/175/231/268/31`）。
+- **红 → 绿（5 组修复，见契约 §8.1）**：①制品探针不可执行（缓存 0644）→ 复制到 staging 0755，
+  `kubectl` 改 `version --client`；②备份任务在 rollback/`--check` 下的模板错误（`loop_control.label`
+  引用被跳过的 `upgrade_backup_dir`、`find` 目录不存在）；③etcd restore 需
+  `--initial-cluster` + `--initial-advertise-peer-urls` 一致；④测试资产：`-e` 传 list 改 JSON、
+  升级/回滚后加 `wait_node_version`；⑤沙箱 kubelet 1.32 拒绝 loopback `--node-ip` → 改用默认路由源地址。
+- **门禁首次跑踩坑（非代码缺陷）**：宿主 `/` 仅剩 1.8G 时沙箱写盘失败 → 级联 22 条假 FAIL；
+  清理旧沙箱后同代码全绿。已在套件加**磁盘前置守卫**（`/tmp/opencode` <6G 直接 FAIL 中止），
+  评估者复跑前请确认 ≥6G（一次沙箱约 3.2G）。
+- **受限**（契约 §5/§9）：单宿主单节点、无 CNI/镜像（node1 Ready=False 有 reason）、无 systemd 启停、
+  etcd 单成员、未做系统化变异、`upgrade_manage_service=true` 路径未验证。
+- **状态**：`contract_status: ready_for_eval` / `eval_round: 1` / `next_action: "eval T015"` /
+  roadmap T015 → `in-progress`。**下一步**：Evaluator 独立复现（优先 6 颗牙齿，见契约 §10）。
+
+---
+
 ## [2026-11-17] Planner · T014 r1 评估收口 → 推进 T015，新增 T018
 
 - **决策**：T014 r1 = PASS **予以接受**；报告 `reports/T014-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
