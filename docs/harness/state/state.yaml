@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T017      # 例如 T001
-contract_status: accepted  # T015 r1 = PASS（accepted）；T017 契约待建立
-eval_round: 1          # T015 r1 = PASS
-next_action: "build T017"
+contract_status: ready_for_eval  # T017 build 完成，待 eval
+eval_round: 1          # T017 第 1 轮
+next_action: "eval T017"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
@@ -32,6 +32,16 @@ defaults:
 
 blockers: []          # 无阻塞；T015 r1 = PASS 已接受；T017/T018/T019 为 T016 前置          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
 notes: |
+  **T017（e2e real 模式健壮性）build 完成 → ready_for_eval（2026-11-19）**：
+  - 修复 T012 r1 的 D1/D2/D3 + D4/D5/D6/D9（+D7 的 slice 清理粒度）：
+    缺值一律 rc=2；real 模式 API 不可达/查询 rc≠0/节点或 Pod 空集 → FAIL；
+    `--image` Job 创建被拒 → FAIL（带 API stderr 摘要）；`RESULT` 移到 cleanup 之后，
+    cleanup 失败逐条 `FAIL 清理失败: ...` 并计入 RESULT；`--static-only --mode real` 不再要求 kubeconfig；
+    Service ClusterIP 与 CoreDNS 版本改从 role defaults 读取（`E2E_SERVICE_IP`/`E2E_COREDNS_VERSION` 可覆盖并校验）。
+  - TDD 红：契约套件 **43 PASS / 15 FAIL**（58 条）→ 绿 **59/0** ×2（内层 sandbox 仍 30/0/3）。
+  - stub `kubectl` 负例三态（unreachable / empty-nodes / job-forbidden）；cleanup 失败用
+    `sudo` 故障注入动态验证（rc≠0 + fail≥1 + 目录仍在）。
+  - 门禁：`make lint` rc=0；`test-taints` 175/0；`test-add-node` 231/0/2；全量 `make test` 未重跑（成本）。
   **T015（版本升级与回滚）r1 = PASS（accepted）**，被测 `99af962`（评估 `2026-11-19`，
   报告 `docs/harness/state/reports/T015-r1.md`）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
@@ -165,4 +175,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-19T03:10:00Z"   # ISO8601
+updated: "2026-11-19T04:05:00Z"   # ISO8601

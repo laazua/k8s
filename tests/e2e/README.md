@@ -27,8 +27,12 @@ FAIL=0
 SKIP=3
 ```
 
-退出码：`0` 无 FAIL；`1` 存在 FAIL；`2` 用法错误。
+退出码：`0` 无 FAIL；`1` 存在 FAIL；`2` 用法错误（含选项缺值）。
 `SKIP` 表示环境受限未验证，不计入通过数，但仍需在报告中保留。
+
+`RESULT` 在清理动作**之后**打印：清理失败会记为一条 `FAIL 清理失败: ...` 并让
+`RESULT=FAIL`。real 模式下 API 不可达、`kubectl` 返回非 0、节点/Pod 列表为空、
+`--image` Job 创建被拒均判 `FAIL`（不会退化为 SKIP 或用空集判通过）。
 
 ## 沙箱模式覆盖
 
@@ -38,7 +42,7 @@ SKIP=3
 | 控制面 | 单成员 TLS etcd healthy；`/healthz=ok`；admin `can-i '*' '*'` |
 | 节点 | 真实 containerd（CRI `RuntimeReady`）+ kubelet 注册 `node1`；Ready 条件与 reason |
 | 附加组件 | `kubelet.conf` 0600 root:root、身份 `system:node:node1`、RBAC apply 与 `can-i` 正反例 |
-| DNS | CoreDNS 1.11.3 官方二进制按 role 渲染的 Corefile 解析 `kubernetes.default` → `10.96.0.1` |
+| DNS | CoreDNS 官方二进制（版本取 role defaults）按 role 渲染的 Corefile 解析 `kubernetes.default` → `k8s_service_cidr` 首个 IP（默认 `10.96.0.1`） |
 | 受限 | 系统 Pod Running、kube-dns ClusterIP、跨节点 Pod（无镜像，SKIP） |
 
 ## 环境变量
@@ -47,6 +51,8 @@ SKIP=3
 | --- | --- | --- |
 | `T012_TEST_CACHE` | `/tmp/opencode/k8s-cache` | 官方制品缓存（首次运行需外网，自动预取并校验 sha256） |
 | `E2E_EXPECT_NODES` | `1` | real 模式要求的最小节点数 |
+| `E2E_SERVICE_IP` | 由 `k8s_service_cidr` 首个 IP 推导 | 覆盖 Service ClusterIP 期望值（须落在 `k8s_service_cidr` 内，否则 FAIL） |
+| `E2E_COREDNS_VERSION` | `roles/cluster-addons` 的 `cluster_addons_coredns_version` | 覆盖 CoreDNS 版本；新版本须先在该脚本 `CD_SHA_MAP` 登记 sha256 |
 | `KUBECTL` | `kubectl` | real 模式使用的 kubectl |
 | `ANSIBLE_PLAYBOOK` | 自动探测 | ansible-playbook 路径 |
 

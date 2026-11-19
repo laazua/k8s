@@ -9,6 +9,27 @@
 
 ---
 
+## [2026-11-19] Generator · T017（e2e real 模式健壮性）→ **ready_for_eval**
+
+- **交付**（仅 `tests/e2e/`，不改 sandbox 语义）：
+  - `smoke.sh`：`need_val` 参数校验（缺值/值像选项 → rc=2，含 `--mode --image x`）；
+    `run_real` 重写（healthz 失败即止；`-o json` + python3 一次取回，rc≠0 / 空集 → FAIL；
+    Ready 由 `.status.conditions` 解析；`--image` Job 创建被拒 → FAIL 带 API stderr 摘要）；
+    `cleanup()` 幂等 + 每步失败 `bad "清理失败: ..."`，`RESULT` 移到 cleanup 之后；
+    `kubepods` 只停前后差集新增 slice；Service ClusterIP / CoreDNS 版本改读 role defaults
+    （`E2E_SERVICE_IP` / `E2E_COREDNS_VERSION` 覆盖并校验，`CD_SHA_MAP` 显式登记 sha256）。
+  - `test_smoke_contract.sh`：31 → **59** 断言（缺值 4 组、`--static-only --mode real`、
+    stub kubectl 三态负例、SKIP 恰好 3 条且文案匹配、cleanup 行序 + 动态故障注入）。
+  - `tests/e2e/README.md`：新增两个 env 变量、`RESULT` 后置与 real 失败语义、DNS 版本来源。
+- **TDD**：红 **43 PASS / 15 FAIL**（58 条，含 `rc=124` 死循环复现与 `PASS 全部节点 Ready（0/0）`）→ 绿 **59/0** ×2
+  （两次 diff 仅 static-only 耗时一行；内层 sandbox 仍 **30/0/3**）。
+- **其它门禁**：`make lint` rc=0；`make test-taints` 175/0；`make test-add-node` 231/0/2。
+  全量 `make test` 未重跑（成本 ~82 分钟，diff 仅 `tests/e2e/`），已在契约 §9 声明。
+- **受限**：real 成功路径仍需真机（本机无集群）；跨节点 Pod 仍 SKIP；`kubepods` 差集分支正常运行未触发。
+- **下一步**：Evaluator 独立复核（建议反证：删 `nodes==0` 早退、Job 失败改回 `skipped`、cleanup `bad` 改 `true`）。
+
+---
+
 ## [2026-11-19] Planner · T015 r1 评估收口 → 推进 T017，新增 T019
 
 - **决策**：T015 r1 = PASS **予以接受**；报告 `reports/T015-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。

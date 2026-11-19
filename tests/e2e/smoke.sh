@@ -38,12 +38,20 @@ T012 集群冒烟
 EOF
 }
 
+need_val() {  # <选项> [参数...]：缺值或值看起来是选项 → rc=2（不得 shift 失败后死循环）
+  if (($# < 2)) || [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+    printf '参数 %s 缺少值\n' "$1" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
 while (($#)); do
   case "$1" in
     --static-only) STATIC_ONLY=1; shift ;;
-    --mode) MODE="${2:-}"; shift 2 ;;
-    --kubeconfig) KUBECONFIG_PATH="${2:-}"; shift 2 ;;
-    --image) IMAGE="${2:-}"; shift 2 ;;
+    --mode) need_val "$@"; MODE="$2"; shift 2 ;;
+    --kubeconfig) need_val "$@"; KUBECONFIG_PATH="$2"; shift 2 ;;
+    --image) need_val "$@"; IMAGE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf '未知参数: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -53,7 +61,8 @@ if [[ "$MODE" != "sandbox" && "$MODE" != "real" ]]; then
   printf '无效模式: %s（sandbox|real）\n' "$MODE" >&2
   exit 2
 fi
-if [[ "$MODE" == "real" && -z "$KUBECONFIG_PATH" ]]; then
+# --static-only 不接触集群，无需 kubeconfig（D5）
+if [[ "$STATIC_ONLY" -eq 0 && "$MODE" == "real" && -z "$KUBECONFIG_PATH" ]]; then
   printf 'real 模式必须指定 --kubeconfig PATH\n' >&2
   exit 2
 fi
@@ -67,6 +76,26 @@ check_eq() { local d="$1" want="$2" got="$3"; if [[ "$want" == "$got" ]]; then o
 
 sha_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 changed_of() { grep -oE 'changed=[0-9]+' "$1" 2>/dev/null | cut -d= -f2 | awk '{s+=$1} END{print s+0}'; }
+role_default() {  # <file> <key>：读 role defaults / group_vars 的标量默认值（避免双源，D6）
+  sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+first_host_ip() {  # <cidr> [override]：校验后给出 Service ClusterIP
+  python3 - "$1" "$2" <<'PY'
+import ipaddress, sys
+cidr, override = sys.argv[1], sys.argv[2]
+try:
+    net = ipaddress.ip_network(cidr, strict=False)
+except ValueError:
+    sys.exit("bad cidr: %r" % cidr)
+try:
+    ip = ipaddress.ip_address(override) if override else net.network_address + 1
+except ValueError:
+    sys.exit("bad ip: %r" % override)
+if ip not in net:
+    sys.exit("%s 不在 %s 内" % (ip, net))
+print(ip)
+PY
+}
 
 ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-$(command -v ansible-playbook 2>/dev/null || echo "$HOME/ansible/bin/ansible-playbook")}"
 if [[ ! -x "$ANSIBLE_PLAYBOOK" && -n "${SUDO_USER:-}" ]]; then
@@ -126,9 +155,10 @@ CNI_VERSION=1.5.1
 CRICTL_VERSION=1.31.1
 ETCD_TARBALL=etcd-v3.5.16-linux-amd64.tar.gz
 ETCD_SHA=b414b27a5ad05f7cb01395c447c85d3227e3fb1c176e51757a283b817f645ccc
-CD_VERSION=1.11.3
-CD_TARBALL=coredns_${CD_VERSION}_linux_amd64.tgz
-CD_SHA=6af4d6a5412734417378f778343c4fba363a61ae027060675123d4296f5a8ee5
+CD_VERSION=""          # 运行时取 roles/cluster-addons/defaults（D6）
+CD_TARBALL=""
+CD_SHA=""
+declare -A CD_SHA_MAP=([1.11.3]=6af4d6a5412734417378f778343c4fba363a61ae027060675123d4296f5a8ee5)
 CONTAINERD_TARBALL="containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz"
 CNI_TARBALL="cni-plugins-linux-amd64-v${CNI_VERSION}.tgz"
 CRICTL_TARBALL="crictl-v${CRICTL_VERSION}-linux-amd64.tar.gz"
@@ -142,7 +172,6 @@ declare -A ART_URL=(
   ["$CNI_TARBALL"]="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/${CNI_TARBALL}"
   ["$CRICTL_TARBALL"]="https://github.com/kubernetes-sigs/cri-tools/releases/download/v${CRICTL_VERSION}/${CRICTL_TARBALL}"
   ["$ETCD_TARBALL"]="https://storage.googleapis.com/etcd/v3.5.16/${ETCD_TARBALL}"
-  ["$CD_TARBALL"]="https://github.com/coredns/coredns/releases/download/v${CD_VERSION}/${CD_TARBALL}"
 )
 declare -A ART_SHA=(
   [kube-apiserver]=9016f6048ff9827ef58934e98f28a8026634c10b4e6fcc1df49451038a23a9aa
@@ -153,7 +182,6 @@ declare -A ART_SHA=(
   ["$CNI_TARBALL"]=77baa2f669980a82255ffa2f2717de823992480271ee778aa51a9c60ae89ff9b
   ["$CRICTL_TARBALL"]=0a03ba6b1e4c253d63627f8d210b2ea07675a8712587e697657b236d06d7d231
   ["$ETCD_TARBALL"]="$ETCD_SHA"
-  ["$CD_TARBALL"]="$CD_SHA"
 )
 
 ensure_artifact() {  # <name> <url> <sha>
@@ -176,30 +204,51 @@ prefill_cache() {
 
 proc_pid() { pgrep -f -- "$SB/usr/local/bin/$1" 2>/dev/null | head -1; }
 unit_path() { printf '%s/etc/systemd/system/%s.service' "$SB" "$1"; }
-stop_proc() {
+stop_proc() {  # 返回非 0 = 进程仍在运行
   local pat="$1" i
+  pgrep -f -- "$pat" >/dev/null 2>&1 || return 0
   sudo -n pkill -TERM -f -- "$pat" 2>/dev/null || true
   for ((i=0;i<80;i++)); do pgrep -f -- "$pat" >/dev/null 2>&1 || return 0; sleep 0.1; done
   sudo -n pkill -9 -f -- "$pat" 2>/dev/null || true
+  sleep 0.2
+  ! pgrep -f -- "$pat" >/dev/null 2>&1
 }
-restore_kernel_tunables() {
-  [[ -z "$PRE_KERNEL_PANIC" || "$PRE_KERNEL_PANIC" == "__MISSING__" ]] || \
+restore_kernel_tunables() {  # 返回非 0 = 未能恢复
+  local rc=0
+  if [[ -n "$PRE_KERNEL_PANIC" && "$PRE_KERNEL_PANIC" != "__MISSING__" ]]; then
     sudo -n sysctl -q -w "kernel.panic=$PRE_KERNEL_PANIC" >/dev/null 2>&1 || true
-  [[ -z "$PRE_KERNEL_PANIC_ON_OOPS" || "$PRE_KERNEL_PANIC_ON_OOPS" == "__MISSING__" ]] || \
+    [[ "$(cat /proc/sys/kernel/panic 2>/dev/null)" == "$PRE_KERNEL_PANIC" ]] || rc=1
+  fi
+  if [[ -n "$PRE_KERNEL_PANIC_ON_OOPS" && "$PRE_KERNEL_PANIC_ON_OOPS" != "__MISSING__" ]]; then
     sudo -n sysctl -q -w "kernel.panic_on_oops=$PRE_KERNEL_PANIC_ON_OOPS" >/dev/null 2>&1 || true
+    [[ "$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null)" == "$PRE_KERNEL_PANIC_ON_OOPS" ]] || rc=1
+  fi
+  return "$rc"
 }
-cleanup() {
-  restore_kernel_tunables
+cleanup_new_kubepods() {  # 只停本次新增的 slice（跑前差集），无新增则不动宿主
+  local pre=" ${PRE_KUBEPODS_SLICES:-} " u rc=0
+  for u in $(systemctl list-units --all 'kubepods*' --no-legend 2>/dev/null | awk '{print $1}' | sort -u); do
+    [[ "$pre" == *" $u "* ]] && continue
+    sudo -n systemctl stop "$u" >/dev/null 2>&1 || rc=1
+  done
+  return "$rc"
+}
+CLEANED=0
+cleanup() {  # 幂等；每步失败记一行 FAIL 并计入 RESULT（T017-4）
+  [[ "$CLEANED" -eq 1 ]] && return 0
+  CLEANED=1
+  local rc=0 p
+  restore_kernel_tunables || { bad "清理失败: kernel.panic* 未恢复（期望 ${PRE_KERNEL_PANIC:-?}/${PRE_KERNEL_PANIC_ON_OOPS:-?}）"; rc=1; }
   if [[ -n "${SB:-}" ]]; then
-    stop_proc "$SB/usr/local/bin/kubelet"
-    stop_proc "$SB/usr/local/bin/containerd"
-    stop_proc "$SB/usr/local/bin/kube-apiserver"
-    stop_proc "$SB/usr/local/bin/etcd"
-    stop_proc "$SB/usr/local/bin/coredns"
-    [[ -n "$PRE_KUBEPODS_SLICES" ]] || sudo -n systemctl stop kubepods.slice >/dev/null 2>&1 || true
+    for p in kubelet containerd kube-apiserver etcd coredns; do
+      stop_proc "$SB/usr/local/bin/$p" || { bad "清理失败: 进程残留 $p"; rc=1; }
+    done
+    cleanup_new_kubepods || { bad "清理失败: 新增 kubepods slice 未停止（见 systemctl list-units 'kubepods*'）"; rc=1; }
     sudo -n rm -rf "$SB" 2>/dev/null || true
+    [[ -e "$SB" ]] && { bad "清理失败: 沙箱目录未删除 $SB"; rc=1; }
   fi
   WRAPPER=()
+  return "$rc"
 }
 trap cleanup EXIT
 
@@ -213,7 +262,24 @@ run_sandbox() {
   local UNIT_EXEC=tests/etcd/unit_exec.py
   local PORT_API=16443 PORT_ETCD=12379 PORT_KLT=20250 PORT_KLT_HZ=20248
   local PORT_DNS=15353 PORT_METRICS=19153 PORT_READY=19156
-  local SVC_KUBE=10.96.0.1
+  local SVC_KUBE="" CIDR=""
+
+  # D6：CoreDNS 版本与 Service CIDR 以 role defaults 为唯一来源（env 可覆盖并校验）
+  CIDR="$(role_default group_vars/all/main.yml k8s_service_cidr)"
+  [[ -n "$CIDR" ]] || CIDR="$(role_default roles/kube-apiserver/defaults/main.yml k8s_service_cidr)"
+  CD_VERSION="${E2E_COREDNS_VERSION:-$(role_default roles/cluster-addons/defaults/main.yml cluster_addons_coredns_version)}"
+  CD_TARBALL="coredns_${CD_VERSION}_linux_amd64.tgz"
+  CD_SHA="${CD_SHA_MAP[$CD_VERSION]:-}"
+  if [[ -z "$CD_VERSION" || -z "$CD_SHA" ]]; then
+    bad "CoreDNS 版本与 sha256 未对齐（版本=${CD_VERSION:-空}，E2E_COREDNS_VERSION 可覆盖；新版本需在 CD_SHA_MAP 登记）"
+    return
+  fi
+  ART_URL["$CD_TARBALL"]="https://github.com/coredns/coredns/releases/download/v${CD_VERSION}/${CD_TARBALL}"
+  ART_SHA["$CD_TARBALL"]="$CD_SHA"
+  if ! SVC_KUBE="$(first_host_ip "$CIDR" "${E2E_SERVICE_IP:-}")"; then
+    bad "无法由 k8s_service_cidr 推导 Service ClusterIP（cidr=${CIDR:-空}，E2E_SERVICE_IP 可覆盖）"
+    return
+  fi
 
   check "沙箱环境具备免密 sudo" sudo -n true
   check "端口 16443/12379/20250/20248/15353 空闲" \
@@ -366,40 +432,80 @@ run_sandbox() {
 }
 
 # --- real 模式 ----------------------------------------------------------------
+# T017-2/3：任何查询失败或空集都必须 FAIL，禁止 0/0 恒真与 SKIP 吞故障。
 run_real() {
   local KUBECTL="${KUBECTL:-$(command -v kubectl || true)}"
   check "kubeconfig 存在" test -f "$KUBECONFIG_PATH"
   if [[ -z "$KUBECTL" ]]; then bad "未找到 kubectl"; return; fi
+  if [[ ! -f "$KUBECONFIG_PATH" ]]; then
+    bad "real 模式中止：kubeconfig 不存在（$KUBECONFIG_PATH）"
+    return
+  fi
   k() { "$KUBECTL" --kubeconfig "$KUBECONFIG_PATH" --request-timeout=15s "$@"; }
 
-  check "API /healthz = ok" bash -c '[ "$1" = "ok" ]' _ "$(k get --raw /healthz 2>/dev/null)"
-  local nodes ready
-  nodes="$(k get nodes --no-headers 2>/dev/null | wc -l)"
-  ready="$(k get nodes --no-headers 2>/dev/null | awk '$2=="Ready"{c++} END{print c+0}')"
-  check_eq "全部节点 Ready（$ready/$nodes）" "$nodes" "$ready"
-  local want="${E2E_EXPECT_NODES:-1}"
-  check "节点数 >= $want" bash -c '[ "$1" -ge "$2" ]' _ "$nodes" "$want"
+  local out rc
+  if ! out="$(k get --raw /healthz 2>/dev/null)"; then
+    bad "API 不可达（kubectl get --raw /healthz rc≠0），跳过后续查询"
+    return
+  fi
+  check_eq "API /healthz = ok" "ok" "$out"
 
-  local pods bad_pods
-  pods="$(k -n kube-system get pods --no-headers 2>/dev/null | wc -l)"
-  bad_pods="$(k -n kube-system get pods --no-headers 2>/dev/null | awk '$3!="Running"{c++} END{print c+0}')"
-  check "kube-system Pod 数 > 0（$pods）" bash -c '[ "$1" -gt 0 ]' _ "$pods"
-  check_eq "kube-system 全部 Pod Running" 0 "$bad_pods"
+  local nodes_json total ready
+  if ! nodes_json="$(k get nodes -o json 2>/dev/null)"; then
+    bad "kubectl get nodes 失败（rc≠0），跳过后续查询"
+    return
+  fi
+  if ! read -r total ready < <(printf '%s' "$nodes_json" | python3 -c '
+import json, sys
+items = (json.load(sys.stdin).get("items") or [])
+ready = sum(1 for i in items if any(
+    c.get("type") == "Ready" and c.get("status") == "True"
+    for c in ((i.get("status") or {}).get("conditions") or [])))
+print(len(items), ready)
+'); then
+    bad "节点列表解析失败（kubectl get nodes -o json 非法）"
+    return
+  fi
+  if [[ "${total:-0}" -eq 0 ]]; then
+    bad "节点列表为空（kubectl 查询成功但 0 节点，禁止空集判定通过）"
+    return
+  fi
+  check_eq "全部节点 Ready（$ready/$total）" "$total" "$ready"
+  local want="${E2E_EXPECT_NODES:-1}"
+  check "节点数 >= $want（$total）" bash -c '[ "$1" -ge "$2" ]' _ "$total" "$want"
+
+  local pods_json pods bad_pods
+  if ! pods_json="$(k -n kube-system get pods -o json 2>/dev/null)"; then
+    bad "kubectl get pods 失败（rc≠0）"
+  elif ! read -r pods bad_pods < <(printf '%s' "$pods_json" | python3 -c '
+import json, sys
+items = (json.load(sys.stdin).get("items") or [])
+print(len(items), sum(1 for i in items if (i.get("status") or {}).get("phase") != "Running"))
+'); then
+    bad "Pod 列表解析失败（kubectl get pods -o json 非法）"
+  elif [[ "${pods:-0}" -eq 0 ]]; then
+    bad "kube-system Pod 列表为空（禁止空集判定通过）"
+  else
+    check_eq "kube-system 全部 Pod Running（$pods 个）" 0 "$bad_pods"
+  fi
   check "kube-dns Service 存在" k -n kube-system get svc kube-dns -o name
 
   if [[ -n "$IMAGE" ]]; then
-    local job="e2e-dns-$RANDOM"
-    k -n default delete job "$job" --ignore-not-found >/dev/null 2>&1
-    if k -n default create job "$job" --image="$IMAGE" -- sh -c 'nslookup kubernetes.default.svc.cluster.local' >/dev/null 2>&1; then
+    local job="e2e-dns-$RANDOM" errf
+    errf="$(mktemp /tmp/opencode/e2e-job.XXXXXX)" || errf=/dev/null
+    k -n default delete job "$job" --ignore-not-found >/dev/null 2>&1 || true
+    if k -n default create job "$job" --image="$IMAGE" -- sh -c 'nslookup kubernetes.default.svc.cluster.local' >/dev/null 2>"$errf"; then
       if k -n default wait --for=condition=complete "job/$job" --timeout=180s >/dev/null 2>&1; then
         ok "集群内 DNS 解析（Job 成功）"
       else
         bad "集群内 DNS 解析（Job 未完成）"
       fi
+      k -n default delete job "$job" --ignore-not-found >/dev/null 2>&1 \
+        || bad "集群内 DNS Job 清理失败（job/$job，需人工删除）"
     else
-      skipped "集群内 DNS（Job 创建失败，检查 --image）"
+      bad "集群内 DNS（Job 创建失败: $(tr '\n' ' ' <"$errf" | cut -c1-200)）"
     fi
-    k -n default delete job "$job" --ignore-not-found >/dev/null 2>&1
+    [[ "$errf" == /dev/null ]] || rm -f "$errf"
     skipped "跨节点 Pod 互通（需按集群拓扑指定两台节点，本脚本不自动投放）"
   else
     skipped "集群内 DNS（未提供 --image）"
@@ -413,7 +519,10 @@ if [[ "$STATIC_ONLY" -eq 0 ]]; then
   if [[ "$MODE" == "sandbox" ]]; then run_sandbox; else run_real; fi
 fi
 
+# T017-4：先清理（失败计入 FAIL），再打印 RESULT
+cleanup || true
+trap - EXIT
+
 printf 'RESULT=%s\n' "$([[ "$fail" -eq 0 ]] && echo PASS || echo FAIL)"
 printf 'PASS=%d\nFAIL=%d\nSKIP=%d\n' "$pass" "$fail" "$skip"
-if [[ "$SANDBOX_MODE" -eq 1 ]]; then cleanup; trap - EXIT; fi
 [[ "$fail" -eq 0 ]]

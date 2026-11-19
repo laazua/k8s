@@ -34,6 +34,19 @@ check "--help 说明 sandbox 模式" bash -c '"$1" --help 2>&1 | grep -q "sandbo
 check "--help 说明 real 模式" bash -c '"$1" --help 2>&1 | grep -q "real"' _ "$SMOKE"
 check_eq "未知参数 → rc=2" 2 "$("$SMOKE" --nonsense >/dev/null 2>&1; echo $?)"
 check_eq "real 模式缺 --kubeconfig → rc=2" 2 "$("$SMOKE" --mode real >/dev/null 2>&1; echo $?)"
+# T017-1：缺值必须 rc=2 立即退出，不得挂起（timeout 30 兜底）
+check_eq "缺值 --mode → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --mode >/dev/null 2>&1; echo $?)"
+check_eq "缺值 --image → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --image >/dev/null 2>&1; echo $?)"
+check_eq "缺值 --kubeconfig → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --kubeconfig >/dev/null 2>&1; echo $?)"
+check_eq "--mode --image x（值像选项）→ rc=2" 2 "$(timeout 30 "$SMOKE" --mode --image x >/dev/null 2>&1; echo $?)"
+check_not "缺值时不打印 RESULT（不进入执行）" \
+  bash -c 'timeout 30 "$1" --mode 2>/dev/null | grep -q "^RESULT="' _ "$SMOKE"
+# T017-D5：静态模式不需要 kubeconfig，--mode real 不得强制
+check_eq "--static-only --mode real（无 kubeconfig）→ rc=0" 0 \
+  "$("$SMOKE" --static-only --mode real >"$OUT.staticreal" 2>&1; echo $?)"
+check "static-only+real 仍 RESULT=PASS" grep -qx 'RESULT=PASS' "$OUT.staticreal"
+check "--static-only 提示 real 未执行（无 kubeconfig 仍可静态检查）" \
+  bash -c '! grep -qE "^FAIL +" "$1"' _ "$OUT.staticreal"
 
 echo "-- A3 纯静态模式（秒级，无沙箱）"
 s=$(date +%s)
@@ -46,6 +59,83 @@ check "含 FAIL=0" grep -qx 'FAIL=0' "$OUT.static"
 check "--static-only 不创建沙箱目录" bash -c '! ls -d /tmp/opencode/t012.* >/dev/null 2>&1'
 printf '  （static-only 耗时 %ss）\n' "$((e-s))"
 
+echo "-- D real 模式负例（stub kubectl；不连真实集群）"
+STUB="$(mktemp -d /tmp/opencode/e2e-stub.XXXXXX)" || exit 1
+trap 'rm -rf "$STUB"' EXIT
+KC="$STUB/kubeconfig"; : >"$KC"
+cat >"$STUB/kubectl" <<'EOS'
+#!/usr/bin/env bash
+# 假 kubectl：E2E_STUB_MODE = unreachable | empty-nodes | healthy | job-forbidden
+mode="${E2E_STUB_MODE:-unreachable}"
+[[ "$mode" == unreachable ]] && { echo "The connection to the server 127.0.0.1:1 was refused" >&2; exit 1; }
+a=" $* "
+case "$a" in
+  *" get --raw /healthz "*) echo ok; exit 0 ;;
+  *" get nodes -o json "*)
+    if [[ "$mode" == empty-nodes ]]; then echo '{"items":[]}';
+    else echo '{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}'; fi
+    exit 0 ;;
+  *" get pods -o json "*) echo '{"items":[{"metadata":{"name":"p1"},"status":{"phase":"Running"}}]}'; exit 0 ;;
+  *" get svc kube-dns -o name "*) echo "service/kube-dns"; exit 0 ;;
+  *" create job "*) echo "Error from server (Forbidden): jobs.batch is forbidden" >&2; exit 1 ;;
+  *" delete job "*|*" wait "*) exit 0 ;;
+esac
+exit 1
+EOS
+chmod +x "$STUB/kubectl"
+smoke_stub() {  # <mode> → 打印 rc，日志写 $STUB/<mode>.log
+  local m="$1"
+  E2E_STUB_MODE="$m" KUBECTL="$STUB/kubectl" timeout 60 "$SMOKE" \
+    --mode real --kubeconfig "$KC" --image busybox-test:1.36 >"$STUB/$m.log" 2>&1
+  echo $?
+}
+
+check_eq "API 不可达 → rc=1" 1 "$(smoke_stub unreachable)"
+check "API 不可达 → RESULT=FAIL" grep -qx 'RESULT=FAIL' "$STUB/unreachable.log"
+check "API 不可达 → 显式 FAIL 且带 rc" grep -qE '^FAIL +API 不可达.*rc' "$STUB/unreachable.log"
+check_not "API 不可达 → 禁止 0/0 空集 PASS" \
+  grep -qE '^PASS +全部节点 Ready（0/0）' "$STUB/unreachable.log"
+
+check_eq "节点列表为空 → rc=1" 1 "$(smoke_stub empty-nodes)"
+check "节点列表为空 → RESULT=FAIL" grep -qx 'RESULT=FAIL' "$STUB/empty-nodes.log"
+check "节点列表为空 → 显式 FAIL（空集不算通过）" \
+  grep -qE '^FAIL +节点列表为空' "$STUB/empty-nodes.log"
+check_not "节点列表为空 → 禁止 0/0 空集 PASS" \
+  grep -qE '^PASS +全部节点 Ready' "$STUB/empty-nodes.log"
+
+check_eq "Job 创建被拒 → rc=1" 1 "$(smoke_stub job-forbidden)"
+check "Job 创建被拒 → RESULT=FAIL" grep -qx 'RESULT=FAIL' "$STUB/job-forbidden.log"
+check "Job 创建被拒 → FAIL 集群内 DNS" grep -qE '^FAIL +集群内 DNS' "$STUB/job-forbidden.log"
+check "Job 创建被拒 → 失败信息含 API 原因（Forbidden）" \
+  grep -qE '^FAIL +集群内 DNS.*Forbidden' "$STUB/job-forbidden.log"
+check_not "Job 创建被拒 → 不得降级 SKIP" \
+  grep -qE '^SKIP +集群内 DNS' "$STUB/job-forbidden.log"
+check_not "Job 创建被拒 → 不得 RESULT=PASS" grep -qx 'RESULT=PASS' "$STUB/job-forbidden.log"
+rm -rf "$STUB"; trap - EXIT
+
+echo "-- E 清理语义（T017-4：RESULT 在 cleanup 之后，失败可见）"
+check "RESULT 打印在显式 cleanup 调用之后" bash -c '
+  c=$(grep -nE "^cleanup( |$)" "$1" | head -1 | cut -d: -f1)
+  r=$(grep -n "^printf .RESULT=" "$1" | head -1 | cut -d: -f1)
+  [ -n "$c" ] && [ -n "$r" ] && [ "$r" -gt "$c" ]' _ "$SMOKE"
+check "cleanup 失败路径调用 bad（计入 RESULT）" bash -c '
+  awk "/^cleanup\(\)/,/^}/" "$1" | grep -q "bad \"清理失败"' _ "$SMOKE"
+check "cleanup 删除后校验沙箱目录已消失（不再静默）" bash -c '
+  awk "/^cleanup\(\)/,/^}/" "$1" | grep -q "沙箱目录未删除"' _ "$SMOKE"
+check "保留 trap EXIT 兜底（异常退出仍清理）" grep -q '^trap cleanup EXIT' "$SMOKE"
+check "cleanup 失败 → 计入 FAIL 且返回非 0（动态：sudo 故障注入）" bash -c '
+  d=$(mktemp -d /tmp/opencode/e2e-cl.XXXXXX) || exit 1
+  mkdir -p "$d/sb"; echo x >"$d/sb/f"
+  fail=0; bad() { fail=$((fail+1)); }
+  WRAPPER=(); CLEANED=0; SB="$d/sb"
+  PRE_KERNEL_PANIC=""; PRE_KERNEL_PANIC_ON_OOPS=""; PRE_KUBEPODS_SLICES=""
+  stop_proc() { return 0; }; cleanup_new_kubepods() { return 0; }; restore_kernel_tunables() { return 0; }
+  sudo() { return 1; }
+  eval "$(awk "/^cleanup\(\)/,/^}/" "$1")"
+  cleanup; rc=$?
+  [[ "$rc" -ne 0 && "$fail" -ge 1 && -e "$SB" ]]
+  r=$?; rm -rf "$d"; exit $r' _ "$SMOKE"
+
 echo "-- B 真实沙箱冒烟（一条命令）"
 PRE_ETC_K8S="$(test -e /etc/kubernetes && echo exists || echo absent)"
 s=$(date +%s)
@@ -55,13 +145,14 @@ check_eq "sandbox 冒烟 rc=0（$((e-s))s）" 0 "$rc"
 check "汇总 RESULT=PASS" grep -qx 'RESULT=PASS' "$OUT"
 check_eq "汇总 FAIL=0" 0 "$(awk -F= '/^FAIL=/{print $2}' "$OUT")"
 check "汇总 PASS>=15" bash -c '[ "$(awk -F= "/^PASS=/{print \$2}" "$1")" -ge 15 ]' _ "$OUT"
-check "汇总 SKIP>=3（镜像依赖项显式受限）" bash -c '[ "$(awk -F= "/^SKIP=/{print \$2}" "$1")" -ge 3 ]' _ "$OUT"
+check_eq "汇总 SKIP=3（恰好，防 SKIP 吞检查）" 3 "$(awk -F= '/^SKIP=/{print $2}' "$OUT")"
+check "SKIP 文案: 系统 Pod Running" grep -qE '^SKIP +系统 Pod Running' "$OUT"
+check "SKIP 文案: 集群内 DNS（无镜像）" grep -qE '^SKIP +集群内 DNS' "$OUT"
+check "SKIP 文案: 跨节点 Pod 互通" grep -qE '^SKIP +跨节点 Pod' "$OUT"
 check "节点注册检查为 PASS" bash -c 'grep -qE "^PASS +节点 .* 已注册" "$1"' _ "$OUT"
 check "Ready 条件检查为 PASS" bash -c 'grep -qE "^PASS +节点 Ready 条件存在" "$1"' _ "$OUT"
 check "admin kubeconfig 认证为 PASS" bash -c 'grep -qE "^PASS +admin kubeconfig" "$1"' _ "$OUT"
 check "CoreDNS 集群域名解析为 PASS" bash -c 'grep -qE "^PASS +DNS kubernetes.default" "$1"' _ "$OUT"
-check "系统 Pod 项为 SKIP（无镜像）" bash -c 'grep -qE "^SKIP +系统 Pod" "$1"' _ "$OUT"
-check "跨节点 Pod 项为 SKIP（无镜像）" bash -c 'grep -qE "^SKIP +跨节点 Pod" "$1"' _ "$OUT"
 check_not "输出中无 FAIL 行" bash -c 'grep -qE "^FAIL " "$1"' _ "$OUT"
 
 echo "-- C 清理与宿主零污染"
