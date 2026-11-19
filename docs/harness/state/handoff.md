@@ -9,6 +9,20 @@
 
 ---
 
+## [2026-11-19] Planner · T015 r1 评估收口 → 推进 T017，新增 T019
+
+- **决策**：T015 r1 = PASS **予以接受**；报告 `reports/T015-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
+- **roadmap v1.7**：T015 → `done`（目标验收保留 + 已验/受限分栏）；新增 **T019**（T015 测试假绿/一致性加固），
+  T016 依赖追加 T019；任务数 **19**。
+- **spec v1.9**：A15 判定细化为「备份可校验 + 运行中 apiserver `/version` 真实变更 + `snapshot restore` 回滚 + 二次 changed=0」；
+  成本基线 **15 套件 / 2473 断言 / ~81m39s**（`test-upgrade` 268、~10.2 分钟、SKIP=2）。
+- **状态**：`phase: BUILDING` / `active_task: T017` / `contract_status: accepted`（T015）/
+  `next_action: "build T017"` / `done_tasks: 15` / `planned_tasks: 19`。
+- **下一步**：T017（e2e real 模式健壮性）；随后 T018、T019，最后 T016。
+- **环境提示**：宿主 `/tmp/opencode` 需 ≥6G（t015 已加磁盘前置守卫）。
+
+---
+
 ## [2026-11-18] Generator · T015（版本升级与回滚）→ **ready_for_eval**
 
 - **交付**：`roles/upgrade`（`validate → backup → binaries → verify`，回滚走

@@ -3,14 +3,14 @@
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T015      # 例如 T001
-contract_status: ready_for_eval  # T015 实现+自测完成，待独立评估（T014 = accepted）
-eval_round: 1          # T015 待第 1 轮评估
-next_action: "eval T015"
+active_task: T017      # 例如 T001
+contract_status: accepted  # T015 r1 = PASS（accepted）；T017 契约待建立
+eval_round: 1          # T015 r1 = PASS
+next_action: "build T017"
 
 # 计划摘要（planner 写）
-planned_tasks: 18
-done_tasks: 14
+planned_tasks: 19
+done_tasks: 15
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,8 +30,16 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
+blockers: []          # 无阻塞；T015 r1 = PASS 已接受；T017/T018/T019 为 T016 前置          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
 notes: |
+  **T015（版本升级与回滚）r1 = PASS（accepted）**，被测 `99af962`（评估 `2026-11-19`，
+  报告 `docs/harness/state/reports/T015-r1.md`）：
+  - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
+  - 独立复现：`make test-upgrade` **268/0/2** ×2（612s/607s，逐条 diff 0 行）；
+    全量 15 套件 = **2473/0**（4899s，评估未独立重跑）。
+  - 牙齿 4 红：移 role / 备份跳 PKI / 回滚不 restore（ConfigMap 仍在）/ 幂等恒真。
+  - 遗留 **D1 MAJOR**（E7/E8 的 `upgrade_bin_dir` 指向空 fake-bin，backup 先失败，sha/版本断言未执行）
+    + D2–D8 MINOR → 新增 **T019** 在 T016 前关闭。
   **T015（版本升级与回滚）build 完成 → ready_for_eval（2026-11-18）**：
   - 交付 `roles/upgrade`（validate/backup/binaries/component/verify/rollback_validate/rollback，
     upgrade 与 rollback 同 role 由 `upgrade_action` 分派）+ 真实入口 `playbooks/upgrade.yml`
@@ -157,4 +165,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-18T04:20:00Z"   # ISO8601
+updated: "2026-11-19T03:10:00Z"   # ISO8601

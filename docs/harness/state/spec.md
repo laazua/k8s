@@ -1,10 +1,15 @@
 # 规格（spec.md）· k8s 二进制 Ansible 部署
 
-> 状态：**已定稿（v1.8，Planner，2026-11-17）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
+> 状态：**已定稿（v1.9，Planner，2026-11-18）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
 > 上游：根 `README.md`。下游：`roadmap.md`、`contracts/T00N.md`。
 > 覆盖标记：每条 README 要求后标注其落点任务（`→ T0NN`）。
 >
 > **变更记录**
+> - v1.9（2026-11-18）：T015 r1 = PASS（accepted）后补录——①A15 判定细化为「备份可校验（etcd
+>   `snapshot status`）+ 运行中 apiserver `/version` 真实变更 + `snapshot restore` 回滚 + 二次
+>   `changed=0`」；②全量成本更新为 **15 套件 / 2473 断言 / ~81 分 39 秒（4899s）**（新增
+>   `tests/upgrade` 268、SKIP=2）；③T015 r1 的 D1 MAJOR（E7/E8 制品 sha/版本断言被前置失败短路）
+>   + D2–D8 新增 **T019** 关闭，作为 T016 前置。
 > - v1.8（2026-11-17）：T014 r1 = PASS（accepted）后补录——①A14 判定细化为「真实 kubelet 注册 +
 >   既有节点零影响（PID/启动时间/内容哈希/Node UID 不变）+ 二次 `changed=0`」，系统 Pod 按无镜像范式受限；
 >   ②全量成本更新为 **14 套件 / 2205 断言 / ~71 分钟（4284s）**（新增 `tests/add-node` 231）；
@@ -140,7 +145,7 @@
 | A12 | 集群冒烟 | 一条命令（`tests/e2e/`，输出 `PASS/FAIL/SKIP` + `RESULT` 与退出码）判定：全部节点 Ready；系统 Pod 全 Running；集群内 DNS 解析成功；跨节点 Pod 互通。`SKIP` 不计入 PASS（C14） |
 | A13 | 调度约束 | 控制面带 `NoSchedule` 污点与角色标签（真实 API 读回）；不带 toleration 的工作负载多副本 **0 副本落 master**（真实 kube-scheduler 绑定判定；无镜像时只验 `spec.nodeName`，不要求 Running） |
 | A14 | 加节点 | 对新 node 执行剧本后由**真实 kubelet** 注册且 Ready 条件存在；**重复执行 `changed=0`**；既有控制面/节点**零影响**（PID/启动时间/内容哈希/Node UID 不变）；系统 Pod 按无镜像范式受限声明 |
-| A15 | 升级与回滚 | 升级一个 minor 版本后集群 Ready；回滚路径经实际执行验证 |
+| A15 | 升级与回滚 | 升级前自动备份（etcd 快照可 `snapshot status` 校验 + PKI/kubeconfig + sha256）；升级一个 minor 版本后运行中 apiserver `/version` 与 kubelet 版本已变更、节点 Ready 条件存在；按文档回滚（`snapshot restore` + 旧二进制）后版本回旧、`/healthz` ok；已在目标版本重跑 `changed=0` |
 | A16 | 端到端 | 从干净 inventory 一条命令得到可用 HA 集群，全流程文档可复现 |
 
 ## 7. 风险与开放问题（Risks & Open Questions）
@@ -170,7 +175,10 @@
     `test-taints` 约 **5.5 分钟**（首次预取约 16 分钟）。
     v1.8 实测更新：T014 后全量 **~71 分 24 秒/次（4284s）**，14 套件合计
     `27/39/59/100/225/186/269/291/208/229/135/175/231/31` = **2205** 条断言
-    （`test-add-node` 约 **10.8 分钟**，含 SKIP=2）。）
+    （`test-add-node` 约 **10.8 分钟**，含 SKIP=2）。
+    v1.9 实测更新：T015 后全量 **~81 分 39 秒/次（4899s）**，15 套件合计
+    `27/39/59/100/225/186/269/291/208/229/135/175/231/268/31` = **2473** 条断言
+    （`test-upgrade` 约 **10.2 分钟**，含 SKIP=2）。）
   - **无镜像验收范式（v1.4，T009 起强制）**：registry 不可达 → **任何任务都不得以「起 Pod/拉镜像」作为唯一验收手段**。
     必须把验收下沉到「真实进程 + 真实内核对象」：
     - Service/ClusterIP 类 → 沙箱真实 apiserver + 手工 `Endpoints`/`EndpointSlice` 指向**本地 mock 服务**，
