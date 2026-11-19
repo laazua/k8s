@@ -51,6 +51,7 @@
   register: add_node_verify_ready
   changed_when: false
   check_mode: false
+  failed_when: false
   retries: "{{ add_node_verify_retries }}"
   delay: "{{ add_node_verify_delay }}"
   until: >-
@@ -88,6 +89,21 @@
       （rc={{ add_node_verify_ready.rc | default('?') }}，
       stdout={{ add_node_verify_ready.stdout | default('') | trim }}，
       stderr={{ add_node_verify_ready.stderr | default('') | trim }}）。
+    quiet: true
+  tags: ["add-node", "add-node:verify"]
+
+- name: "add-node:verify | 断言 NotReady 时必须给出 reason 字段（可诊断载荷）"
+  ansible.builtin.assert:
+    that:
+      - add_node_verify_reason.rc | default(1) == 0
+      - (add_node_verify_ready.stdout | trim != 'False')
+        or (add_node_verify_reason.stdout | trim | length > 0)
+    fail_msg: >-
+      node/{{ add_node_node_name }} 的 Ready 条件缺少可诊断 reason
+      （Ready={{ add_node_verify_ready.stdout | default('') | trim }}，
+      reason={{ add_node_verify_reason.stdout | default('') | trim }}，
+      rc={{ add_node_verify_reason.rc | default('?') }}）。
+      NotReady 必须带 reason（如 KubeletNotReady），否则无法诊断注册失败。
     quiet: true
   tags: ["add-node", "add-node:verify"]
 

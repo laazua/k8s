@@ -169,12 +169,21 @@ shallow_dir_hash() {
   if [[ -z "$h" ]]; then printf '__ERROR__'; else printf '%s' "$h"; fi
 }
 unit_set_hash() {
-  local h
-  h="$(sudo -n find /etc/systemd/system -maxdepth 2 -type f \
+  # 内容级：普通文件内容 + 符号链接目标都要覆盖（本机 unit 多为符号链接）；
+  # 0 条目不是合法基线，用 __EMPTY__ 显式标记（T018/D5）。
+  local list h
+  list="$(sudo -n find /etc/systemd/system -maxdepth 2 \( -type f -o -type l \) \
     \( -name '*.service' -o -name '*.socket' -o -name '*.timer' \
-       -o -name '*.mount' -o -name '*.slice' \) -print0 2>/dev/null \
-    | sort -z | xargs -0 -r sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
-  if [[ -z "$h" ]]; then printf '__ERROR__'; else printf '%s' "$h"; fi
+       -o -name '*.mount' -o -name '*.slice' \) \
+    -printf '%p|%y|%l\n' 2>/dev/null | sort)"
+  if [[ -z "$list" ]]; then printf '__EMPTY__'; return 0; fi
+  h="$( { printf '%s\n' "$list"
+          sudo -n find /etc/systemd/system -maxdepth 2 -type f \
+            \( -name '*.service' -o -name '*.socket' -o -name '*.timer' \
+               -o -name '*.mount' -o -name '*.slice' \) -print0 2>/dev/null \
+            | sort -z | xargs -0 -r sha256sum 2>/dev/null
+        } | sha256sum | awk '{print $1}' )"
+  if [[ -n "$h" ]]; then printf '%s' "$h"; else printf '__ERROR__'; fi
 }
 kubepods_active() {
   systemctl list-units 'kubepods*' --no-legend 2>/dev/null | awk '{print $1}' | sort | tr '\n' ' '
@@ -182,6 +191,42 @@ kubepods_active() {
 kubepods_loaded() {
   systemctl list-units --all 'kubepods*' --no-legend 2>/dev/null | awk '{print $1}' | sort | tr '\n' ' '
 }
+# --- 快照载荷守卫（T018/D1：空值/哨兵/缺键必须显式 FAIL，不静默比较） --------
+# 合法例外：路径键在本机可以不存在（__MISSING__）；ports 允许为空（=无占用）。
+SNAP_ALLOW_MISSING=" etc_kubernetes var_lib_containerd run_containerd opt_cni_bin "
+SNAP_ALLOW_EMPTY=" ports "
+SNAP_HOST_KEYS="etc_kubernetes systemd_units var_lib_containerd run_containerd \
+opt_cni_bin ports kernel_panic kernel_panic_on_oops kubepods_active kubepods_loaded"
+SNAP_EXIST_KEYS="node1_kubelet_pid node1_kubelet_start apiserver_pid apiserver_start \
+etcd_pid etcd_start node1_files node1_obj cluster_etc_kubernetes cluster_ca_cert cluster_ca_key"
+snapshot_invalid_keys() {  # 逐键：空值 / __ERROR__ / __EMPTY__ / 非白名单 __MISSING__
+  local f="$1" k v
+  while IFS= read -r line; do
+    k="${line%%=*}"
+    v="${line#*=}"
+    [[ -z "$k" ]] && continue
+    if [[ -z "$v" ]]; then
+      [[ "$SNAP_ALLOW_EMPTY" == *" $k "* ]] || printf '%s ' "$k"
+    elif [[ "$v" == "__ERROR__" || "$v" == "__EMPTY__" ]]; then
+      printf '%s ' "$k"
+    elif [[ "$v" == "__MISSING__" && "$SNAP_ALLOW_MISSING" != *" $k "* ]]; then
+      printf '%s ' "$k"
+    fi
+  done <"$f"
+}
+snapshot_missing_keys() {  # 必需键缺失（比较器不能对「键不存在」静默）
+  local f="$1" k
+  shift
+  for k in "$@"; do
+    grep -q "^$k=" "$f" 2>/dev/null || printf '%s(缺失) ' "$k"
+  done
+}
+snapshot_problems() {  # <file> <必需键...>；输出无效/缺失键，空输出=有载荷
+  local f="$1"
+  shift
+  printf '%s%s' "$(snapshot_invalid_keys "$f")" "$(snapshot_missing_keys "$f" "$@")"
+}
+
 PORTS_RE=':(16443|12379|20250|20248|20251|20249)[[:space:]]'
 snapshot_ports() {
   ss -ltn 2>/dev/null | grep -E "$PORTS_RE" | awk '{print $4}' | sort | tr '\n' ' '
@@ -200,8 +245,8 @@ snapshot_host_state() {
     printf 'kubepods_active=%s\n' "$(kubepods_active)"
     printf 'kubepods_loaded=%s\n' "$(kubepods_loaded)"
   } >"$out" 2>/dev/null
-  grep -q '__ERROR__' "$out" && return 1
-  return 0
+  # 逐键载荷守卫：空值/__ERROR__/__EMPTY__/缺键 → 采集失败（调用方重试后显式 FAIL）
+  [[ -z "$(snapshot_problems "$out" $SNAP_HOST_KEYS)" ]]
 }
 snapshot_with_retry() {
   local out="$1" i
@@ -213,13 +258,35 @@ snapshot_with_retry() {
 }
 snap_get() { grep -m1 "^$2=" "$1" 2>/dev/null | cut -d= -f2-; }
 
+echo "-- A0 快照守卫负例（空值/哨兵/缺失键必须显式判无效，不是只靠人工复现）"
+NEG_SNAP_DIR="$(mktemp -d /tmp/opencode/t018-snapneg.XXXXXX)"
+printf 'node1_obj=\napiserver_start=__ERROR__\nkubepods_loaded=__EMPTY__\nports=\n' \
+  >"$NEG_SNAP_DIR/neg.txt"
+NEG_BAD="$(snapshot_invalid_keys "$NEG_SNAP_DIR/neg.txt")"
+NEG_MISSING="$(snapshot_missing_keys "$NEG_SNAP_DIR/neg.txt" etcd_start)"
+for k in node1_obj apiserver_start kubepods_loaded; do
+  check "负例：$k 的空值/哨兵被显式判无效并打印键名" \
+    bash -c "[[ \"$NEG_BAD\" == *'$k'* ]]"
+done
+check_not "负例：合法的空 ports 不被误判" bash -c "[[ \"$NEG_BAD\" == *'ports'* ]]"
+check "负例：缺失键 etcd_start 被显式判无效" bash -c "[[ \"$NEG_MISSING\" == *'etcd_start'* ]]"
+printf 'node1_obj=abc\nports=\n' >"$NEG_SNAP_DIR/ok.txt"
+check "正例：有载荷的快照通过守卫（证明负例不是恒真）" \
+  bash -c "[[ -z \"$(snapshot_problems "$NEG_SNAP_DIR/ok.txt" node1_obj)\" ]]"
+sudo -n rm -rf "$NEG_SNAP_DIR"
+
 PRE_HOST_SNAP=/tmp/opencode/t014_host_pre.txt
 if ! snapshot_with_retry "$PRE_HOST_SNAP"; then
-  bad "宿主快照采集失败（重试 3 次仍失败）"
+  bad "宿主快照采集失败或含无效键（重试 3 次）：$(snapshot_problems "$PRE_HOST_SNAP" $SNAP_HOST_KEYS)"
   echo "== 汇总: PASS=$pass_count FAIL=$((fail + 1)) SKIP=$skip_count =="
   exit 1
 fi
 ok "宿主快照已采集（内容级：/etc/kubernetes、unit 集合、containerd、端口、sysctl、kubepods）"
+check "宿主快照逐键有载荷（路径键可为 __MISSING__，其余非空非哨兵）" \
+  test -z "$(snapshot_problems "$PRE_HOST_SNAP" $SNAP_HOST_KEYS)"
+EMPTY_STREAM_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+check_not "宿主 unit 集合基线不是空流哈希（符号链接目标已纳入，D5）" \
+  bash -c "[[ '$(snap_get "$PRE_HOST_SNAP" systemd_units)' == '$EMPTY_STREAM_SHA' ]]"
 PRE_KERNEL_PANIC="$(snap_get "$PRE_HOST_SNAP" kernel_panic)"
 PRE_KERNEL_PANIC_ON_OOPS="$(snap_get "$PRE_HOST_SNAP" kernel_panic_on_oops)"
 PRE_KUBEPODS_ACTIVE="$(snap_get "$PRE_HOST_SNAP" kubepods_active)"
@@ -353,6 +420,16 @@ check_not "cert 不 include pki 的 ca/main（绝不重建 CA）" \
   bash -c "grep -qE 'tasks_from: (ca|main)$' '$ROLE/tasks/cert.yml'"
 check "cert 断言 CA 证书哈希未变" grep -q 'add_node_ca_cert_sha' "$ROLE/tasks/cert.yml"
 check "cert 断言 CA 私钥哈希未变" grep -q 'add_node_ca_key_sha' "$ROLE/tasks/cert.yml"
+check "defaults 定义证书幂等状态记录路径（内容哈希基线）" \
+  grep -qE '^add_node_cert_state_file:' "$ROLE/defaults/main.yml"
+check "validate 逐键读取状态记录并拒绝被替换的 CA" \
+  bash -c "grep -q 'add_node_cert_state_file' '$ROLE/tasks/validate.yml' && grep -q 'add_node_ca_tampered' '$ROLE/tasks/validate.yml'"
+check "cert 仅在自愈时强制重签（pki_force_regen 接线）" \
+  grep -q 'pki_force_regen' "$ROLE/tasks/cert.yml"
+check "cert 写任务在 check 模式跳过（签发/状态/清理）" \
+  bash -c "[[ \$(grep -c 'not ansible_check_mode' '$ROLE/tasks/cert.yml') -ge 3 ]]"
+check "verify 断言 NotReady 必须给出 reason（载荷，D6）" \
+  grep -q 'add_node_verify_reason.stdout' "$ROLE/tasks/verify.yml"
 check "verify 断言 kubelet.conf 权限 0600" grep -q '0600' "$ROLE/tasks/verify.yml"
 check "verify 断言新节点无 admin 凭据" grep -q 'admin' "$ROLE/tasks/verify.yml"
 check "verify 用 kubectl argv 读回 node（非字符串命令）" grep -q 'argv:' "$ROLE/tasks/verify.yml"
@@ -388,7 +465,9 @@ check "已 PASS 的 role 未被修改（工作区含未跟踪文件）" \
     roles/kube-apiserver roles/kube-controller-manager roles/kube-scheduler \
     roles/containerd roles/kubelet roles/kube-proxy roles/cilium roles/cluster-addons \
     roles/taints)\" ]]"
-check "roles/add-node 全量文件内容哈希在测试前可计算" test -n "$ROLE_TREE_PRE"
+ROLE_FILE_COUNT="$(find "$ROLE" -type f 2>/dev/null | wc -l)"
+check "roles/add-node 文件数 > 0 且全量内容哈希已计算（D8：非恒真）" \
+  bash -c "[[ $ROLE_FILE_COUNT -gt 0 && -n '$ROLE_TREE_PRE' ]]"
 "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_ADD" --list-tasks --tags add-node \
   >/tmp/opencode/t014_list_tasks.log 2>&1
 check "入口 --list-tasks --tags add-node 非空" \
@@ -639,8 +718,12 @@ PRE_EXIST=/tmp/opencode/t014_existing_pre.txt
   printf 'cluster_ca_cert=%s\n' "$(fhash "$SB/etc/kubernetes/pki/ca.crt")"
   printf 'cluster_ca_key=%s\n' "$(fhash "$SB/etc/kubernetes/pki/ca.key")"
 } >"$PRE_EXIST" 2>/dev/null
-check "既有状态快照已采集（PID/启动时间/配置哈希/Node 对象/集群 PKI）" \
-  bash -c "[[ \$(grep -c '=' '$PRE_EXIST') -eq 11 ]] && ! grep -q '__MISSING__' '$PRE_EXIST'"
+PRE_EXIST_PROBLEMS="$(snapshot_problems "$PRE_EXIST" $SNAP_EXIST_KEYS)"
+if [[ -n "$PRE_EXIST_PROBLEMS" ]]; then
+  bad "既有状态快照含空值/哨兵/缺键：$PRE_EXIST_PROBLEMS（禁止空==空 静默通过，T018/D1）"
+else
+  ok "既有状态快照逐键有载荷（PID/启动时间/配置哈希/Node 对象/集群 PKI）"
+fi
 ex_pre() { snap_get "$PRE_EXIST" "$1"; }
 
 echo "-- B2 fail-fast（必须在任何落盘/签发之前拒绝）"
@@ -659,7 +742,12 @@ timeout 300 "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY_NONMEMBER" \
   -e "{\"sandbox_root\":\"$SB\"}" >"$SB/logs/ff_nonmember.log" 2>&1 || rc=$?
 check "非 [k8s_node] 主机 → exit≠0" test "$rc" -ne 0
 check "非 [k8s_node] 主机 → 信息含分组名" grep -qiE 'k8s_node|分组' "$SB/logs/ff_nonmember.log"
-check_not "非 [k8s_node] 主机 → 未落盘任何 kubelet 证书" test -f "$NODE2_CERT"
+nonmember_artifacts() {
+  sudo -n find "$SB/nonmember" \( -name '*.crt' -o -name '*.key' -o -name '*.state' \) \
+    -print 2>/dev/null
+}
+check "非 [k8s_node] 主机 → 自身前缀内无证书/私钥/状态（D3：断言目标与 play 一致）" \
+  test -z "$(nonmember_artifacts)"
 
 sudo -n mv "$CA_CERT" "$SB/client/ca.crt.bak"
 rc=0
@@ -829,6 +917,27 @@ fi
 check "verify 日志出现 node2 已注册/Ready 读回" \
   bash -c "grep -qE 'node/node2|node2' '$SB/logs/addnode_verify.log' && grep -qiE 'Ready|已注册' '$SB/logs/addnode_verify.log'"
 check_eq "verify 后 node2 仍注册" "node/node2" "$(kctl get node node2 -o name 2>/dev/null)"
+kctl get node node2 -o json >"$SB/logs/node2_obj.json" 2>/dev/null || true
+check "node2 status.conditions 含真实 Ready 项（type/status/reason 载荷，D6）" \
+  python3 - "$SB/logs/node2_obj.json" <<'PY'
+import json
+import sys
+d = json.load(open(sys.argv[1]))
+conds = [c for c in (d.get("status") or {}).get("conditions") or []
+         if c.get("type") == "Ready"]
+assert len(conds) == 1, "Ready 条件缺失"
+c = conds[0]
+assert c.get("status") in ("True", "False"), c.get("status")
+assert "reason" in c, "reason 字段缺失"
+if c["status"] == "False":
+    assert c.get("reason"), "NotReady 必须给出 reason"
+PY
+rc=0
+ap_addnode "$SB/logs/addnode_verify_absent.log" --tags add-node:verify \
+  -e '{"add_node_verify_registration":true,"add_node_node_name":"node2-absent","add_node_verify_retries":1,"add_node_verify_delay":0}' || rc=$?
+check "verify 对未注册节点 rc≠0（断言有载荷：删/写错断言即变红，D6）" test "$rc" -ne 0
+check "verify 失败信息含未读回/Ready（可诊断）" \
+  grep -qiE '未.*读回|Ready' "$SB/logs/addnode_verify_absent.log"
 
 echo "-- B6 --check 干跑：rc=0 / changed=0 / 不写产物"
 HASHES_BEFORE_CHECK="$(fhash "$KL2_KUBECONFIG")|$(fhash "$KL2_CONF")|$(fhash "$NODE2_CERT")|$(fhash "$SB/node2/etc/containerd/config.toml")"
@@ -847,6 +956,34 @@ else
 fi
 check_eq "check 后真实应用 changed=0（状态已收敛）" 0 "$(changed_of "$SB/logs/addnode_run3.log")"
 
+echo "-- B6.5 --check 覆盖 cert / verify 读路径（D4；写任务 not ansible_check_mode）"
+CHK_PREFIX="$SB/node2check"
+sudo -n mkdir -p "$CHK_PREFIX/etc/kubernetes/pki/kubelet"
+sudo -n install -m 0644 "$SB/etc/kubernetes/pki/ca.crt" "$CHK_PREFIX/etc/kubernetes/pki/ca.crt"
+sudo -n install -m 0600 "$SB/etc/kubernetes/pki/ca.key" "$CHK_PREFIX/etc/kubernetes/pki/ca.key"
+rc=0
+ap_addnode "$SB/logs/addnode_check_cert.log" --check \
+  --tags add-node:validate,add-node:cert \
+  -e "{\"add_node_root_prefix\":\"$CHK_PREFIX\"}" || rc=$?
+check "--check（未收敛新 prefix，validate+cert 读路径）exit 0" test "$rc" -eq 0
+check_eq "--check（cert 读路径）changed=0（签发/写状态被拦住）" 0 \
+  "$(changed_of "$SB/logs/addnode_check_cert.log")"
+check_not "--check 未写 kubelet 证书（写任务 when: not ansible_check_mode）" \
+  test -f "$CHK_PREFIX/etc/kubernetes/pki/kubelet/node2.crt"
+check_not "--check 未写幂等状态记录" test -f "$CHK_PREFIX/etc/kubernetes/pki/kubelet/node2.state"
+check "--check 日志确实执行了 cert 的 CA 哈希读路径" \
+  grep -q '签发前的 CA 证书哈希' "$SB/logs/addnode_check_cert.log"
+check "--check 日志无 from_json/解析失败" \
+  bash -c "! grep -qiE 'from_json|Expecting value' '$SB/logs/addnode_check_cert.log'"
+rc=0
+ap_addnode "$SB/logs/addnode_check_verify.log" --check \
+  -e '{"add_node_verify_registration":true}' || rc=$?
+check "--check（已收敛节点，verify 读路径）exit 0" test "$rc" -eq 0
+check_eq "--check（verify 读路径）changed=0" 0 \
+  "$(changed_of "$SB/logs/addnode_check_verify.log")"
+check "--check 日志含 verify 的 Ready 读回（读路径真实执行）" \
+  grep -q '已注册.*Ready\|Ready=' "$SB/logs/addnode_check_verify.log"
+
 echo "-- B7 牙齿：篡改 kubelet.conf 后重跑必须真实收敛（不是恒真跳过）"
 printf '\n# t014 teeth: tampered\n' | sudo -n tee -a "$KL2_KUBECONFIG" >/dev/null 2>&1
 TAMPERED_HASH="$(fhash "$KL2_KUBECONFIG")"
@@ -864,6 +1001,63 @@ else
   bad "复原后再次运行失败（见 $SB/logs/addnode_teeth2.log）"
 fi
 check_eq "复原后再次运行 changed=0（幂等恢复）" 0 "$(changed_of "$SB/logs/addnode_teeth2.log")"
+
+echo "-- B7.5 证书幂等真实化：内容哈希基线 + leaf 篡改自愈 + CA 替换显式失败"
+N2_CA="$SB/node2/etc/kubernetes/pki/ca.crt"
+N2_STATE="$SB/node2/etc/kubernetes/pki/kubelet/node2.state"
+check "首跑写入 CA/证书/私钥内容哈希基线（幂等判定有载荷，不是只看文件存在）" \
+  test -s "$N2_STATE"
+STATE_LINE="$(sudo -n cat "$N2_STATE" 2>/dev/null)"
+check_eq "基线记录的证书哈希 = 当前证书内容哈希" "$(fhash "$NODE2_CERT")" \
+  "$(awk '{print $2}' <<<"$STATE_LINE")"
+check_eq "基线记录的 CA 哈希 = 当前节点 CA 内容哈希" "$(fhash "$N2_CA")" \
+  "$(awk '{print $1}' <<<"$STATE_LINE")"
+
+printf '\n# t018 leaf tamper\n' | sudo -n tee -a "$NODE2_CERT" >/dev/null 2>&1
+TAMPERED_CERT_SHA="$(fhash "$NODE2_CERT")"
+check "leaf 证书篡改后哈希已变化（前置）" test "$TAMPERED_CERT_SHA" != "$NODE2_CERT_HASH"
+if ap_addnode "$SB/logs/addnode_cert_heal.log"; then
+  ok "leaf 证书被篡改 → 重跑 exit 0（自愈：用既有 CA 重签）"
+else
+  bad "leaf 证书被篡改 → 重跑失败（见 $SB/logs/addnode_cert_heal.log）"
+fi
+check "篡改 leaf 后重跑 changed>0（真实重签，不是文件存在短路，T018/D2）" \
+  test "$(changed_of "$SB/logs/addnode_cert_heal.log")" -gt 0
+HEALED_CERT_SHA="$(fhash "$NODE2_CERT")"
+check "自愈后证书内容哈希 ≠ 篡改值（被真实重签）" \
+  test "$HEALED_CERT_SHA" != "$TAMPERED_CERT_SHA"
+check "自愈后证书链可用既有集群 CA 验证" \
+  sudo -n openssl verify -CAfile "$N2_CA" "$NODE2_CERT"
+check "自愈后基线记录更新为新证书哈希" \
+  bash -c "grep -q '$HEALED_CERT_SHA' '$N2_STATE'"
+if ap_addnode "$SB/logs/addnode_cert_heal2.log"; then
+  ok "自愈后复跑 exit 0"
+else
+  bad "自愈后复跑失败（见 $SB/logs/addnode_cert_heal2.log）"
+fi
+check_eq "自愈后复跑 changed=0（幂等恢复）" 0 "$(changed_of "$SB/logs/addnode_cert_heal2.log")"
+
+sudo -n cp "$N2_CA" "$SB/client/node2-ca.bak"
+printf '\n# t018 ca tamper\n' | sudo -n tee -a "$N2_CA" >/dev/null 2>&1
+CA_TAMPERED_SHA="$(fhash "$N2_CA")"
+check "节点 CA 被替换后哈希已变化（前置）" \
+  test "$CA_TAMPERED_SHA" != "$(awk '{print $1}' <<<"$STATE_LINE")"
+rc=0
+ap_addnode "$SB/logs/addnode_ca_tamper.log" || rc=$?
+check "节点 CA 被替换 → 重跑 rc≠0（显式失败，不静默 changed=0）" test "$rc" -ne 0
+check "失败信息指出 CA 与记录不一致（可诊断）" \
+  grep -qiE 'CA.*记录|记录.*CA|不一致' "$SB/logs/addnode_ca_tamper.log"
+check_eq "显式失败未覆盖/未重建被替换的 CA（不做危险自愈）" \
+  "$CA_TAMPERED_SHA" "$(fhash "$N2_CA")"
+check_eq "显式失败路径未重签 kubelet 证书" "$HEALED_CERT_SHA" "$(fhash "$NODE2_CERT")"
+sudo -n mv "$SB/client/node2-ca.bak" "$N2_CA"
+if ap_addnode "$SB/logs/addnode_ca_restored.log"; then
+  ok "CA 恢复后重跑 exit 0"
+else
+  bad "CA 恢复后重跑失败（见 $SB/logs/addnode_ca_restored.log）"
+fi
+check_eq "CA 恢复后重跑 changed=0（幂等基线恢复）" 0 \
+  "$(changed_of "$SB/logs/addnode_ca_restored.log")"
 
 echo "-- C1 既有节点 / 控制面零影响（显式比较，不静默）"
 check_eq "node1 kubelet PID 未变（无重启）" "$(ex_pre node1_kubelet_pid)" \
@@ -951,8 +1145,12 @@ if snapshot_with_retry "$POST_HOST_SNAP"; then
     "$(cat /proc/sys/kernel/panic_on_oops 2>/dev/null)"
   check_eq "宿主 kubepods*.slice 已恢复（active）" \
     "$PRE_KUBEPODS_ACTIVE" "$(snap_get "$POST_HOST_SNAP" kubepods_active)"
+  check_eq "宿主 kubepods*.slice 加载集合已恢复（active+inactive，D7）" \
+    "$PRE_KUBEPODS_LOADED" "$(snap_get "$POST_HOST_SNAP" kubepods_loaded)"
+  check "宿主复采快照逐键有载荷（D1/D5：空基线显式 FAIL）" \
+    test -z "$(snapshot_problems "$POST_HOST_SNAP" $SNAP_HOST_KEYS)"
 else
-  bad "宿主快照复采失败（重试 3 次仍失败，不静默）"
+  bad "宿主快照复采失败或含无效键（重试 3 次）：$(snapshot_problems "$POST_HOST_SNAP" $SNAP_HOST_KEYS)"
 fi
 check_eq "roles/add-node 文件内容在测试期间未被改动" "$ROLE_TREE_PRE" "$(role_tree_hash "$ROLE")"
 check_eq "SKIP 单独计数且不计入 PASS（无镜像限制项）" 2 "$skip_count"

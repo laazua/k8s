@@ -14,8 +14,11 @@
 2. **只签发、不建 CA**：`sign` 模式用 `pki` 的 `tasks_from: cert` 只签发本节点证书
    （`CN=system:node:<node>`、`O=system:nodes`），显式传 `pki_ca_rebuilt={kubernetes:false}`；
    签发前后比对 CA 证书/私钥 sha256，任何变化即失败。
-3. **幂等**：证书走 pki 的「有效且匹配 → 不重签」判定；已加入的节点显式打印「已加入」并
-   跳过签发；`containerd`/`kubelet` 产物走内容比较，重复执行 `changed=0` 且不重启 kubelet。
+3. **幂等（内容级）**：首跑把 CA/证书/私钥的 sha256 记录到 `<pki>/kubelet/<node>.state`；重跑以
+   「记录哈希 + 链验证 + CN/O + `openssl -checkend`」判定 unchanged（不是「文件存在」短路）。
+   记录与当前 leaf 证书不一致 / 证书失效 → 用既有 CA **重新签发（自愈）**；节点上的 CA 与记录
+   不一致 → **显式失败 rc≠0**（绝不重建/替换 CA；从控制面重新分发正确 CA）。
+   `containerd`/`kubelet` 产物走内容比较，重复执行 `changed=0` 且不重启 kubelet。
 4. **最小权限**：worker 只持有 kubelet 身份；verify 在控制端用 `admin.conf` 读回，
    并断言节点上没有 `admin.conf`。
 5. **零影响**：不触碰既有控制面/既有节点的任何文件或进程；不重建 CA。
@@ -38,6 +41,7 @@
 | `add_node_forbidden_groups` | `[k8s_master, etcd]` | 禁止分组（防误把控制面当新节点） |
 | `add_node_cert_mode` | `sign` | `sign`（本地用 CA 私钥签发）/ `preissued`（只校验已分发证书） |
 | `add_node_ca_cert` / `add_node_ca_key` | `<pki>/ca.crt` / `<pki>/ca.key` | 既有集群 CA（**只读**） |
+| `add_node_cert_state_file` | `<pki>/kubelet/<node>.state` | 首跑写入的 CA/证书/私钥内容哈希（幂等基线） |
 | `add_node_kubelet_cert` / `_key` | `<pki>/kubelet/<node>.crt` / `.key` | 本节点 kubelet 证书 |
 | `add_node_cluster_version` | `k8s_version` | 集群版本（minor 兼容判定） |
 | `add_node_kubelet_version` | `kubelet_version` | 目标 kubelet 版本 |
@@ -58,4 +62,5 @@ kubectl get node <new-node> -o wide
 ```
 
 重复执行同一命令应 `changed=0` 且不重启 kubelet；`--check` 对 add-node 自身的判定
-（分组/CA/版本/证书是否已存在）只读执行（`containerd`/`kubelet` 的写任务在 check 模式跳过）。
+（分组/CA/版本/证书状态记录/链验证）与 `verify` 的读回真实执行（`containerd`/`kubelet` 的写任务、
+证书签发与状态记录写入在 check 模式跳过）。

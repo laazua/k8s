@@ -40,6 +40,11 @@ add_node_kubelet_extra_sans: []
 add_node_node_ip: "{{ ansible_host | default(add_node_node_name) }}"
 add_node_pki_build_dir: "{{ add_node_root_prefix }}/var/cache/kubernetes-pki"
 
+# --- 证书幂等：内容哈希记录（重跑据此判定 unchanged；被篡改时自愈/显式失败）--
+# 一行三个 sha256：<ca> <cert> <key>；首跑签发后写入，重跑据此做内容级比对。
+add_node_cert_state_file: "{{ add_node_pki_dir }}/kubelet/{{ add_node_node_name }}.state"
+add_node_cert_renew_before_seconds: "{{ pki_renew_before_seconds | default(2592000) }}"
+
 # --- 节点产物路径（kubelet role 消费；由 validate 以 fact 暴露给 playbook）----
 add_node_kubelet_kubeconfig: "{{ add_node_root_prefix }}/var/lib/kubelet/kubelet.conf"
 add_node_kubelet_kubeconfig_mode: "0600"

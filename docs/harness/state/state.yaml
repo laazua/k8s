@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T018      # 例如 T001
-contract_status: accepted  # T017 r1 = PASS（accepted）；T018 契约待建立
-eval_round: 1          # T017 r1 = PASS
-next_action: "build T018"
+contract_status: ready_for_eval  # T018 build 完成，等待 r1 评估
+eval_round: 1          # T018 r1 待评估
+next_action: "eval T018"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
@@ -32,6 +32,15 @@ defaults:
 
 blockers: []          # 无阻塞；T017 r1 = PASS 已接受；T018/T019 为 T016 前置          # 无阻塞；T015 r1 = PASS 已接受；T017/T018/T019 为 T016 前置          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
 notes: |
+  **T018（T014 零影响/证书幂等加固）build 完成 → ready_for_eval（2026-11-19）**：
+  - D1/D2 MAJOR：快照逐键载荷守卫（空值/__ERROR__/__EMPTY__/缺键 → 显式 FAIL + 打印键名，另有注入负例）；
+    证书幂等改内容级（`node2.state` 记 CA/证书/私钥 sha256 + 链验证 + CN/O + checkend）：
+    leaf 篡改 → 自愈重签，再跑 changed=0；节点 CA 被替换 → rc≠0 显式失败且不覆盖。
+  - D3–D8 全部成立并关闭（D3 断言指向 `$SB/nonmember`；D4 两次 --check 覆盖 cert/verify 读路径；
+    D5 unit 哈希纳入符号链接 + 非空流基线；D6 Ready/reason 载荷断言 + verify 未注册负例；
+    D7 kubepods_loaded 比较；D8 恒真断言改为「文件数>0 ∧ 哈希非空」）。
+  - TDD 红 **263/13/2**（12 直击 + 1 级联）→ 绿 **276/0/2** ×2（归一化 diff 0 行）；计数 231→276。
+  - 门禁：`make lint` rc=0；`make test-e2e` 59/0；`make test-node` 291/0；全量 `make test` 未跑（成本）。
   **T017（e2e real 模式健壮性）r1 = PASS（accepted）**，被测 `cc300b6`（评估 `2026-11-19`，
   报告 `docs/harness/state/reports/T017-r1.md`）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5；完整度 4。
@@ -184,4 +193,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-19T05:40:00Z"   # ISO8601
+updated: "2026-11-19T09:35:00Z"   # ISO8601

@@ -13,9 +13,11 @@
 | 新节点 | 独立 root `$SB/node2`：独立 containerd socket/state/root + kubelet（20251/20249，节点名 `node2`） |
 | 断言 | 新节点由真实 kubelet 注册、Ready 条件有 reason、kubelet.conf 身份 `system:node:node2`、RBAC `get nodes=yes` / `create serviceaccounts=no` |
 | 幂等 | **同一命令**连跑两次，第二次 `changed=0`，证书/配置哈希与 kubelet PID 不变 |
+| 证书幂等（T018） | 首跑写 `<pki>/kubelet/node2.state`（CA/证书/私钥 sha256）；leaf 证书篡改 → 重跑自愈重签（changed>0）后再跑 `changed=0`；节点 CA 被替换 → rc≠0 显式失败且不覆盖被替换的 CA |
+| 快照守卫（T018） | 零影响快照逐键校验载荷（空值/`__ERROR__`/`__EMPTY__`/缺键 → 显式 FAIL 并打印键名），另有注入空值的负例断言 |
 | 零影响 | node1 kubelet / apiserver / etcd PID + 启动时间不变；node1 配置/证书哈希不变；集群 `etc/kubernetes` 全树哈希不变 |
 | fail-fast | 非 `k8s_node` 主机、缺 CA 证书/私钥、preissued 缺证书、kubelet 版本不兼容、verify 缺 kubeconfig |
-| `--check` | rc=0、`changed=0`、产物哈希不变 |
+| `--check` | rc=0、`changed=0`、产物哈希不变；另覆盖「未收敛新 prefix 的 cert 读路径」与「已收敛节点的 verify 读路径」 |
 | 宿主 | 不写 `/etc/kubernetes`、`/etc/systemd/system`；不 `systemctl start/stop`；退出恢复 `kernel.panic*` 与本次新建 `kubepods*` slice |
 
 ## 沙箱布局
@@ -50,6 +52,7 @@ $SB/node2/                 # 新 worker（独立 root，端口 20251/20249；由
 无镜像 → 系统 Pod 不 Running（只断言清单/对象/RBAC，固定 2 条 SKIP，不计 PASS）；「新节点」是
 同宿主的第二套运行时，不覆盖真实跨主机 join；沙箱不启 systemd：node1 拆成 containerd/kubelet
 两段、node2 的 containerd 在 add-node 前预置并由测试拉起（同一 role/变量），handler 重启路径
-未验证；`base` 以 `add_node_manage_host=false` 整体跳过；`--check` 只真实执行 add-node 自身的
-只读判定（containerd/kubelet 在 check 模式整体跳过，见契约 §7/§9）。
+未验证；`base` 以 `add_node_manage_host=false` 整体跳过；`--check` 真实执行 add-node 自身的
+只读判定与 verify 读回（证书签发/状态写入/containerd/kubelet 在 check 模式跳过，见契约 §7/§9）。
+强杀（SIGKILL）不会运行 EXIT trap，可能遗留 `/tmp/opencode/t014.*` 沙箱目录，需手工 `rm -rf`。
 详见契约 `docs/harness/state/contracts/T014.md` §5/§9。

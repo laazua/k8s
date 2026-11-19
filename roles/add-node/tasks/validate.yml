@@ -7,6 +7,9 @@
 #   4) kubelet 版本与集群 minor 兼容（add_node_allow_minor_skew）
 #   5) verify 开启时，控制端的 kubeconfig / kubectl 必须可用（worker 不要 admin 凭据）
 #   6) 判定节点是否「已加入」→ 显式跳过证书签发（幂等；不静默）
+#      幂等判定为**内容级**：首跑写入的 CA/证书/私钥 sha256 记录 + 链验证 + CN/O + checkend；
+#      记录不一致/证书失效 → 重新签发（自愈）；节点 CA 与记录不一致 → 显式失败（不重建 CA）。
+#   7) 状态记录损坏/缺失按「无基线」处理：凭证有效则回填记录（不重签），无效则重签。
 #   只读任务一律 check_mode: false，保证 --check 下仍能拿到判定结果。
 # =============================================================================
 
@@ -197,16 +200,179 @@
   register: add_node_kubelet_cred
   tags: ["add-node", "add-node:validate"]
 
-- name: "add-node:validate | 汇总节点是否已收敛（证书与私钥同时存在）"
+- name: "add-node:validate | 检查证书状态记录（首跑写入的 CA/证书/私钥内容哈希）"
+  ansible.builtin.stat:
+    path: "{{ add_node_cert_state_file }}"
+  register: add_node_cert_state_stat
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 读取证书状态记录（只读）"
+  ansible.builtin.slurp:
+    src: "{{ add_node_cert_state_file }}"
+  register: add_node_cert_state_raw
+  when: add_node_cert_state_stat.stat.exists
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总节点是否已有证书/私钥与状态记录字段"
   ansible.builtin.set_fact:
-    add_node_already_joined: >-
+    add_node_creds_present: >-
       {{ (add_node_kubelet_cred.results | selectattr('stat.exists') | list | length) == 2 }}
+    add_node_cert_state_fields: >-
+      {{ (add_node_cert_state_raw.content | b64decode | trim | split())
+         if (add_node_cert_state_stat.stat.exists) else [] }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 解析状态记录为 CA/证书/私钥哈希"
+  ansible.builtin.set_fact:
+    add_node_cert_state_ca: "{{ (add_node_cert_state_fields | default([]))[0] | default('', true) }}"
+    add_node_cert_state_cert: "{{ (add_node_cert_state_fields | default([]))[1] | default('', true) }}"
+    add_node_cert_state_key: "{{ (add_node_cert_state_fields | default([]))[2] | default('', true) }}"
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 读取节点 CA 内容哈希（只读，check 模式也执行）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_ca_cert }}"
+  register: add_node_ca_sha_stat
+  changed_when: false
+  check_mode: false
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 读取既有 kubelet 证书内容哈希（只读）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_kubelet_cert }}"
+  register: add_node_cert_sha_stat
+  changed_when: false
+  check_mode: false
+  when: add_node_creds_present | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 读取既有 kubelet 私钥内容哈希（只读）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ add_node_kubelet_key }}"
+  register: add_node_key_sha_stat
+  changed_when: false
+  check_mode: false
+  when: add_node_creds_present | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 校验既有证书链到集群 CA（只读）"
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -CAfile
+      - "{{ add_node_ca_cert }}"
+      - "{{ add_node_kubelet_cert }}"
+  register: add_node_cred_chain
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: add_node_creds_present | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 校验既有证书是否在续期窗口之外（只读）"
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -in
+      - "{{ add_node_kubelet_cert }}"
+      - -noout
+      - -checkend
+      - "{{ add_node_cert_renew_before_seconds | string }}"
+  register: add_node_cred_validity
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: add_node_creds_present | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 读取既有证书 subject（CN/O 匹配判定）"
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -in
+      - "{{ add_node_kubelet_cert }}"
+      - -noout
+      - -subject
+      - -nameopt
+      - RFC2253
+  register: add_node_cred_subject
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: add_node_creds_present | bool
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总当前内容哈希"
+  ansible.builtin.set_fact:
+    add_node_ca_sha_current: "{{ add_node_ca_sha_stat.stdout.split()[0] }}"
+    add_node_cert_sha_current: "{{ (add_node_cert_sha_stat.stdout | default('')).split()[0] | default('', true) }}"
+    add_node_key_sha_current: "{{ (add_node_key_sha_stat.stdout | default('')).split()[0] | default('', true) }}"
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总证书幂等判定（内容哈希 + 链 + subject，非文件存在）"
+  ansible.builtin.set_fact:
+    add_node_cert_record_present: >-
+      {{ (add_node_cert_state_cert | default('')) | length > 0 }}
+    add_node_cert_hash_match: >-
+      {{ (add_node_cert_state_cert | default('')) == (add_node_cert_sha_current | default(''))
+         and (add_node_cert_state_key | default('')) == (add_node_key_sha_current | default('')) }}
+    add_node_ca_tampered: >-
+      {{ (add_node_cert_state_ca | default('')) | length > 0
+         and (add_node_cert_state_ca | default('')) != (add_node_ca_sha_current | default('')) }}
+    add_node_creds_valid: >-
+      {{ (add_node_cred_chain.rc | default(1)) == 0
+         and (add_node_cred_validity.rc | default(1)) == 0
+         and ('CN=' ~ add_node_kubelet_common_name) in (add_node_cred_subject.stdout | default(''))
+         and ('O=' ~ add_node_kubelet_organization) in (add_node_cred_subject.stdout | default('')) }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总记录哈希是否与当前证书/私钥一致"
+  ansible.builtin.set_fact:
+    add_node_cert_record_mismatch: >-
+      {{ (add_node_cert_record_present | bool)
+         and not (add_node_cert_hash_match | bool) }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 汇总重签/已收敛决策（自愈或显式跳过）"
+  ansible.builtin.set_fact:
+    add_node_cert_reissue: >-
+      {{ (add_node_creds_present | bool)
+         and ((add_node_cert_record_mismatch | bool) or not (add_node_creds_valid | bool)) }}
+    add_node_already_joined: >-
+      {{ (add_node_creds_present | bool)
+         and (add_node_creds_valid | bool)
+         and not (add_node_ca_tampered | bool)
+         and not (add_node_cert_record_mismatch | bool) }}
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 节点 CA 与签发记录不一致 → 显式失败（不重建/不替换 CA）"
+  ansible.builtin.assert:
+    that:
+      - not (add_node_ca_tampered | bool)
+    fail_msg: >-
+      节点上的集群 CA 证书 {{ add_node_ca_cert }} 与首次签发记录不一致
+      （记录={{ add_node_cert_state_ca }}，实际={{ add_node_ca_sha_current }}）。
+      add-node 绝不重建/替换 CA，也无法自愈被替换的 CA：
+      请从控制面重新分发正确的 ca.crt（以及 sign 模式所需的 ca.key）后重试。
+    quiet: true
+  tags: ["add-node", "add-node:validate"]
+
+- name: "add-node:validate | 证书被篡改/失效 → 标记重新签发（自愈，不建 CA）"
+  ansible.builtin.debug:
+    msg: >-
+      节点 {{ add_node_node_name }} 的 kubelet 证书与签发记录不一致或已失效
+      （记录匹配={{ add_node_cert_hash_match }}、链/有效期/CN/O 通过={{ add_node_creds_valid }}）：
+      将用既有集群 CA 重新签发本节点证书（不新建 CA）。
+  when: add_node_cert_reissue | bool
   tags: ["add-node", "add-node:validate"]
 
 - name: "add-node:validate | 节点已收敛时显式跳过证书签发（幂等，不静默）"
   ansible.builtin.debug:
     msg: >-
-      节点 {{ add_node_node_name }} 已加入（kubelet 证书已存在），跳过签发；
+      节点 {{ add_node_node_name }} 已加入（kubelet 证书有效、与签发记录内容一致），跳过签发；
       继续以幂等方式收敛 containerd/kubelet 产物。
   when: add_node_already_joined | bool
   tags: ["add-node", "add-node:validate"]

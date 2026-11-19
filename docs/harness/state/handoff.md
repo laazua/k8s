@@ -9,6 +9,33 @@
 
 ---
 
+## [2026-11-19] Generator · T018（T014 零影响/证书幂等加固）→ **ready_for_eval**
+
+- **交付**（只改 `roles/add-node/`、`tests/add-node/`、两份 README；未动 `roles/pki|node|control-plane`）：
+  - `validate.yml`：幂等判定改为**内容级**——首跑记录 `node2.state`（`<ca> <cert> <key>` sha256），
+    重跑要求「记录一致 ∧ `openssl verify` 链到集群 CA ∧ CN/O 匹配 ∧ `-checkend`」；
+    记录不一致/证书失效 → `add_node_cert_reissue`（自愈）；节点 CA 与记录不一致 →
+    `add_node_ca_tampered` 显式 assert 失败（不重建/不替换 CA）。
+  - `cert.yml`：仅自愈时 `pki_force_regen=true`；签发后写哈希记录；从 T014 升级的节点回填记录
+    （不重签）；签发/写记录/清理一律 `when: not ansible_check_mode`。
+  - `verify.yml`：Ready 读取 `failed_when: false` + 独立 assert（NotReady 必须有 reason），
+    失败信息改为可诊断载荷。
+  - `test_add_node_flow.sh`：**231 → 276** 断言（+45）。新增快照逐键守卫（空值/`__ERROR__`/
+    `__EMPTY__`/缺键 → FAIL 打印键名）+ **负例注入**；证书哈希基线 + leaf 篡改自愈 + CA 替换显式失败；
+    两次 `--check`（cert/verify 读路径）；verify 对未注册节点负例；`kubepods_loaded` 比较；
+    `unit_set_hash` 纳入符号链接；D3 断言目标改 `$SB/nonmember`；D8 恒真断言加实载荷。
+- **TDD**：红（stash role）**263/13/2**（12 条直击目标 + 1 条级联），日志 `/tmp/opencode/t018_red.log`
+  → 绿 **276/0/2** ×2（`t018_green1.log`/`t018_green2.log`，归一化 diff **0 行**）。
+- **门禁**：`make lint` rc=0；`make test-e2e` 59/0；`make test-node` 291/0。
+  全量 `make test` 未跑（~82 分钟，成本政策；已如实声明）。
+- **取舍**：CA 被替换选「显式失败」（无可信 CA 副本，自动替换会掩盖篡改）；leaf 自愈会轮换私钥，
+  沙箱不重启 kubelet（与 T014 受限一致）。
+- **下一步**：Evaluator 独立复核。牙齿建议：①`snapshot_invalid_keys` 恒返回空 → A1/A3 红；
+  ②`already_joined` 回退到「文件存在」→ A5/A7 红；③删 verify Ready 断言 → A13 负例不再 rc≠0；
+  ④取反 cert 的 `not ansible_check_mode` → A10/A11 红。
+
+---
+
 ## [2026-11-19] Generator · T017（e2e real 模式健壮性）→ **ready_for_eval**
 
 - **交付**（仅 `tests/e2e/`，不改 sandbox 语义）：

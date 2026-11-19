@@ -5,7 +5,10 @@
 #     （pki 的缺省 true 会让证书每次重签，破坏幂等）；
 #   - 签发前后对 CA 证书/私钥做 sha256 内容比对，任何变化即失败（动态反证「未重建 CA」）；
 #   - preissued 模式：什么都不签，只由 validate 校验已分发证书；
-#   - 已加入的节点整段跳过（validate 已显式打印「已加入」）。
+#   - 已加入（证书有效且与签发记录内容一致）的节点整段跳过（validate 已显式打印「已加入」）；
+#   - 签发后把 CA/证书/私钥的 sha256 写入 add_node_cert_state_file，供重跑做内容级判定；
+#     记录不一致时 pki_force_regen=true 重签（自愈），正常重跑不触碰既有证书。
+#   - 签发/写记录/清理构建目录一律 `when: not ansible_check_mode`（--check 只跑读路径）。
 # =============================================================================
 
 - name: "add-node:cert | 读取签发前的 CA 证书哈希（只读，check 模式也执行）"
@@ -45,6 +48,8 @@
     pki_root_prefix: "{{ add_node_root_prefix }}"
     pki_ca_rebuilt:
       kubernetes: false
+    # 仅当记录哈希不一致/证书失效时强制重签（自愈）；正常重跑不触碰既有证书。
+    pki_force_regen: "{{ add_node_cert_reissue | default(false) }}"
     pki_cert:
       name: "kubelet/{{ add_node_node_name }}"
       cert: "{{ add_node_kubelet_cert }}"
@@ -59,6 +64,7 @@
   when:
     - not (add_node_already_joined | bool)
     - add_node_cert_mode == 'sign'
+    - not ansible_check_mode
   tags: ["add-node", "add-node:cert"]
 
 - name: "add-node:cert | 读取签发后的 CA 证书哈希"
@@ -105,6 +111,50 @@
   when:
     - not (add_node_already_joined | bool)
     - add_node_cert_mode == 'sign'
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 读取签发后的 kubelet 证书/私钥内容哈希（只读）"
+  ansible.builtin.command:
+    cmd: "sha256sum {{ item }}"
+  loop:
+    - "{{ add_node_kubelet_cert }}"
+    - "{{ add_node_kubelet_key }}"
+  loop_control:
+    label: "{{ item }}"
+  register: add_node_issued_sha
+  changed_when: false
+  check_mode: false
+  when:
+    - not ansible_check_mode
+    - not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 记录 CA/证书/私钥内容哈希（重跑据此做内容级比对）"
+  ansible.builtin.copy:
+    content: >-
+      {{ add_node_ca_cert_after.stdout.split()[0] }}
+      {{ add_node_issued_sha.results[0].stdout.split()[0] }}
+      {{ add_node_issued_sha.results[1].stdout.split()[0] }}
+    dest: "{{ add_node_cert_state_file }}"
+    mode: "0600"
+  when:
+    - not ansible_check_mode
+    - not (add_node_already_joined | bool)
+  tags: ["add-node", "add-node:cert"]
+
+- name: "add-node:cert | 回填既有证书的哈希记录（从 T014 升级节点，不重签）"
+  ansible.builtin.copy:
+    content: >-
+      {{ add_node_ca_sha_current }}
+      {{ add_node_cert_sha_current }}
+      {{ add_node_key_sha_current }}
+    dest: "{{ add_node_cert_state_file }}"
+    mode: "0600"
+  when:
+    - not ansible_check_mode
+    - add_node_cert_mode == 'sign'
+    - add_node_already_joined | bool
+    - not (add_node_cert_record_present | bool)
   tags: ["add-node", "add-node:cert"]
 
 - name: "add-node:cert | 清理 PKI 构建目录（CSR/序列号，不留在节点上）"
