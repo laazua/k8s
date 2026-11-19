@@ -2,15 +2,15 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T017      # 例如 T001
-contract_status: ready_for_eval  # T017 build 完成，待 eval
-eval_round: 1          # T017 第 1 轮
-next_action: "eval T017"
+phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
+active_task: T018      # 例如 T001
+contract_status: accepted  # T017 r1 = PASS（accepted）；T018 契约待建立
+eval_round: 1          # T017 r1 = PASS
+next_action: "build T018"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
-done_tasks: 15
+done_tasks: 16
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,8 +30,17 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T015 r1 = PASS 已接受；T017/T018/T019 为 T016 前置          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
+blockers: []          # 无阻塞；T017 r1 = PASS 已接受；T018/T019 为 T016 前置          # 无阻塞；T015 r1 = PASS 已接受；T017/T018/T019 为 T016 前置          # 无阻塞；T015 build 完成 → ready_for_eval（eval_round 1）
 notes: |
+  **T017（e2e real 模式健壮性）r1 = PASS（accepted）**，被测 `cc300b6`（评估 `2026-11-19`，
+  报告 `docs/harness/state/reports/T017-r1.md`）：
+  - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5；完整度 4。
+  - 独立复现：`make test-e2e` **59/0** ×2（328s/327s，内层 sandbox 30/0/3）；
+    自建 stub 五态 + 4 组缺值负例按预期；牙齿 5/5 全红。
+  - 契约 31 → **59** 条；全量预期 **16 套件 / 2501 断言**（未实跑，以 lint + taints + add-node 替代）。
+  - D1–D5 全 MINOR（sandbox 两处 kubectl 无 `--request-timeout`；`PASS>=15` 未固化 30；
+    `k8s_service_cidr` fallback 死键；kubectl 不可执行误报「API 不可达」；无 RESULT 仅断言 `--mode`）
+    记为 **T016 顺手修**，不新立任务。
   **T017（e2e real 模式健壮性）build 完成 → ready_for_eval（2026-11-19）**：
   - 修复 T012 r1 的 D1/D2/D3 + D4/D5/D6/D9（+D7 的 slice 清理粒度）：
     缺值一律 rc=2；real 模式 API 不可达/查询 rc≠0/节点或 Pod 空集 → FAIL；
@@ -175,4 +184,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-19T04:05:00Z"   # ISO8601
+updated: "2026-11-19T05:40:00Z"   # ISO8601
