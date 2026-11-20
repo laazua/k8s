@@ -1,8 +1,10 @@
 # 任务清单（Roadmap）· k8s 二进制 Ansible 部署
 
-> 状态：**已复核定稿（v1.8，Planner，2026-11-19）**，取代 v1.7。上游：`spec.md`（G1–G13 / A1–A16 / C1–C14 / D1–D3 / R7）。
+> 状态：**已复核定稿（v1.9，Planner，2026-11-20）**，取代 v1.8。上游：`spec.md`（G1–G13 / A1–A16 / C1–C14 / D1–D3 / R7）。
+> v1.9 变更：T018 → done（r1 = PASS）；add-node 231 → **276** 断言，全量预期 **16 套件 / 2546**（未重跑）；
+> T018 r1 的 D1–D3 MINOR 并入 T016 顺手修；T016 仍依赖 T017/T018/T019。
 > v1.8 变更：T017 → done（r1 = PASS）；e2e 契约 31 → **59** 条，全量预期 **16 套件 / 2501 断言**（未重跑）；
-> T017 r1 的 D1–D5 MINOR 并入 T016 顺手修；T016 仍依赖 T017/T018/T019。
+> T017 r1 的 D1–D5 MINOR 并入 T016 顺手修。
 > v1.7 变更：T015 → done（r1 = PASS）；新增 **T019**（T015 测试假绿/一致性加固），作为 T016 前置；
 > 全量测试成本更新为 **15 套件 / 2473 断言 / ~82 分钟**。
 > v1.6 变更：T014 → done（r1 = PASS）；新增 **T018**（T014 零影响快照/证书幂等加固），作为 T016 前置；
@@ -41,10 +43,14 @@
 | T015 | done | 版本升级与回滚 | `roles/upgrade`（validate/backup/binaries/verify/rollback）+ 真实 `playbooks/upgrade.yml` + `tests/upgrade/`（268 断言）+ 文档 | **目标验收**：升级一个 minor 版本（升级前自动备份 etcd/证书），升级后版本已变更且全部节点 Ready；按文档回滚回到原版本且集群仍 Ready [A15, G10, D3]。**已验（sandbox）**：`etcdctl snapshot save/status` + PKI/kubeconfig/SHA256SUMS，备份失败 abort；1.31.0→**1.32.13** 真实二进制（sha256 校验）；运行中 apiserver `/version`、kubelet 与 `nodeInfo.kubeletVersion` 真实变更；`snapshot restore`+数据目录换入回滚，`/version` 回旧、ConfigMap 随 etcd 回滚消失；二次 `changed=0`；`--check` 不落盘；6 类 fail-fast。**受限**：单宿主单节点、etcd 单成员、无 CNI（Ready=False 有 reason）、无 systemd 启停（`manage_service=true` 未验），真机步骤见契约 §5 | T014 | 端到端沙箱（真实备份/升级/回滚 + 版本读回 + 幂等） | normal |
 | T016 | todo | 端到端验收与使用文档 | `tests/e2e/` 全流程脚本、`docs/` 使用手册（inventory 填写、变量说明、代理/离线、加节点、升级、回滚、已知限制） | 从干净 inventory 按 README 快速开始流程可一条命令得到可用 HA 集群；文档覆盖全部可配置项与已知限制；**T013/T014/T015 的验收在同一轮全流程中全部复现通过** [A16] | T013, T015, T017, T018, T019 | 端到端全流程（干净环境重跑） | normal |
 | T017 | done | e2e real 模式健壮性修复 | `tests/e2e/smoke.sh` + `test_smoke_contract.sh`（59 断言）+ `tests/e2e/README.md` | **目标验收**：①`--mode`/`--image`/`--kubeconfig` 缺值 → `rc=2` 立即退出（不挂起）；②real 模式 API 不可达或 kubectl 查询为空 → FAIL（禁止 `0/0` 空集恒真 PASS）；③`--image` Job 被拒 → FAIL（不得降级 SKIP）；④清理失败影响最终 RESULT；⑤`make test-e2e` 全绿且 sandbox 计数不回退（30/0/3、契约 ≥31）[A12, C14, R7]。**已验**：契约 **59/0** ×2（328s/327s，内层 sandbox 30/0/3）；缺值 4 组 rc=2 且 19–22ms 退出；stub kubectl 五态（unreachable/empty-nodes/empty-pods/rc-fail）→ `RESULT=FAIL` rc=1 且无 `0/0`；Job Forbidden → FAIL 带 `Forbidden` 且不打 SKIP；cleanup 故障注入 → `RESULT=FAIL`；SKIP 恰好 3 条且名称匹配；牙齿 5/5 全红；`make lint` rc=0。**受限/未验证**：real 成功路径需真机；全量 `make test` 未重跑（以 lint + taints 175/0 + add-node 231/0/2 替代）；D1–D5 MINOR（sandbox 两处 kubectl 无 `--request-timeout`、`PASS>=15` 未固化 30、`k8s_service_cidr` fallback 死键、kubectl 不可执行误报「API 不可达」、无 RESULT 仅断言 `--mode`）并入 T016 顺手修 | T012 | 负例测试（错误 kubeconfig / 缺参 / 坏镜像）+ 契约套件连跑两次 | normal |
-| T018 | in-progress | T014 零影响/证书幂等加固 | `roles/add-node/` 与 `tests/add-node/` 补强（不改验收摘要） | ①**零影响快照空值必须显式 FAIL**：`node1_obj`/`*_start`/`__ERROR__` 等缺失不得静默通过（最小复现：删/置空后套件 rc≠0）；②**证书幂等真实**：`pki_ca_rebuilt` 重跑不得仅靠「文件存在」短路，须校验 CA/证书内容哈希并在被篡改时自愈或显式失败；③D3–D8 MINOR 一并修（「未落盘」断言空转、`--check` 覆盖 validate 之外、unit 快照空基线、Ready 断言非载荷、`kubepods_loaded` 未比较、恒真断言）；④`make test-add-node` 计数只增不减且两次逐条一致 [A14, C14] | T014 | 最小复现 + 负例测试 + 幂等复跑 | normal |
+| T018 | done | T014 零影响/证书幂等加固 | `roles/add-node/`（validate/cert/verify 补强）+ `tests/add-node/`（276 断言）| **目标验收**：①零影响快照空值/哨兵/缺键**显式 FAIL 并打印键名**；②证书幂等**内容级**（sha256 基线；leaf 篡改自愈、CA 被替换显式失败）；③D3–D8 关闭；④计数只增不减且两次一致 [A14, C14]。**已验**：`make test-add-node` **276/0/2** ×2（归一化 diff 4 行，仅缓存目录名）；负例注入 `node1_obj`/`apiserver_start`/`kubepods_loaded` 空值被判无效；leaf 篡改 → changed>0 自愈 → 复跑 0；CA 替换 → rc≠0 且不覆盖；`--check`（cert/verify 读路径）rc=0/changed=0/零写入；牙齿 4 家族全红（守卫/内容哈希/check 守卫/CA 篡改）。**受限/未验证**：全量 `make test` 未跑（以 lint + e2e 59/0 + node 291/0 替代）；自愈后沙箱不重启 kubelet；D1 MINOR（D6 静态断言为文本存在型、无牙齿）与 D2/D3 并入 T016 | T014 | 最小复现 + 负例测试 + 幂等复跑 | normal |
 | T019 | todo | T015 测试假绿/一致性加固 | `tests/upgrade/` 与 `roles/upgrade/` 补强（不改验收摘要） | ①**D1 MAJOR**：E7/E8 的 `upgrade_bin_dir` 必须放入真实旧二进制，使制品 sha256/版本断言**真实执行**；错误信息断言改为独立关键字（不得被「交叉校验/目标版本」等文本命中）；②D2 回滚日志断言不得被 skipped 任务名命中；③D3/E8 恒真前置删除或加实载荷；④D5 目标版本重跑不得裁剪备份（`upgrade_needed` 条件）；⑤D6 `item` 模板告警；⑥D7 回滚默认 member/peer URL 与 etcd role 对齐；⑦D8 PKI/kubeconfig 哈希比对增加区分度；⑧`make test-upgrade` 计数只增不减且两次逐条一致 [A15, C14] | T015 | 负例最小复现 + 真实执行证据 + 幂等复跑 | normal |
 
 > 注：T013 与 T014 **可并行**（互不依赖）；T016 依赖 T013/T015 与 **T017** 完成，故为主线的终点。
+> 注（v1.9，2026-11-20）：T018 r1 = **PASS**（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4），
+> 独立复跑 `test-add-node` **276/0/2** ×2（归一化 diff 4 行），牙齿 4 变异家族全红，宿主零污染。
+> 遗留 D1 MINOR（D6 静态断言仅校验文本）、D2（自愈后需重启 kubelet，文档化）、D3（全量未跑）→ 由 **T016** 顺手修。
+> 评估由主会话代做（`harness-evaluator` 免费额度受限），报告 `reports/T018-r1.md` 已注明。
 > 注（v1.8，2026-11-19）：T017 r1 = **PASS**（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5，完整度 4），
 > 独立复跑 `test-e2e` **59/0 ×2**（328s/327s，内层 sandbox 30/0/3），自建 stub 五态 + 4 组缺值负例全部按预期，
 > 牙齿 5/5 全红。D1–D5 全为 MINOR，并入 **T016** 顺手修（不新立任务）。全量 16 套件 = **2501** 未实跑。
@@ -121,9 +127,9 @@ T001 ─┬─ T002 ─┐
   这类效果一律按受限项处理，需在真机/VM 复验。
 - 若环境无 libvirt/多 VM：T005/T006 的「故障漂移」、T014/T015 的端到端需以容器近似完成，**必须在契约与评估报告中显式声明局限**（对应 spec R1），不得声称等价于真实 HA。
 - 容器近似无法验证内核相关的 Cilium 数据面能力（spec R4），需在文档的已知限制中列出。
-- **套件成本（v1.8）**：`test-e2e`/`test-taints`/`test-add-node`/`test-upgrade` 均已挂入 `make test`；
-  已实测 **15 套件 = 2473** 断言（T015 实测 `rc=0` / 4899s；taints ~5.5、add-node ~10.8、upgrade ~10.2 分钟）；
-  T017 后 e2e 契约 31 → **59**，全量预期 **16 套件 / 2501**（**未重跑**）。sandbox 模式固定 3 条 SKIP（系统 Pod / kube-dns / 跨节点），
+- **套件成本（v1.9）**：`test-e2e`/`test-taints`/`test-add-node`/`test-upgrade` 均已挂入 `make test`；
+  已实测 **15 套件 = 2473** 断言（T015 实测 `rc=0` / 4899s；taints ~5.5、add-node ~10.8→~15.3、upgrade ~10.2 分钟）；
+  T017/T018 后 e2e 31 → **59**、add-node 231 → **276**，全量预期 **16 套件 / 2546**（**未重跑**）。sandbox 模式固定 3 条 SKIP（系统 Pod / kube-dns / 跨节点），
   **SKIP 不得计入 PASS**（spec C14）；real 模式必须在无集群/错 kubeconfig 下反证会 `FAIL`（T017）。
 - QAgate 一律 `normal`：每条验收都是可判定命令，无需降级为阶段末统一评估。
 - 允许在契约中微调交付物文件名/位置，但**验收摘要不得弱化**；若需弱化，必须回到 Planner 修订 roadmap。

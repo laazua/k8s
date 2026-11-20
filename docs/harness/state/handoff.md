@@ -57,6 +57,19 @@
 
 ---
 
+## [2026-11-20] Planner · T018 r1 评估收口（主会话代评）→ 推进 T019
+
+- **决策**：T018 r1 = PASS **予以接受**；报告 `reports/T018-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
+  该报告由**主会话代评**产出（`harness-evaluator` 子代理两次触发 `Free usage limit reached`），已在报告首行注明。
+- **roadmap v1.9**：T018 → `done`（已验/受限）；add-node 231 → **276**；全量预期 **16 套件 / 2546**（未重跑）；
+  T018 r1 的 D1–D3 MINOR 并入 **T016 顺手修**（D6 静态断言仅文本、自愈后需重启 kubelet 文档化、全量未跑）。
+- **spec v1.11**：A14 补强为「快照逐键有载荷 + 证书内容级幂等 + `--check` 零写入」。
+- **状态**：`phase: BUILDING` / `active_task: T019` / `contract_status: accepted`（T018）/
+  `next_action: "build T019"` / `done_tasks: 17` / `planned_tasks: 19`。
+- **下一步**：T019（T015 测试假绿修复：E7/E8 真实执行 + D2–D8），之后 T016。
+
+---
+
 ## [2026-11-19] Planner · T017 r1 评估收口 → 推进 T018
 
 - **决策**：T017 r1 = PASS **予以接受**；报告 `reports/T017-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 4 / 安全 5，完整度 4）。
