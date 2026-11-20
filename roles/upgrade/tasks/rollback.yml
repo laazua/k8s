@@ -129,7 +129,7 @@
       备份 {{ upgrade_rollback_dir }}/bin 中没有旧二进制，无法回滚
     quiet: true
 
-- name: "upgrade:rollback | 回装旧二进制（{{ item.path | basename }}）"
+- name: "upgrade:rollback | 回装旧二进制（按备份 bin/ 全部回装）"
   ansible.builtin.copy:
     src: "{{ item.path }}"
     dest: "{{ upgrade_bin_dir }}/{{ item.path | basename }}"
@@ -150,7 +150,7 @@
   register: upgrade_rollback_kubeconfigs
   check_mode: false
 
-- name: "upgrade:rollback | 回装 kubeconfig / 节点配置（{{ item | basename }}）"
+- name: "upgrade:rollback | 回装 kubeconfig / 节点配置（按 upgrade_kubeconfig_files 全部回装）"
   ansible.builtin.copy:
     src: "{{ upgrade_rollback_dir }}/kubeconfigs/{{ item | basename }}"
     dest: "{{ upgrade_root_prefix }}{{ item }}"

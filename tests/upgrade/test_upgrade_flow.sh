@@ -37,6 +37,17 @@ check_not() { local d="$1"; shift; if "$@" >/dev/null 2>&1; then bad "$d"; else 
 check_eq() { local d="$1" want="$2" got="$3"; if [[ "$want" == "$got" ]]; then ok "$d"; else bad "$d [期望=$want 实际=${got:-<空>}]"; fi; }
 changed_of() { grep -oE 'changed=[0-9]+' "$1" 2>/dev/null | cut -d= -f2 | awk '{s+=$1} END{print s+0}'; }
 sha_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
+# 任务块判定：只取该 TASK 名字之后的第一个结果行（ok/changed/skipping/failed/...）。
+# 用于证明「某任务真实执行」，避免 grep 命中 skipping 行里的任务名（T019 D2）。
+task_status() {  # task_status <log> <任务名 ERE>
+  awk -v pat="$2" '
+    /^TASK \[/ { blk = ($0 ~ pat); next }
+    blk && /^(ok|changed|fatal|failed|skipping|included):/ { print; exit }
+  ' "$1" 2>/dev/null
+}
+task_changed() {  # task_changed <log> <任务名 ERE>：该任务结果为 changed: [<host>]
+  [[ "$(task_status "$1" "$2")" =~ ^changed:\ \[[^]]+\]$ ]]
+}
 
 # --- Ansible / yamllint 探测 -------------------------------------------------
 ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-$(command -v ansible-playbook 2>/dev/null || echo "$HOME/ansible/bin/ansible-playbook")}"
@@ -249,6 +260,8 @@ PRE_KUBEPODS_ACTIVE="$(snap_get "$PRE_HOST_SNAP" kubepods_active)"
 PRE_KUBEPODS_LOADED="$(snap_get "$PRE_HOST_SNAP" kubepods_loaded)"
 SLICE_STOP_ERRORS=""
 SLICES_STOPPED=0
+NEW_SLICE_SEEN=0
+NEW_SLICE_STOPPED=0
 stop_new_kubepods_slices() {
   [[ "$SLICES_STOPPED" -eq 1 ]] && return 0
   SLICES_STOPPED=1
@@ -256,7 +269,10 @@ stop_new_kubepods_slices() {
   now="$(kubepods_loaded)"
   while read -r u; do
     [[ -z "$u" ]] && continue
-    if ! sudo -n systemctl stop "$u" >/dev/null 2>&1; then
+    NEW_SLICE_SEEN=$((NEW_SLICE_SEEN + 1))
+    if sudo -n systemctl stop "$u" >/dev/null 2>&1; then
+      NEW_SLICE_STOPPED=$((NEW_SLICE_STOPPED + 1))
+    else
       SLICE_STOP_ERRORS+="$u "
     fi
   done < <(comm -13 <(printf '%s\n' $PRE_KUBEPODS_LOADED | sort -u) \
@@ -348,9 +364,19 @@ check "存在入口 $PLAY_UPGRADE" test -f "$PLAY_UPGRADE"
 check "存在 Makefile 目标 test-upgrade" grep -qE '^test-upgrade:' Makefile
 check "make test 挂载 test_upgrade_flow.sh" \
   bash -c "awk '/^test:/{f=1} f&&/^[a-zA-Z0-9_-]+:/{if(\$0!~/^test:/)exit} f' Makefile | grep -q 'tests/upgrade/test_upgrade_flow.sh'"
-for p in "$PLAY_STACK" "$PLAY_CP" "$PLAY_NODE1" "$PLAY_NODE1_KL" "$INV"; do
-  check "sandbox 资产不写宿主 /etc/systemd/system：$p" bash -c "! grep -q '/etc/systemd/system' '$p'"
+# 沙箱根前缀绑定：所有 *_root / *_root_prefix 必须解析到 sandbox_root（写盘不落宿主）
+sandbox_prefixed() {  # sandbox_prefixed <file>
+  local binds
+  binds="$(grep -hoE '^[[:space:]]*[a-z0-9_]*root(_prefix)?:[[:space:]]*.*' "$1" 2>/dev/null)"
+  [[ -n "$binds" ]] || return 1
+  ! printf '%s\n' "$binds" \
+    | grep -qvE ':[[:space:]]*"?\{\{ (sandbox_root|node_root) \}\}(/[^"]*)?"?[[:space:]]*$'
+}
+for p in "$PLAY_STACK" "$PLAY_CP" "$PLAY_NODE1" "$PLAY_NODE1_KL"; do
+  check "sandbox 资产根前缀全部绑定到 sandbox_root（不写宿主）：$p" sandbox_prefixed "$p"
 done
+check "sandbox inventory 为 local 连接且使用高位端口（不占 6443/2379）" \
+  bash -c "grep -q 'ansible_connection=local' '$INV' && ! grep -qE 'k8s_apiserver_port=6443' '$INV'"
 
 echo "-- A2 变量化（静态）"
 check "defaults 定义动作（upgrade/rollback）" \
@@ -439,6 +465,19 @@ check "roles/upgrade/README.md 指向 playbooks/upgrade.yml" \
   grep -q 'playbooks/upgrade.yml' "$ROLE/README.md"
 check "README 覆盖回滚命令（upgrade_action=rollback）" \
   bash -c "grep -q 'upgrade_action=rollback' '$ROLE/README.md' && grep -q 'upgrade_action=rollback' tests/upgrade/README.md"
+
+echo "-- A4b 回滚多成员覆盖项与 etcd role 对齐（D7）"
+check "tests/upgrade/README 列明多成员回滚需覆盖的变量" \
+  bash -c "grep -q 'upgrade_rollback_etcd_member_name' tests/upgrade/README.md && \
+           grep -q 'upgrade_rollback_etcd_initial_peer_url' tests/upgrade/README.md"
+check "roles/upgrade/README 列明多成员回滚需覆盖的变量" \
+  bash -c "grep -q 'upgrade_rollback_etcd_member_name' '$ROLE/README.md' && \
+           grep -q 'upgrade_rollback_etcd_initial_peer_url' '$ROLE/README.md'"
+check "defaults 注释说明默认值与 roles/etcd（etcd_member_name=inventory_hostname）的对齐" \
+  bash -c "grep -B6 -A1 '^upgrade_rollback_etcd_member_name:' '$ROLE/defaults/main.yml' \
+           | grep -qE 'inventory_hostname'"
+check "契约 T015 §5 记录多成员回滚覆盖项（D7）" \
+  grep -q 'upgrade_rollback_etcd_member_name' docs/harness/state/contracts/T015.md
 
 echo "-- A5 check-mode 接线"
 check "只读 command 显式 check_mode: false" \
@@ -757,6 +796,15 @@ check_eq "备份被篡改 → 已安装二进制未被覆盖" "$APISERVER_HASH_B
   "$(fhash "$SB/usr/local/bin/kube-apiserver")"
 
 # E7 目标版本二进制 sha256 不符（file:// 假制品源 + 官方 sha）
+#   D1：upgrade_bin_dir 必须放入**真实旧二进制**，否则 backup 先失败、sha256 断言永不执行（假绿）。
+FAKE_BIN7="$SB/var/fake-bin"
+sudo -n mkdir -p "$FAKE_BIN7"
+sudo -n install -m 0755 "$SB/usr/local/bin/kube-apiserver" "$FAKE_BIN7/kube-apiserver"
+check_eq "E7 前置：fake-bin 放入真实 v$VERSION_OLD 旧二进制（使 backup 可通过）" "v$VERSION_OLD" \
+  "$(bin_version "$FAKE_BIN7/kube-apiserver")"
+FAKE_BIN7_HASH="$(fhash "$FAKE_BIN7/kube-apiserver")"
+check "E7 前置：旧二进制哈希非空" \
+  bash -c "[[ -n '$FAKE_BIN7_HASH' && '$FAKE_BIN7_HASH' != __MISSING__ ]]"
 FAKE_DL="$SB/fake-dl/v$VERSION_NEW/bin/linux/amd64"
 mkdir -p "$FAKE_DL"
 printf 'not-a-real-kube-apiserver\n' >"$FAKE_DL/kube-apiserver"
@@ -764,19 +812,32 @@ rc=0
 ap_cp "$SB/logs/ff_sha.log" \
   -e "upgrade_download_url_base=file://$SB/fake-dl" \
   -e "upgrade_artifact_dir=$SB/var/fake-art" \
-  -e "upgrade_bin_dir=$SB/var/fake-bin" \
+  -e "upgrade_bin_dir=$FAKE_BIN7" \
   -e '{"upgrade_components":["kube-apiserver"]}' \
   -e "upgrade_backup_root=$FF_BACKUP_ROOT" \
   -e upgrade_backup_etcd=false -e upgrade_backup_pki=false \
   -e upgrade_download_retries=1 || rc=$?
 check "目标二进制 sha256 不符 → exit≠0" test "$rc" -ne 0
-check "目标二进制 sha256 不符 → 信息含 sha256/checksum" \
-  grep -qiE 'sha256|checksum|校验' "$SB/logs/ff_sha.log"
+check "sha256 不符 → 报错含独立关键字 did not match" \
+  grep -q 'did not match' "$SB/logs/ff_sha.log"
+check "sha256 不符 → 报错含官方固定 sha（真实比对，非恒真）" \
+  grep -q "${SHA_NEW[kube-apiserver]}" "$SB/logs/ff_sha.log"
+check "sha256 不符 → 已进入 upgrade:binaries 获取阶段（backup 未前置中断）" \
+  grep -q 'upgrade:binaries | 获取 kube-apiserver 目标制品' "$SB/logs/ff_sha.log"
+check "sha256 不符 → 备份阶段真实完成（SHA256SUMS 已写入）" \
+  grep -q 'upgrade:backup | 写入 SHA256SUMS' "$SB/logs/ff_sha.log"
+check_not "sha256 不符 → 备份任务名无 'item' 未定义模板告警（D6）" \
+  grep -qF "'item' is undefined" "$SB/logs/ff_sha.log"
 check_eq "sha256 不符 → 真实 bin 未被改动" "$APISERVER_HASH_BEFORE" \
   "$(fhash "$SB/usr/local/bin/kube-apiserver")"
-check_not "sha256 不符 → 未安装到 fake bin" test -f "$SB/var/fake-bin/kube-apiserver"
+check_eq "sha256 不符 → fake-bin 未被覆盖（仍是旧二进制）" "$FAKE_BIN7_HASH" \
+  "$(fhash "$FAKE_BIN7/kube-apiserver")"
 
 # E8 目标二进制版本不符（假制品 + 假 sha 匹配 → 下载通过但 --version 断言失败）
+FAKE_BIN8="$SB/var/fake-bin2"
+sudo -n mkdir -p "$FAKE_BIN8"
+sudo -n install -m 0755 "$SB/usr/local/bin/kube-apiserver" "$FAKE_BIN8/kube-apiserver"
+FAKE_BIN8_HASH="$(fhash "$FAKE_BIN8/kube-apiserver")"
 FAKE_BIN_SRC="$SB/var/fake-src/kube-apiserver"
 mkdir -p "$SB/var/fake-src"
 printf 'not-a-real-kube-apiserver\n' >"$FAKE_BIN_SRC"
@@ -784,22 +845,37 @@ FAKE_SHA="$(sha_of "$FAKE_BIN_SRC")"
 FAKE_DL2="$SB/fake-dl2/v$VERSION_NEW/bin/linux/amd64"
 mkdir -p "$FAKE_DL2"
 cp "$FAKE_BIN_SRC" "$FAKE_DL2/kube-apiserver"
-check_eq "假制品 sha256 与注入的 upgrade_known_sha256 一致（确保走到版本断言）" "$FAKE_SHA" \
+check "E8 前置：假制品 sha256 ≠ 官方 v$VERSION_NEW sha256（证明「sha 对但版本错」）" \
+  bash -c "[[ '$FAKE_SHA' != '${SHA_NEW[kube-apiserver]}' ]]"
+check "E8 前置：假 sha 为 64 位 hex（否则下载校验先失败，走不到版本断言）" \
+  bash -c "[[ '$FAKE_SHA' =~ ^[0-9a-f]{64}$ ]]"
+check_eq "E8 前置：注入的 upgrade_known_sha256 与假制品一致（下载应通过）" "$FAKE_SHA" \
   "$(sha_of "$FAKE_DL2/kube-apiserver")"
 rc=0
 ap_cp "$SB/logs/ff_binver.log" \
-  -e "upgrade_known_sha256={\"$VERSION_NEW\":{\"kube-apiserver\":\"$FAKE_SHA\"}}" \
+  -e "{\"upgrade_known_sha256\":{\"$VERSION_NEW\":{\"kube-apiserver\":\"$FAKE_SHA\"}}}" \
   -e "upgrade_download_url_base=file://$SB/fake-dl2" \
   -e "upgrade_artifact_dir=$SB/var/fake-art2" \
-  -e "upgrade_bin_dir=$SB/var/fake-bin2" \
+  -e "upgrade_bin_dir=$FAKE_BIN8" \
   -e '{"upgrade_components":["kube-apiserver"]}' \
   -e "upgrade_backup_root=$FF_BACKUP_ROOT" \
   -e upgrade_backup_etcd=false -e upgrade_backup_pki=false \
   -e upgrade_download_retries=1 || rc=$?
 check "目标二进制版本不符 → exit≠0" test "$rc" -ne 0
-check "目标二进制版本不符 → 信息含版本" grep -qiE '版本|version' "$SB/logs/ff_binver.log"
+check "版本不符 → 信息含独立关键字 制品版本不符" \
+  grep -q '制品版本不符' "$SB/logs/ff_binver.log"
+check "版本不符 → 版本断言任务真实执行（含 制品版本 = v$VERSION_NEW）" \
+  grep -q "制品版本 = v$VERSION_NEW" "$SB/logs/ff_binver.log"
+check "版本不符 → 已读取制品版本（--version 探针真实执行）" \
+  grep -q 'upgrade:binaries | 读取 kube-apiserver 制品版本' "$SB/logs/ff_binver.log"
+check "版本不符 → 注入的 upgrade_known_sha256 生效（sha 断言已通过）" \
+  grep -q 'upgrade:binaries | 断言 kube-apiserver 制品 sha256 = 官方固定值' "$SB/logs/ff_binver.log"
+check_not "版本不符 → 未因 sha256 未固定提前失败（证明走到版本断言）" \
+  grep -q 'sha256 未固定' "$SB/logs/ff_binver.log"
 check_eq "版本不符 → 真实 bin 未被改动" "$APISERVER_HASH_BEFORE" \
   "$(fhash "$SB/usr/local/bin/kube-apiserver")"
+check_eq "版本不符 → fake-bin 未被覆盖（仍是旧二进制）" "$FAKE_BIN8_HASH" \
+  "$(fhash "$FAKE_BIN8/kube-apiserver")"
 
 echo "-- B3.5 制品切换为 1.32.13（升级目标就位；--check 需要真实目标制品）"
 for n in $COMPONENTS; do
@@ -851,12 +927,16 @@ else
   bad "控制面升级失败（见 $SB/logs/upg_cp.log）"
 fi
 check "控制面升级首跑 changed>0" test "$(changed_of "$SB/logs/upg_cp.log")" -gt 0
+check_not "控制面升级日志无 'item' 未定义模板告警（D6）" \
+  grep -qF "'item' is undefined" "$SB/logs/upg_cp.log"
 if ap_node "$SB/logs/upg_node.log"; then
   ok "工作节点升级 play exit 0"
 else
   bad "工作节点升级失败（见 $SB/logs/upg_node.log）"
 fi
 check "工作节点升级首跑 changed>0" test "$(changed_of "$SB/logs/upg_node.log")" -gt 0
+check_not "节点升级日志无 'item' 未定义模板告警（D6）" \
+  grep -qF "'item' is undefined" "$SB/logs/upg_node.log"
 
 BACKUP_CP="$(sudo -n find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | head -1)"
 BACKUP_NODE="$(sudo -n find "$NODE_BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | head -1)"
@@ -949,14 +1029,42 @@ ap_cp "$SB/logs/teeth_ready.log" --tags upgrade:verify \
 check "require_ready=true + NotReady 节点 → exit≠0" test "$rc" -ne 0
 check "require_ready=true 失败信息含 Ready" grep -qiE 'Ready' "$SB/logs/teeth_ready.log"
 
-echo "-- B9 备份保留数（retention=2 时裁剪旧目录）"
-sudo -n mkdir -p "$BACKUP_ROOT/20000101T000000Z-cp1"
-sudo -n mkdir -p "$BACKUP_ROOT/20000102T000000Z-cp1"
+echo "-- B9 备份保留数（D5：目标版本无操作重跑不得裁剪旧备份；确实需要升级时才裁剪）"
+sudo -n rm -rf "$FF_BACKUP_ROOT"
+sudo -n mkdir -p "$FF_BACKUP_ROOT/20000101T000000Z-cp1" "$FF_BACKUP_ROOT/20000102T000000Z-cp1"
+check_eq "D5 前置：fake 备份根含 2 个旧目录" 2 "$(backup_dir_count "$FF_BACKUP_ROOT")"
+check_eq "D5 前置：已安装版本 = 目标（upgrade_needed 应为 false）" "v$VERSION_NEW" \
+  "$(bin_version "$SB/usr/local/bin/kube-apiserver")"
 rc=0
-ap_cp "$SB/logs/retention.log" -e upgrade_backup_retention=2 || rc=$?
+ap_cp "$SB/logs/retention_noop.log" --tags upgrade:validate \
+  -e upgrade_backup_retention=1 -e "upgrade_backup_root=$FF_BACKUP_ROOT" || rc=$?
+check "D5 目标版本无操作重跑（retention=1）exit 0" test "$rc" -eq 0
+check_eq "D5 无操作重跑 changed=0" 0 "$(changed_of "$SB/logs/retention_noop.log")"
+check_eq "D5 无操作重跑不删除旧备份（不被裁剪）" 2 "$(backup_dir_count "$FF_BACKUP_ROOT")"
+check "D5 无操作重跑日志显示 upgrade_needed=false" \
+  grep -q '需要升级 = False' "$SB/logs/retention_noop.log"
+# 正例：确实需要升级时仍按保留数裁剪（探针组件回退到旧版本 → upgrade_needed=true）
+sudo -n cp "$CACHE/kube-scheduler-$VERSION_OLD" "$SB/usr/local/bin/kube-scheduler"
+sudo -n chmod 0755 "$SB/usr/local/bin/kube-scheduler"
+check_eq "D5 正例前置：kube-scheduler 已回退到 v$VERSION_OLD" "v$VERSION_OLD" \
+  "$(bin_version "$SB/usr/local/bin/kube-scheduler")"
+sudo -n mkdir -p "$FF_BACKUP_ROOT/20000101T000000Z-cp1" \
+  "$FF_BACKUP_ROOT/20000102T000000Z-cp1" "$FF_BACKUP_ROOT/20000103T000000Z-cp1"
+rc=0
+ap_cp "$SB/logs/retention.log" --tags upgrade:validate \
+  -e upgrade_version_probe_component=kube-scheduler \
+  -e upgrade_backup_retention=2 -e "upgrade_backup_root=$FF_BACKUP_ROOT" || rc=$?
 check "retention 运行 exit 0" test "$rc" -eq 0
-check "retention 后目录数 ≤ 2" test "$(backup_dir_count "$BACKUP_ROOT")" -le 2
-check "retention 保留最新备份（含真实备份）" test -d "$BACKUP_CP"
+check "retention changed>0（真实裁剪）" test "$(changed_of "$SB/logs/retention.log")" -gt 0
+check_eq "retention 后目录数 = 2" 2 "$(backup_dir_count "$FF_BACKUP_ROOT")"
+check "retention 保留最新目录" test -d "$FF_BACKUP_ROOT/20000103T000000Z-cp1"
+check "retention 正例日志显示需要升级（upgrade_needed=true）" \
+  grep -q '需要升级 = True' "$SB/logs/retention.log"
+# 复原 1.32 制品（C1 幂等 / C2 牙齿依赖 1.32 已安装）
+sudo -n cp "$CACHE/kube-scheduler-$VERSION_NEW" "$SB/usr/local/bin/kube-scheduler"
+sudo -n chmod 0755 "$SB/usr/local/bin/kube-scheduler"
+check_eq "D5 正例后已复原 kube-scheduler = v$VERSION_NEW" "v$VERSION_NEW" \
+  "$(bin_version "$SB/usr/local/bin/kube-scheduler")"
 
 echo "-- C1 幂等：同一命令第二次运行 changed=0 且不重复备份/不重启"
 PID[apiserver]="$(proc_pid_path "$SB/usr/local/bin/kube-apiserver")"
@@ -1035,10 +1143,25 @@ rc=0
 ap_node "$SB/logs/rollback_node.log" -e upgrade_action=rollback \
   -e "upgrade_rollback_dir=$BACKUP_NODE" || rc=$?
 check "节点回滚 exit 0" test "$rc" -eq 0
-check "回滚日志含 etcd 快照恢复" \
-  bash -c "grep -qiE 'snapshot restore|快照恢复|restore' '$SB/logs/rollback_cp.log'"
-check "回滚日志含数据目录换入" \
-  bash -c "grep -qiE 'pre-rollback|数据目录' '$SB/logs/rollback_cp.log'"
+# D2：回滚证据必须看结果行，不能只看任务名（skipping 行也带任务名）
+SYNTH_SKIP="$SB/logs/d2_synthetic_skip.log"
+SYNTH_OK="$SB/logs/d2_synthetic_ok.log"
+printf 'TASK [upgrade : upgrade:rollback | etcd 快照恢复（etcdctl snapshot restore 到临时目录）] ***\nskipping: [cp1]\n' >"$SYNTH_SKIP"
+printf 'TASK [upgrade : upgrade:rollback | etcd 快照恢复（etcdctl snapshot restore 到临时目录）] ***\nchanged: [cp1]\n' >"$SYNTH_OK"
+check "D2 自检：skipping 结果行同样带任务名（旧式 grep 会假绿）" \
+  grep -q 'skipping: \[cp1\]' "$SYNTH_SKIP"
+check_not "D2 自检：skipping 的任务不得被判定为真实执行" \
+  task_changed "$SYNTH_SKIP" 'etcd 快照恢复'
+check "D2 自检：changed 的任务被判定为真实执行" \
+  task_changed "$SYNTH_OK" 'etcd 快照恢复'
+check "回滚日志 etcd 快照恢复任务真实 changed（非 skipping）" \
+  task_changed "$SB/logs/rollback_cp.log" 'etcd 快照恢复'
+check "回滚日志 旧数据目录改名任务真实 changed" \
+  task_changed "$SB/logs/rollback_cp.log" '旧数据目录改名'
+check "回滚日志 恢复目录换入数据目录任务真实 changed" \
+  task_changed "$SB/logs/rollback_cp.log" '恢复目录换入数据目录'
+check_not "回滚日志无 'item' 未定义模板告警（D6）" \
+  grep -qF "'item' is undefined" "$SB/logs/rollback_cp.log"
 check_eq "回滚后 kube-apiserver 二进制 = v$VERSION_OLD" "v$VERSION_OLD" \
   "$(bin_version "$SB/usr/local/bin/kube-apiserver")"
 check_eq "回滚后 kubelet 二进制 = v$VERSION_OLD" "v$VERSION_OLD" \
@@ -1081,12 +1204,14 @@ check_not "升级期间写入的 ConfigMap 已随 etcd 回滚消失" \
   kctl -n default get cm upgrade-marker
 check_eq "回滚后控制面二进制内容哈希 = 升级前" "$BIN_PRE" \
   "$(fhash "$SB/usr/local/bin/kube-apiserver")|$(fhash "$SB/usr/local/bin/kube-controller-manager")|$(fhash "$SB/usr/local/bin/kube-scheduler")|$(fhash "$SB/usr/local/bin/kubectl")"
-check_eq "回滚后 PKI 全树内容哈希 = 升级前" "$PKI_PRE" "$(tree_hash "$SB/etc/kubernetes/pki")"
-check_eq "回滚后 kubeconfig 内容哈希 = 升级前" "$KCFG_PRE" \
+# D8：升级本就不改 PKI/kubeconfig，相等是必然 → 只作**辅助**证据；
+#     主证据 = 二进制哈希（上一行）+ /version（下方）+ 升级期 ConfigMap 消失（下方）。
+check_eq "（辅助）回滚后 PKI 全树内容哈希 = 升级前" "$PKI_PRE" "$(tree_hash "$SB/etc/kubernetes/pki")"
+check_eq "（辅助）回滚后 kubeconfig 内容哈希 = 升级前" "$KCFG_PRE" \
   "$(fhash "$SB/etc/kubernetes/admin.conf")|$(fhash "$SB/etc/kubernetes/controller-manager.conf")|$(fhash "$SB/etc/kubernetes/scheduler.conf")"
 check_eq "回滚后 node1 kubelet/kube-proxy 二进制哈希 = 升级前" "$NODE_BIN_PRE" \
   "$(fhash "$SB/node1/usr/local/bin/kubelet")|$(fhash "$SB/node1/usr/local/bin/kube-proxy")"
-check_eq "回滚后 node1 kubelet.conf/config.yaml 哈希 = 升级前" "$NODE_CONF_PRE" \
+check_eq "（辅助）回滚后 node1 kubelet.conf/config.yaml 哈希 = 升级前" "$NODE_CONF_PRE" \
   "$(fhash "$SB/node1/var/lib/kubelet/kubelet.conf")|$(fhash "$SB/node1/var/lib/kubelet/config.yaml")"
 
 echo "-- D3 回滚后仍可重放（--check）"
@@ -1119,7 +1244,15 @@ check "沙箱进程已全部退出" all_stopped
 check "高位端口全部释放（16443/12379/20250/20248）" wait_ports_free
 check "沙箱 CRI socket 已随进程消失" \
   bash -c "[[ ! -S '$SB/node1/run/containerd/containerd.sock' ]]"
-check "kubepods 清理仅停本次新建 slice 且无失败" test -z "$SLICE_STOP_ERRORS"
+printf '  （本次新建 kubepods slice = %s，已停止 = %s）\n' "$NEW_SLICE_SEEN" "$NEW_SLICE_STOPPED"
+check_eq "kubepods 清理：本次新建 slice 全部停止（成功数 = 新建数）" \
+  "$NEW_SLICE_SEEN" "$NEW_SLICE_STOPPED"
+check_eq "kubepods 清理无失败项" "" "$SLICE_STOP_ERRORS"
+check_eq "宿主 kubepods*.slice 集合恢复到测试前（loaded，含未激活项）" \
+  "$PRE_KUBEPODS_LOADED" "$(kubepods_loaded)"
+check "D3 自检：slice 清理选集合只含本次新建（不会误停测试前已有的 slice）" \
+  bash -c "[[ \"\$(comm -13 <(printf 'kubepods-a.slice\n' | sort -u) \
+            <(printf 'kubepods-a.slice\nkubepods-b.slice\n' | sort -u))\" == 'kubepods-b.slice' ]]"
 
 POST_HOST_SNAP=/tmp/opencode/t015_host_post.txt
 if snapshot_with_retry "$POST_HOST_SNAP"; then

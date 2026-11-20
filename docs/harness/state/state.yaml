@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T019      # 例如 T001
-contract_status: accepted  # T018 r1 = PASS（accepted）；T019 契约待建立
+contract_status: ready_for_eval  # T019 build 完成，待 eval r1
 eval_round: 1          # T018 r1 = PASS
-next_action: "build T019"
+next_action: "eval T019"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
@@ -30,8 +30,19 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T018 r1 = PASS 已接受；仅剩 T019 后进 T016
+blockers: []          # 无阻塞；T018 r1 = PASS 已接受；T019 已 build 完成待评，之后进 T016
 notes: |
+  **T019（T015 测试假绿/一致性加固）build 完成 → ready_for_eval（2026-11-20）**：
+  - D1 MAJOR：E7/E8 的 `upgrade_bin_dir` 改放**真实 1.31.0 旧二进制** → backup 通过、制品
+    sha256/版本断言真实执行（关键字 `did not match` / `制品版本不符` + 官方 sha + `upgrade:binaries`
+    任务行）；并修 E8 的 `-e upgrade_known_sha256` 注入格式（原先被当字符串 → 「sha 未固定」假绿）。
+  - D2 回滚证据按 TASK 块结果行判定（`task_changed`，skipping 不算）+ 2 条合成日志自检；
+    D3 两处恒真断言删除/加实载荷（`sandbox_prefixed`、kubepods loaded 集合）；D4 E8 前置改「假 sha ≠ 官方 sha」；
+    D5 裁剪加 `upgrade_needed`（负例 retention=1 不裁剪 + 正例 retention=2 仍裁剪）；
+    D6 `item` 告警 4 处任务名（backup×2 + rollback×2）；D7 多成员覆盖项写入两份 README/defaults/T015 §5；
+    D8 PKI/kubeconfig 哈希标注「辅助」，主证据=bin 哈希 + `/version` + ConfigMap 消失。
+  - TDD：红 **289/10/2**（301）→ 绿 **305/0/2**（307）×2（归一化后 diff 0 行）；断言 270 → 307。
+  - 门禁：`make lint` rc=0；`test-control-plane` 269/0；`test-node` 291/0；全量 `make test` 未跑（成本）。
   **T018（add-node 零影响/证书幂等加固）r1 = PASS（accepted）**，被测 `5f50d13`（评估 `2026-11-20`，
   报告 `docs/harness/state/reports/T018-r1.md`；由主会话代评，Evaluator 子代理免费额度受限）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
@@ -200,4 +211,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-20T02:30:00Z"   # ISO8601
+updated: "2026-11-20T03:35:00Z"   # ISO8601

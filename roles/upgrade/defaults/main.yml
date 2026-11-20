@@ -128,6 +128,11 @@ upgrade_rollback_dir: ""
 # 替换 etcd 数据目录前必须确认 etcd 已停止（沙箱显式 ack；生产由 role 停服务）
 upgrade_rollback_etcd_offline_ack: false
 upgrade_rollback_etcd_data_dir: "{{ upgrade_root_prefix }}/var/lib/etcd"
+# 单成员默认值。多成员集群必须显式覆盖（与 roles/etcd 的
+# etcd_member_name: "{{ inventory_hostname }}" + TLS peer 对齐）：
+#   -e upgrade_rollback_etcd_member_name=<inventory_hostname>
+#   -e upgrade_rollback_etcd_initial_peer_url=https://<peer_ip>:2380
+# （member 名必须与快照中的成员名一致，否则 restore 后 peer 地址错位）
 upgrade_rollback_etcd_member_name: default
 # restore 的初始集群（名称必须与快照中的成员名一致；单成员用本机 peer URL 即可）
 upgrade_rollback_etcd_initial_peer_url: "http://localhost:2380"

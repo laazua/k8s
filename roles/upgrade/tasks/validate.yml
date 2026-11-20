@@ -137,7 +137,7 @@
     - upgrade_action == 'upgrade'
     - upgrade_backup_root_stat.stat.isdir | default(false)
 
-- name: "upgrade:validate | 裁剪超出保留数的旧备份（仅升级动作，check 模式跳过）"
+- name: "upgrade:validate | 裁剪超出保留数的旧备份（仅升级动作且确需升级时，check 模式跳过）"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
@@ -148,4 +148,6 @@
     label: "{{ item }}"
   when:
     - upgrade_action == 'upgrade'
+    # 目标版本无操作重跑（upgrade_needed=false）不得删除任何旧备份
+    - upgrade_needed | bool
     - not ansible_check_mode

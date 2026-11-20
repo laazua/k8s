@@ -56,6 +56,13 @@ ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml \
 | `upgrade_rollback_etcd_offline_ack` | `false` | 确认 etcd 已停止（沙箱必须显式置 `true`） |
 | `upgrade_rollback_etcd_data_dir` | `/var/lib/etcd` | 回滚换入的 etcd 数据目录（per-host 布局填 `<data_dir>/<member>`） |
 | `upgrade_rollback_etcd_member_name` | `default` | 恢复时的成员名（须与数据目录成员一致） |
+| `upgrade_rollback_etcd_initial_peer_url` | `http://localhost:2380` | 恢复后的 peer URL（多成员/TLS 集群必须覆盖） |
+
+> **多成员对齐**：`roles/etcd` 用 `etcd_member_name: "{{ inventory_hostname }}"` + TLS peer，
+> 因此多成员回滚必须显式覆盖
+> `-e upgrade_rollback_etcd_member_name=<inventory_hostname>`
+> `-e upgrade_rollback_etcd_initial_peer_url=https://<peer_ip>:2380`（以及 `upgrade_rollback_etcd_initial_cluster`）。
+> 单成员默认值（`default` / `http://localhost:2380`）只在单机沙箱成立。
 
 ## 语义与安全
 

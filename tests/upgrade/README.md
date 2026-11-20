@@ -46,6 +46,22 @@ ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml \
   -e upgrade_action=rollback -e upgrade_rollback_dir=/var/backups/kubernetes/upgrade/<ts>-<host>
 ```
 
+**多成员 etcd 必须显式覆盖成员名与 peer URL**（默认 `default` / `http://localhost:2380` 只适用单成员；
+与本项目 `roles/etcd` 的 `etcd_member_name: "{{ inventory_hostname }}"` + TLS peer 对齐）：
+
+```bash
+ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml \
+  -e upgrade_action=rollback \
+  -e upgrade_rollback_dir=/var/backups/kubernetes/upgrade/<ts>-<host> \
+  -e upgrade_rollback_etcd_member_name=<inventory_hostname> \
+  -e upgrade_rollback_etcd_initial_peer_url=https://<peer_ip>:2380 \
+  -e upgrade_rollback_etcd_initial_cluster='<inventory_hostname>=https://<peer_ip>:2380,...'
+```
+
+回滚证据的主/辅区分：**主证据** = 二进制哈希回到旧版 + apiserver `/version` 回到旧版 +
+升级期写入的 ConfigMap 消失；PKI / kubeconfig / kubelet.conf 哈希比对只是**辅助**（升级本就不改它们，
+相等是必然，不具区分度）。
+
 ## 已知限制（契约 §5 / §9）
 
 - 单宿主单节点：「全部节点 Ready」只有 node1；真实多节点滚动需真机。

@@ -64,7 +64,7 @@
     - upgrade_backup_pki | bool
     - not ansible_check_mode
 
-- name: "upgrade:backup | 备份 kubeconfig（{{ item | basename }}）"
+- name: "upgrade:backup | 备份 kubeconfig（按 upgrade_kubeconfig_files 全部复制）"
   ansible.builtin.copy:
     src: "{{ upgrade_root_prefix }}{{ item }}"
     dest: "{{ upgrade_backup_dir }}/kubeconfigs/{{ item | basename }}"
@@ -75,7 +75,7 @@
     label: "{{ item }}"
   when: not ansible_check_mode
 
-- name: "upgrade:backup | 备份当前版本二进制（bin/{{ item }}）"
+- name: "upgrade:backup | 备份当前版本二进制（bin/，按 upgrade_components 全部复制）"
   ansible.builtin.copy:
     src: "{{ upgrade_bin_dir }}/{{ item }}"
     dest: "{{ upgrade_backup_dir }}/bin/{{ item }}"

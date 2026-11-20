@@ -9,6 +9,43 @@
 
 ---
 
+## [2026-11-20] Generator · T019（T015 测试假绿/一致性加固）→ **ready_for_eval**
+
+- **交付**（只改 `tests/upgrade/`、`roles/upgrade/`、`contracts/T015.md` 措辞；未动 `roles/etcd|pki|download`）：
+  - `tests/upgrade/test_upgrade_flow.sh` **268 → 305 PASS**（总条数 270 → 307，SKIP=2 单列）：
+    - **D1 MAJOR**：E7/E8 的 `upgrade_bin_dir` 放**真实 1.31.0 旧二进制** → `backup` 通过、`binaries`
+      阶段真实执行；断言改独立关键字 `did not match` / `制品版本不符`，并断言官方 sha 出现在报错里、
+      `upgrade:binaries | 获取/读取 …` 与 `upgrade:backup | 写入 SHA256SUMS` 任务行出现。
+      另修 **E8 的 `-e upgrade_known_sha256={...}`（被当字符串 → 「sha 未固定」假绿）为整份 JSON 注入**，
+      并加两条守卫（注入生效 / 未提前失败）。
+    - **D2**：新增 `task_status`/`task_changed`，按 `TASK [...]` 块的结果行判定（`changed: [cp1]`），
+      3 条真实断言 + 2 条合成日志自检（skipping→判否、changed→判是）。
+    - **D3**：`sandbox 资产不写宿主` 改为 `sandbox_prefixed`（真实解析 4 个沙箱资产的 `*_root*` 绑定）
+      + inventory local/高位端口；kubepods 改为「新建数=停止数 + 无失败 + loaded 集合回到测试前
+      + 选集合逻辑自检」，并打印新建数（实测 0，无 Pod）。
+    - **D4**：E8 前置改「假制品 sha ≠ 官方 1.32.13 sha」（+64 位 hex + 与注入值一致）。
+    - **D5**：负例 `upgrade_needed=false` + `retention=1`（fake 根）→ changed=0、目录数不变；
+      正例 `-e upgrade_version_probe_component=kube-scheduler` + `retention=2` → changed>0、目录数=2。
+    - **D6**：4 份日志断言无 `'item' is undefined`。
+    - **D7**：两份 README 含多成员覆盖变量、`defaults` 注释、T015 §5 记录（4 条静态断言）。
+    - **D8**：PKI/kubeconfig/kubelet.conf 三条断言标注「（辅助）」，注释说明主证据。
+  - `roles/upgrade/tasks/validate.yml`：备份裁剪加 `upgrade_needed | bool`（D5）。
+  - `roles/upgrade/tasks/{backup,rollback}.yml`：4 处任务名去掉 `{{ item }}`（D6；评测只报了 backup，
+    实测 rollback 在 upgrade 路径上同样告警）。
+  - `roles/upgrade/defaults/main.yml`：多成员 `member_name`/`peer_url` 覆盖注释（对齐 `roles/etcd`）。
+  - `roles/upgrade/README.md`、`tests/upgrade/README.md`：多成员回滚覆盖项 + 主/辅证据口径。
+  - `contracts/T015.md` §4 D5 措辞（主证据=bin 哈希）与 §5 多成员覆盖项。
+- **TDD**：红（测试先改、实现未改）**289 PASS / 10 FAIL / 2 SKIP**（`/tmp/opencode/t019_red.log`，
+  10 条全指向 D1(E8)/D5/D6/D7）→ 绿 **305/0/2** ×2（`t019_greenA.log`/`t019_greenB.log`，
+  归一化沙箱目录名+bash 作业 PID+`T015_KEEP_SANDBOX` 调试行后 **diff 0 行**）。
+- **门禁**：`make lint` rc=0；`make test-control-plane` 269/0；`make test-node` 291/0；
+  全量 `make test` 未跑（~85 分钟成本，已如实声明）。
+- **遗留/风险**：kubepods 新建 slice 实测 0（无 Pod），D3 的「只停本次新建」由选集合自检 + loaded
+  集合恢复承担；`task_status` 依赖 default stdout callback 格式；多成员 etcd 回滚仍未验证（T015 §5）。
+- **下一步**：`eval T019`（`eval_round: 1`）。
+
+---
+
 ## [2026-11-19] Generator · T018（T014 零影响/证书幂等加固）→ **ready_for_eval**
 
 - **交付**（只改 `roles/add-node/`、`tests/add-node/`、两份 README；未动 `roles/pki|node|control-plane`）：
