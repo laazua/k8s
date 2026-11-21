@@ -430,9 +430,51 @@ check "cert 写任务在 check 模式跳过（签发/状态/清理）" \
   bash -c "[[ \$(grep -c 'not ansible_check_mode' '$ROLE/tasks/cert.yml') -ge 3 ]]"
 check "verify 断言 NotReady 必须给出 reason（载荷，D6）" \
   grep -q 'add_node_verify_reason.stdout' "$ROLE/tasks/verify.yml"
-check "verify 断言 kubelet.conf 权限 0600" grep -q '0600' "$ROLE/tasks/verify.yml"
-check "verify 断言新节点无 admin 凭据" grep -q 'admin' "$ROLE/tasks/verify.yml"
-check "verify 用 kubectl argv 读回 node（非字符串命令）" grep -q 'argv:' "$ROLE/tasks/verify.yml"
+# T018 D1：verify.yml 用 YAML schema 断言（不是文本 grep），避免注释/字符串误命中
+check "verify.yml schema 合法（yaml.safe_load，每步都有 name）" python3 - "$ROLE/tasks/verify.yml" <<'PY'
+import sys, yaml
+verify_schema = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+ok = (isinstance(verify_schema, list) and len(verify_schema) > 0
+      and all(isinstance(t, dict) and t.get("name") for t in verify_schema)
+      and all("add-node:verify" in str(t.get("name")) for t in verify_schema))
+sys.exit(0 if ok else 1)
+PY
+check "verify 用 kubectl argv 读回 node（schema：command.argv 含 kubectl 与 Ready）" \
+  python3 - "$ROLE/tasks/verify.yml" <<'PY'
+import sys, yaml
+tasks = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+ok = False
+for t in tasks:
+    cmd = t.get("ansible.builtin.command") or {}
+    argv = [str(x) for x in (cmd.get("argv") or [])]
+    if "add_node_verify_kubectl" in argv and any("Ready" in x for x in argv):
+        ok = True
+sys.exit(0 if ok else 1)
+PY
+check "verify 断言 kubelet.conf 权限 0600（schema：assert.that 引用 stat.mode）" \
+  python3 - "$ROLE/tasks/verify.yml" <<'PY'
+import sys, yaml
+tasks = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+ok = False
+for t in tasks:
+    that = (t.get("ansible.builtin.assert") or {}).get("that") or []
+    joined = " ".join(str(x) for x in that)
+    if "add_node_verify_kubeconfig_stat" in joined and "0600" in joined:
+        ok = True
+sys.exit(0 if ok else 1)
+PY
+check "verify 断言新节点无 admin 凭据（schema：assert.that 引用 admin_stat）" \
+  python3 - "$ROLE/tasks/verify.yml" <<'PY'
+import sys, yaml
+tasks = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+ok = False
+for t in tasks:
+    that = (t.get("ansible.builtin.assert") or {}).get("that") or []
+    joined = " ".join(str(x) for x in that)
+    if "add_node_verify_admin_stat" in joined and "not" in joined:
+        ok = True
+sys.exit(0 if ok else 1)
+PY
 check_not "role 不使用 ansible.builtin.shell" grep -rqE 'ansible\.builtin\.shell' "$ROLE/tasks"
 check_not "role 不调用 systemctl" grep -rqE 'systemctl' "$ROLE/tasks" "$ROLE/defaults"
 check_not "role 不硬编码默认端口 6443/10250" grep -rqE '(6443|10250)' "$ROLE/tasks" "$ROLE/defaults"

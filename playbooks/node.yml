@@ -1,11 +1,23 @@
 ---
-# 工作节点部署入口（骨架占位：实际 roles 由 T008–T010 加入）
+# =============================================================================
+#  工作节点部署入口（真实实现，非占位）
+#
+#  用法：
+#    ansible-playbook -i inventory/hosts.ini playbooks/node.yml
+#    （通常由 playbooks/site.yml / `make deploy` 统一调用；新增节点用 add-node.yml）
+#
+#  顺序契约：base → containerd → kubelet → kube-proxy → cilium
+#  说明：各 role 内部自行复用 roles/download 获取制品（代理/缓存/sha256 校验）；
+#        控制面已由 control-plane.yml 引导完成，节点只需 kubelet 凭据与集群 CA。
+# =============================================================================
 - name: Deploy Kubernetes worker nodes
   hosts: k8s_node
   become: true
   gather_facts: true
   tags: [node]
-  tasks:
-    - name: Placeholder - roles pending (T008 运行时/kubelet / T009 kube-proxy / T010 Cilium)
-      ansible.builtin.debug:
-        msg: "node skeleton: roles pending (T008-T010)"
+  roles:
+    - role: base
+    - role: containerd
+    - role: kubelet
+    - role: kube-proxy
+    - role: cilium

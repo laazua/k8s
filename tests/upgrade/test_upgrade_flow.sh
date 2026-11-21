@@ -40,10 +40,22 @@ sha_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 # 任务块判定：只取该 TASK 名字之后的第一个结果行（ok/changed/skipping/failed/...）。
 # 用于证明「某任务真实执行」，避免 grep 命中 skipping 行里的任务名（T019 D2）。
 task_status() {  # task_status <log> <任务名 ERE>
-  awk -v pat="$2" '
+  local out
+  out="$(awk -v pat="$2" '
     /^TASK \[/ { blk = ($0 ~ pat); next }
     blk && /^(ok|changed|fatal|failed|skipping|included):/ { print; exit }
-  ' "$1" 2>/dev/null
+  ' "$1" 2>/dev/null)"
+  if [[ -n "$out" ]]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  # T019 D1：日志有 PLAY 但完全没有 TASK 行 → callback 不是 default，解析失败必须显式报错，
+  # 不能静默返回空（否则所有「任务真实执行」断言都会变成假绿）。
+  if grep -q '^PLAY \[' "$1" 2>/dev/null && ! grep -q '^TASK \[' "$1" 2>/dev/null; then
+    printf 'TASK_PARSE_ERROR: 任务结果解析失败（日志有 PLAY[ 但无 TASK[；请用 default callback）\n' >&2
+    return 1
+  fi
+  return 0
 }
 task_changed() {  # task_changed <log> <任务名 ERE>：该任务结果为 changed: [<host>]
   [[ "$(task_status "$1" "$2")" =~ ^changed:\ \[[^]]+\]$ ]]
@@ -350,6 +362,16 @@ bin_version() {  # bin_version <path>：真实二进制 --version 输出的 vX.Y
 }
 
 echo "== T015 版本升级与回滚验收 =="
+
+echo "-- A0 D1 自检：task_status 解析失败必须显式报错"
+_D1_LOG="$(mktemp /tmp/opencode/t019-d1.XXXXXX)"
+printf 'PLAY [synthetic] ****\n\nPLAY RECAP ****\n' >"$_D1_LOG"
+_D1_ERR="$(task_status "$_D1_LOG" 'synthetic' 2>&1 >/dev/null)"
+check "D1 自检：PLAY 有但 TASK 无 → 显式 TASK_PARSE_ERROR + 解析失败" \
+  bash -c "grep -q 'TASK_PARSE_ERROR' <<< '$1' && grep -q '解析失败' <<< '$1'" _ "$_D1_ERR"
+check_not "D1 自检：解析失败返回非 0（不被当作空结果吞掉）" \
+  task_status "$_D1_LOG" 'synthetic'
+rm -f "$_D1_LOG"
 
 echo "-- A1 role / 测试资产结构"
 for f in defaults/main.yml tasks/main.yml tasks/validate.yml tasks/backup.yml \

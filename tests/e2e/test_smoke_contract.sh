@@ -34,13 +34,15 @@ check "--help 说明 sandbox 模式" bash -c '"$1" --help 2>&1 | grep -q "sandbo
 check "--help 说明 real 模式" bash -c '"$1" --help 2>&1 | grep -q "real"' _ "$SMOKE"
 check_eq "未知参数 → rc=2" 2 "$("$SMOKE" --nonsense >/dev/null 2>&1; echo $?)"
 check_eq "real 模式缺 --kubeconfig → rc=2" 2 "$("$SMOKE" --mode real >/dev/null 2>&1; echo $?)"
-# T017-1：缺值必须 rc=2 立即退出，不得挂起（timeout 30 兜底）
-check_eq "缺值 --mode → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --mode >/dev/null 2>&1; echo $?)"
-check_eq "缺值 --image → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --image >/dev/null 2>&1; echo $?)"
-check_eq "缺值 --kubeconfig → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" --kubeconfig >/dev/null 2>&1; echo $?)"
+# T017-1/D5：缺值必须 rc=2 立即退出且不打印 RESULT（timeout 30 兜底）
+for opt in --mode --image --kubeconfig; do
+  check_eq "缺值 $opt → rc=2（不挂起）" 2 "$(timeout 30 "$SMOKE" "$opt" >/dev/null 2>&1; echo $?)"
+  check_not "缺值 $opt 时不打印 RESULT（不进入执行）" \
+    bash -c 'timeout 30 "$1" "$2" 2>/dev/null | grep -q "^RESULT="' _ "$SMOKE" "$opt"
+done
 check_eq "--mode --image x（值像选项）→ rc=2" 2 "$(timeout 30 "$SMOKE" --mode --image x >/dev/null 2>&1; echo $?)"
-check_not "缺值时不打印 RESULT（不进入执行）" \
-  bash -c 'timeout 30 "$1" --mode 2>/dev/null | grep -q "^RESULT="' _ "$SMOKE"
+check_not "值像选项时不打印 RESULT（不进入执行）" \
+  bash -c 'timeout 30 "$1" --mode --image x 2>/dev/null | grep -q "^RESULT="' _ "$SMOKE"
 # T017-D5：静态模式不需要 kubeconfig，--mode real 不得强制
 check_eq "--static-only --mode real（无 kubeconfig）→ rc=0" 0 \
   "$("$SMOKE" --static-only --mode real >"$OUT.staticreal" 2>&1; echo $?)"
@@ -144,7 +146,7 @@ e=$(date +%s)
 check_eq "sandbox 冒烟 rc=0（$((e-s))s）" 0 "$rc"
 check "汇总 RESULT=PASS" grep -qx 'RESULT=PASS' "$OUT"
 check_eq "汇总 FAIL=0" 0 "$(awk -F= '/^FAIL=/{print $2}' "$OUT")"
-check "汇总 PASS>=15" bash -c '[ "$(awk -F= "/^PASS=/{print \$2}" "$1")" -ge 15 ]' _ "$OUT"
+check_eq "汇总 PASS=30（固化，防 SKIP 漂移）" 30 "$(awk -F= '/^PASS=/{print $2}' "$OUT")"
 check_eq "汇总 SKIP=3（恰好，防 SKIP 吞检查）" 3 "$(awk -F= '/^SKIP=/{print $2}' "$OUT")"
 check "SKIP 文案: 系统 Pod Running" grep -qE '^SKIP +系统 Pod Running' "$OUT"
 check "SKIP 文案: 集群内 DNS（无镜像）" grep -qE '^SKIP +集群内 DNS' "$OUT"
