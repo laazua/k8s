@@ -1,11 +1,50 @@
 ---
-# 控制面部署入口（骨架占位：实际 roles 由 T004–T007 加入）
+# =============================================================================
+#  控制面部署入口（真实实现，非占位）
+#
+#  用法：
+#    ansible-playbook -i inventory/hosts.ini playbooks/control-plane.yml
+#    （通常由 playbooks/site.yml / `make deploy` 统一调用）
+#
+#  顺序契约：base → pki → etcd → keepalived/haproxy → apiserver
+#            → controller-manager → scheduler → containerd → kubelet
+#            → cluster-addons（kubeconfig/RBAC/CoreDNS 渲染）→ taints
+#  前置：inventory 的 [k8s_master]/[etcd]/[k8s_node] 已按 inventory/hosts.example 填写；
+#        控制面主机已具备 kubectl（cluster-addons 之后 taints 需要）。
+#  受限：本仓库不负责安装 keepalived/haproxy/kubectl 系统包之外的发行版依赖，
+#        真机请先满足 docs/usage.md「前置条件」。
+# =============================================================================
 - name: Deploy Kubernetes control plane
   hosts: k8s_master
   become: true
   gather_facts: true
   tags: [control-plane]
-  tasks:
-    - name: Placeholder - roles pending (T004 PKI / T005 etcd / T006 HA / T007 控制平面)
-      ansible.builtin.debug:
-        msg: "control-plane skeleton: roles pending (T004-T007)"
+  roles:
+    - role: base
+    - role: pki
+    - role: etcd
+    - role: keepalived
+    - role: haproxy
+    - role: kube-apiserver
+    - role: kube-controller-manager
+    - role: kube-scheduler
+    - role: containerd
+    - role: kubelet
+    - role: cluster-addons
+    - role: taints
+  post_tasks:
+    - name: "control-plane | 应用 RBAC 与 CoreDNS 清单（render → apply）"
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig
+          - "{{ k8s_config_dir | default('/etc/kubernetes') }}/admin.conf"
+          - apply
+          - -f
+          - "{{ item }}"
+      loop:
+        - "{{ k8s_config_dir | default('/etc/kubernetes') }}/addons/manifests/rbac.yaml"
+        - "{{ k8s_config_dir | default('/etc/kubernetes') }}/addons/manifests/coredns.yaml"
+      run_once: true
+      changed_when: false
+      tags: [control-plane, "cluster-addons:apply"]

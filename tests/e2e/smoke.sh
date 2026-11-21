@@ -266,7 +266,6 @@ run_sandbox() {
 
   # D6：CoreDNS 版本与 Service CIDR 以 role defaults 为唯一来源（env 可覆盖并校验）
   CIDR="$(role_default group_vars/all/main.yml k8s_service_cidr)"
-  [[ -n "$CIDR" ]] || CIDR="$(role_default roles/kube-apiserver/defaults/main.yml k8s_service_cidr)"
   CD_VERSION="${E2E_COREDNS_VERSION:-$(role_default roles/cluster-addons/defaults/main.yml cluster_addons_coredns_version)}"
   CD_TARBALL="coredns_${CD_VERSION}_linux_amd64.tgz"
   CD_SHA="${CD_SHA_MAP[$CD_VERSION]:-}"
@@ -397,16 +396,16 @@ run_sandbox() {
     bash -c '[[ "$(sudo -n stat -c "%a %U %G" "$1" 2>/dev/null)" == "600 root root" ]]' _ "$SB/etc/kubernetes/kubelet.conf"
   sudo -n install -m 0600 -o "$(id -u)" -g "$(id -g)" "$SB/etc/kubernetes/kubelet.conf" "$SB/client/kubelet.conf"
   check_eq "kubelet.conf 身份 = system:node:node1" "system:node:node1" \
-    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" auth whoami -o jsonpath='{.status.userInfo.username}' 2>/dev/null)"
+    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" --request-timeout=10s auth whoami -o jsonpath='{.status.userInfo.username}' 2>/dev/null)"
   if kctl apply -f "$SB/etc/kubernetes/addons/manifests/rbac.yaml" >/dev/null 2>&1; then
     ok "RBAC 清单可 apply"
   else
     bad "RBAC 清单 apply 失败"
   fi
   check_eq "kubelet RBAC: get nodes = yes" "yes" \
-    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" auth can-i get nodes 2>/dev/null | tr -d '\r' | awk '{print $1}')"
+    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" --request-timeout=10s auth can-i get nodes 2>/dev/null | tr -d '\r' | awk '{print $1}')"
   check_eq "kubelet RBAC: create serviceaccounts = no" "no" \
-    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" auth can-i create serviceaccounts -n default 2>/dev/null | tr -d '\r' | awk '{print $1}')"
+    "$("$KUBECTL" --kubeconfig "$SB/client/kubelet.conf" --cache-dir "$SB/client/kck" --request-timeout=10s auth can-i create serviceaccounts -n default 2>/dev/null | tr -d '\r' | awk '{print $1}')"
 
   # 4) 集群 DNS：CoreDNS 官方二进制按渲染 Corefile 真实解析
   sudo -n tar -xzf "$CACHE/$CD_TARBALL" -C "$SB/usr/local/bin" coredns 2>/dev/null
@@ -436,7 +435,7 @@ run_sandbox() {
 run_real() {
   local KUBECTL="${KUBECTL:-$(command -v kubectl || true)}"
   check "kubeconfig 存在" test -f "$KUBECONFIG_PATH"
-  if [[ -z "$KUBECTL" ]]; then bad "未找到 kubectl"; return; fi
+  [[ -x "$KUBECTL" ]] || { bad "kubectl 不可执行（${KUBECTL:-未找到}），无法判定 API 可达"; return; }
   if [[ ! -f "$KUBECONFIG_PATH" ]]; then
     bad "real 模式中止：kubeconfig 不存在（$KUBECONFIG_PATH）"
     return
@@ -488,7 +487,8 @@ print(len(items), sum(1 for i in items if (i.get("status") or {}).get("phase") !
   else
     check_eq "kube-system 全部 Pod Running（$pods 个）" 0 "$bad_pods"
   fi
-  check "kube-dns Service 存在" k -n kube-system get svc kube-dns -o name
+  check_eq "kube-dns Service 存在（校验实际对象名）" "service/kube-dns" \
+    "$(k -n kube-system get svc kube-dns -o name 2>/dev/null)"
 
   if [[ -n "$IMAGE" ]]; then
     local job="e2e-dns-$RANDOM" errf

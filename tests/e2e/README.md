@@ -2,6 +2,20 @@
 
 一条命令输出 `PASS/FAIL/SKIP` 逐项结果与汇总，用于交付后快速判定集群是否可用。
 
+## 全流程验收（T016）
+
+`test-e2e-full` / `make test-e2e-full` 从干净 inventory 起，真实执行「部署 → 验证 →
+调度约束 → 加节点 → 升级 → 回滚」全链路，并断言 T013/T014/T015 的关键结论：
+
+```bash
+tests/e2e/full_flow.sh --static-only   # 静态交付/文档/D 项（秒级）
+make test-e2e-full                     # 全流程（单宿主沙箱，约 25–40 分钟）
+```
+
+落盘全部在 `mktemp -d /tmp/opencode/t016.*`，`trap` 清理；不写宿主
+`/etc/kubernetes`、`/etc/systemd/system`；只杀 `$SB/usr/local/bin/*` 进程，
+只清理本次新建的 kubepods slice。
+
 ```bash
 # 1) 静态交付检查（秒级，不启动进程）
 tests/e2e/smoke.sh --static-only

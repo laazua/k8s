@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-add-node test-upgrade test-e2e smoke-e2e clean
+.PHONY: help syntax yamllint smoke deploy lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-add-node test-upgrade test-e2e test-e2e-full smoke-e2e clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -36,6 +36,9 @@ yamllint: ## YAML 风格检查
 
 smoke: ## 真实执行冒烟（localhost，验证配置可加载且可运行）
 	$(ANSIBLE_PLAYBOOK) -i localhost, -c local $(SITE)
+
+deploy: ## 一条命令部署整个集群（控制面 + 工作节点）
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) playbooks/site.yml
 
 lint: yamllint syntax ## 静态检查 (yamllint + syntax-check)
 
@@ -94,6 +97,9 @@ test-upgrade: ## 运行版本升级/回滚测试套件（真实 etcd 快照备�
 
 test-e2e: ## 运行 e2e 冒烟脚本契约验收（静态 + 沙箱全链路，约 6 分钟）
 	tests/e2e/test_smoke_contract.sh
+
+test-e2e-full: ## 运行端到端全流程验收（干净 inventory → 集群 → 调度/加节点/升级/回滚，约 30 分钟）
+	tests/e2e/full_flow.sh
 
 smoke-e2e: ## 对当前集群执行冒烟（需 KUBECONFIG；无镜像环境用 --mode sandbox 见 tests/e2e/README.md）
 	tests/e2e/smoke.sh --mode real --kubeconfig "$${KUBECONFIG:-/etc/kubernetes/admin.conf}"
