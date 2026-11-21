@@ -1,10 +1,15 @@
 # 规格（spec.md）· k8s 二进制 Ansible 部署
 
-> 状态：**已定稿（v1.11，Planner，2026-11-20）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
+> 状态：**已定稿（v1.12，Planner，2026-11-21）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
 > 上游：根 `README.md`。下游：`roadmap.md`、`contracts/T00N.md`。
 > 覆盖标记：每条 README 要求后标注其落点任务（`→ T0NN`）。
 >
 > **变更记录**
+> - v1.12（2026-11-21）：T019 r1 = PASS（accepted）后补录——①A15 的「证据口径」细化：制品 sha256/版本
+>   断言必须**真实执行**（不得在备份阶段早退）、回滚证据必须取**任务结果行**（`changed:`，不得被
+>   `skipping:` 命中）、`upgrade_needed=false` 时不得裁剪旧备份；②预期成本更新为
+>   **16 套件 / 2583 断言**（upgrade 268→305；**未实跑全量**，以 lint + control-plane 269/0 + node 291/0 替代）；
+>   ③r1 的 D1–D3 MINOR 记为 T016 顺手修（`task_status` 依赖 default callback、D5 负例仅在 fake 根、全量未跑）。
 > - v1.11（2026-11-20）：T018 r1 = PASS（accepted）后补录——①A14 判定补强为「**零影响快照逐键有载荷**
 >   （空值/哨兵/缺键显式 FAIL，禁止空==空）、**证书幂等为内容级**（CA/证书/私钥 sha256 基线；leaf 篡改
 >   自愈、CA 被替换显式失败）、`--check` 零写入」；②预期成本更新为 **16 套件 / 2546 断言**
@@ -155,7 +160,7 @@
 | A12 | 集群冒烟 | 一条命令（`tests/e2e/`，输出 `PASS/FAIL/SKIP` + `RESULT` 与退出码）判定：全部节点 Ready；系统 Pod 全 Running；集群内 DNS 解析成功；跨节点 Pod 互通。**健壮性**：`--mode/--image/--kubeconfig` 缺值 `rc=2` 立即退出；real 模式 API 不可达或查询空集一律 `FAIL`（禁止 `0/0` 恒真）；`--image` Job 被拒不得降级 `SKIP`；清理失败必须影响 `RESULT`。`SKIP` 不计入 PASS 且条数可断言（C14） |
 | A13 | 调度约束 | 控制面带 `NoSchedule` 污点与角色标签（真实 API 读回）；不带 toleration 的工作负载多副本 **0 副本落 master**（真实 kube-scheduler 绑定判定；无镜像时只验 `spec.nodeName`，不要求 Running） |
 | A14 | 加节点 | 对新 node 执行剧本后由**真实 kubelet** 注册且 Ready 条件存在；**重复执行 `changed=0`**；既有控制面/节点**零影响**（PID/启动时间/内容哈希/Node UID 不变，且快照**逐键有载荷**：空值/哨兵/缺键显式 FAIL）；**证书幂等为内容级**（sha256 基线；leaf 篡改自愈、CA 被替换显式失败）；`--check` 零写入；系统 Pod 按无镜像范式受限声明 |
-| A15 | 升级与回滚 | 升级前自动备份（etcd 快照可 `snapshot status` 校验 + PKI/kubeconfig + sha256）；升级一个 minor 版本后运行中 apiserver `/version` 与 kubelet 版本已变更、节点 Ready 条件存在；按文档回滚（`snapshot restore` + 旧二进制）后版本回旧、`/healthz` ok；已在目标版本重跑 `changed=0` |
+| A15 | 升级与回滚 | 升级前自动备份（etcd 快照可 `snapshot status` 校验 + PKI/kubeconfig + sha256）；升级一个 minor 版本后运行中 apiserver `/version` 与 kubelet 版本已变更、节点 Ready 条件存在；按文档回滚（`snapshot restore` + 旧二进制）后版本回旧、`/healthz` ok；已在目标版本重跑 `changed=0`（不得裁剪旧备份）；**测试证据口径**：sha256/版本断言须真实执行、回滚证据取任务结果行 `changed:`（不得被 `skipping:` 命中） |
 | A16 | 端到端 | 从干净 inventory 一条命令得到可用 HA 集群，全流程文档可复现 |
 
 ## 7. 风险与开放问题（Risks & Open Questions）
@@ -192,7 +197,9 @@
     v1.10 预期：T017 后 `tests/e2e` 契约由 31 条增至 **59** 条，全量 **16 套件 / 2501 断言**
     （**未实跑**；T017 只改 `tests/e2e/`，以 `make lint` + taints 175/0 + add-node 231/0/2 回归替代）。
     v1.11 预期：T018 后 `test-add-node` 231 → **276**，全量预期 **16 套件 / 2546 断言**
-    （**未实跑**；T018 只改 `roles/add-node` 与其测试，以 lint + e2e 59/0 + node 291/0 回归替代）。）
+    （**未实跑**；T018 只改 `roles/add-node` 与其测试，以 lint + e2e 59/0 + node 291/0 回归替代）。
+    v1.12 预期：T019 后 `test-upgrade` 268 → **305**，全量预期 **16 套件 / 2583 断言**
+    （**未实跑**；T019 只改 upgrade 测试与其 role 条件/任务名，以 lint + control-plane 269/0 + node 291/0 替代）。）
   - **无镜像验收范式（v1.4，T009 起强制）**：registry 不可达 → **任何任务都不得以「起 Pod/拉镜像」作为唯一验收手段**。
     必须把验收下沉到「真实进程 + 真实内核对象」：
     - Service/ClusterIP 类 → 沙箱真实 apiserver + 手工 `Endpoints`/`EndpointSlice` 指向**本地 mock 服务**，

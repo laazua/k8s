@@ -3,14 +3,14 @@
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T019      # 例如 T001
-contract_status: ready_for_eval  # T019 build 完成，待 eval r1
-eval_round: 1          # T018 r1 = PASS
-next_action: "eval T019"
+active_task: T016      # 例如 T001
+contract_status: accepted  # T019 r1 = PASS（accepted）；T016 契约待建立
+eval_round: 1          # T019 r1 = PASS
+next_action: "build T016"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
-done_tasks: 17
+done_tasks: 18
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,8 +30,16 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T018 r1 = PASS 已接受；T019 已 build 完成待评，之后进 T016
+blockers: []          # 无阻塞；T017/T018/T019 均已 accepted，T016 为最后一个任务
 notes: |
+  **T019（upgrade 测试假绿/一致性加固）r1 = PASS（accepted）**，被测 `2fd098a`（评估 `2026-11-21`，
+  报告 `docs/harness/state/reports/T019-r1.md`；由主会话代评，Evaluator 子代理免费额度受限）：
+  - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
+  - 独立复现：`make test-upgrade` **305/0/2** ×2（各约 11.5 分钟，归一化 diff **0 行**）；
+    牙齿 5 变异家族全红（E7/E8 空 bin、去 `upgrade_needed`、`task_status` 回退 grep、跳过 etcd restore、
+    任务名回 `item`）；`make lint` rc=0；宿主零污染。
+  - D1 MAJOR 关闭（E7/E8 真实执行）；D2–D8 全修。遗留 MINOR：`task_status` 依赖 default callback
+    （D1）、D5 负例仅在 fake 备份根（D2）、全量未跑（D3）→ 记 **T016 顺手修**。
   **T019（T015 测试假绿/一致性加固）build 完成 → ready_for_eval（2026-11-20）**：
   - D1 MAJOR：E7/E8 的 `upgrade_bin_dir` 改放**真实 1.31.0 旧二进制** → backup 通过、制品
     sha256/版本断言真实执行（关键字 `did not match` / `制品版本不符` + 官方 sha + `upgrade:binaries`
@@ -211,4 +219,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-20T03:35:00Z"   # ISO8601
+updated: "2026-11-21T02:00:00Z"   # ISO8601

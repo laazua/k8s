@@ -94,6 +94,19 @@
 
 ---
 
+## [2026-11-21] Planner · T019 r1 评估收口（主会话代评）→ 推进 T016（最后一个任务）
+
+- **决策**：T019 r1 = PASS **予以接受**；报告 `reports/T019-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
+  报告由**主会话代评**产出（`harness-evaluator` 子代理再次触发 `Free usage limit reached`），已在报告首行注明。
+- **roadmap v1.10**：T019 → `done`（已验/受限）；upgrade 268 → **305**；全量预期 **16 套件 / 2583**（未重跑）；
+  T019 r1 的 D1–D3 MINOR 并入 **T016 顺手修**（`task_status` 依赖 default callback、D5 负例仅在 fake 根、全量未跑）。
+- **spec v1.12**：A15 补「证据口径」——sha256/版本断言须真实执行、回滚证据取任务结果行、目标版本重跑不裁剪备份。
+- **状态**：`phase: BUILDING` / `active_task: T016` / `contract_status: accepted`（T019）/
+  `next_action: "build T016"` / `done_tasks: 18` / `planned_tasks: 19` / `blockers: []`。
+- **下一步**：**T016**（端到端验收与使用文档；T017/T018/T019 均已 accepted，无剩余前置）。
+
+---
+
 ## [2026-11-20] Planner · T018 r1 评估收口（主会话代评）→ 推进 T019
 
 - **决策**：T018 r1 = PASS **予以接受**；报告 `reports/T018-r1.md`（功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5，完整度 4）。
