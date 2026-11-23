@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T016      # 例如 T001
-contract_status: accepted  # T019 r1 = PASS（accepted）；T016 契约待建立
-eval_round: 1          # T019 r1 = PASS
-next_action: "build T016"
+contract_status: proposed  # T016 契约仍为 proposed（A1–A17 未勾选，§8/§9 待写）
+eval_round: 1          # T016 尚未进入 eval
+next_action: "build T016 收尾：修 3 处 + 全流程双跑 + 契约 §8/§9"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
@@ -32,6 +32,23 @@ defaults:
 
 blockers: []          # 无阻塞；T017/T018/T019 均已 accepted，T016 为最后一个任务
 notes: |
+  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：
+  - 生成者交付已提交 `e90ba07`：`tests/e2e/full_flow.sh`（1296 行，含 `--static-only`/`--keep-sandbox`）、
+    `full_inventory.ini`、`sandbox_*.yml`、Makefile `test-e2e-full`、`docs/usage.md`、`docs/variables.md`
+    （`scripts/gen_vars_doc.py --check` 防漂移）、根 README「部署快速开始」、`playbooks/control-plane.yml`
+    与 `node.yml` 改为真实 role 编排。契约 `contracts/T016.md` 仍为 `proposed`。
+  - 静态段（修 3 处后）：`bash tests/e2e/full_flow.sh --static-only` = **PASS=100 / FAIL=0 / rc=0**。
+    未提交的工作区改动（保留）：`docs/usage.md` 变量表链接改字面量、`full_flow.sh` 代码块计数改 awk +
+    宿主写保护只判写入动词/重定向。
+  - 全流程首跑：**PASS=282 / FAIL=12 / SKIP=2**（rc=2，沙箱已清理，日志丢失）。12 条失败已定位为：
+    ①**根因（9 条）**：node1 沙箱从未安装 `kube-proxy`，而 worker 升级组件清单 = `kubelet,kube-proxy`
+    → `upgrade:backup` 备份第二项时中止（证据：备份内有 `bin/kubelet`、升级后 kubelet 仍 1.31.0、
+    二次运行 changed=3 = 备份目录/MANIFEST/SHA256SUMS）；1 分钟定向复现（最小 node1 沙箱 + 真实
+    `playbooks/upgrade.yml --limit node1`）证明补 `kube-proxy` 后 rc=0、二次 changed=0。
+    ②`snapshot_problems` 把 `ports=` 空串判无效（3 条：快照重试失败/逐键有载荷/复采）；
+    ③Cilium 断言在 `$SB/etc/cilium` 找清单，真实路径 `$SB/etc/kubernetes/cilium/cilium.yaml`（1 条）。
+  - 待办：3 处修复 + `make test-e2e-full` 双跑（归一化 diff=0）+ `make lint` + 四套件各一次 +
+    契约 §8/§9（含 T017 D1–D5、T018 D1、T019 D1、T012 D5–D9 逐条）→ `ready_for_eval` → eval r1。
   **T019（upgrade 测试假绿/一致性加固）r1 = PASS（accepted）**，被测 `2fd098a`（评估 `2026-11-21`，
   报告 `docs/harness/state/reports/T019-r1.md`；由主会话代评，Evaluator 子代理免费额度受限）：
   - 六项：功能 5 / 幂等 5 / 可配置 4 / 测试 4 / 结构 5 / 安全 5；完整度 4。
@@ -219,4 +236,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-21T02:00:00Z"   # ISO8601
+updated: "2026-11-23T02:30:00Z"   # ISO8601

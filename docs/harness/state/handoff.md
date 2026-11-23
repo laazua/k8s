@@ -9,6 +9,40 @@
 
 ---
 
+## [2026-11-23] Planner · T016 build 收尾交接（根因已定位，待实现）
+
+> 本轮角色是 **Planner**（写入仅限 `state/` 四文件），代码修复**未执行**；下列 3 处为可直接照做的补丁。
+
+- **现状**：生成者交付已提交 `e90ba07`（提交消息仅 `..`，语义应更正为
+  `T016: 端到端全流程验收 + 使用文档`）。静态段 `--static-only` = **100/0**；全流程首跑
+  **282/12/2**（rc=2），沙箱已清理、ansible 日志不可得，故用定向复现定位。
+- **未提交的工作区改动（保留，勿丢）**：`docs/usage.md`（变量表链接写为字面量 `docs/variables.md`）、
+  `tests/e2e/full_flow.sh`（代码块计数改 awk；宿主写保护只判写入动词/重定向）。已实测静态 100/0，
+  应与下面 3 处修复一起提交。
+- **根因（12 条失败中的 9 条）**：node1 沙箱从未安装 `kube-proxy`（B1 只装配 containerd/kubelet），
+  worker 升级组件清单是 `kubelet,kube-proxy` → `upgrade:backup | 备份当前版本二进制` 备份第二项时
+  `src` 不存在 → node play 中止 → 之后 node 升级/回滚断言全红（含「二次运行 changed=3」= 备份目录/
+  MANIFEST/SHA256SUMS）。**证据**：备份里有 `bin/kubelet`、kubelet 二进制仍 1.31.0。
+  **验证**：手工最小 node1 沙箱（旧二进制 + pki + kubelet.conf + config.yaml + 制品）+ 真实
+  `playbooks/upgrade.yml --limit node1` → 补齐 kube-proxy 后 **rc=0**、二次运行 **changed=0**
+  （生产 worker 的 kube-proxy 由 `node.yml` 安装，缺它属沙箱缺口，不是产品缺陷）。
+- **补丁 1（B1 节点装配）**：在 `full_flow.sh` 的 `node1 kubelet 装配 exit 0` 之后加真实装配：
+  `ap tests/kube-proxy/sandbox_kube_proxy.yml "$SB/logs/node1_kp.log" -l node1 -e "kube_proxy_root_prefix=$SB/node1"`
+  （extra vars 优先级高于 play vars），并断言 `-x "$SB/node1/usr/local/bin/kube-proxy"` 且版本 = `v1.31.0`。
+- **补丁 2（快照判定，3 条失败）**：`snapshot_problems()`（约 92–108 行）对 `ports` 空串放行——
+  `if k == "ports" and v == "": continue`（`__ERROR__`/`__EMPTY__` 仍判失败）。基线无端口占用是合法的。
+- **补丁 3（Cilium 断言，1 条失败）**：断言路径改按 role 变量，真实渲染文件是
+  `$SB/etc/kubernetes/cilium/cilium.yaml`（`cilium_manifest_path`），不是 `$SB/etc/cilium/`；
+  建议 `find "$SB/etc" -path '*/cilium/cilium.yaml'` 或直接按 `cilium_manifest_path` 断言。
+- **建议（非阻塞）**：`ap_cp`/`ap_node` 失败分支打印日志末尾 20–30 行（剥离 `ok/changed/skipping`
+  行），避免再次因沙箱清理丢失唯一现场。
+- **收尾门禁**：`make test-e2e-full` **双跑**（归一化沙箱路径/PID/耗时后 diff=0）；`make lint` rc=0；
+  `test-e2e`/`test-taints`/`test-add-node`/`test-upgrade` 各一次；全量 `make test` 若未跑须在契约 §9 声明。
+- **随后**：补契约 §8（红→绿、两次 diff、门禁）与 §9（T017 D1–D5、T018 D1/D6、T019 D1/D2/D3、
+  T012 D5–D9 逐条）→ `contract_status: ready_for_eval` / `next_action: "eval T016"` → T016 r1。
+
+---
+
 ## [2026-11-20] Generator · T019（T015 测试假绿/一致性加固）→ **ready_for_eval**
 
 - **交付**（只改 `tests/upgrade/`、`roles/upgrade/`、`contracts/T015.md` 措辞；未动 `roles/etcd|pki|download`）：
