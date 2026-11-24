@@ -1,6 +1,9 @@
 # 任务清单（Roadmap）· k8s 二进制 Ansible 部署
 
-> 状态：**已复核定稿（v1.11，Planner，2026-11-23）**，取代 v1.10。上游：`spec.md`（G1–G13 / A1–A16 / C1–C14 / D1–D3 / R7）。
+> 状态：**已复核定稿（v1.12，Planner，2026-11-24）**，取代 v1.11。上游：`spec.md`（G1–G13 / A1–A16 / C1–C14 / D1–D3 / R7）。
+> v1.12 变更：T016 **build 完成 → ready_for_eval**。`make test-e2e-full` **309/0/2 ×2**（归一化 diff 0 行，
+> 约 12–13 分钟/次）；门禁 `lint` rc=0、`test-e2e` 62/0、`test-taints` 175/0、`test-add-node` 277/0/2、
+> `test-upgrade` 307/0/2；新增第 17 个套件 `test-e2e-full`（311 条）。**验收摘要不变**；全量 `make test` 未跑。
 > v1.11 变更：T016 → **in-progress**（生成者交付 `e90ba07`；静态段 **100/0**；全流程首跑 **282/12/2**）。
 > 12 条失败已定位为 **1 个根因 + 2 个测试缺陷**（node1 沙箱缺 `kube-proxy`、`ports` 空串误判、Cilium 断言路径），
 > 收尾清单见 `state.yaml:next_action` 与 `handoff.md` 顶部。**T016 验收摘要不变**。
@@ -52,6 +55,10 @@
 | T019 | done | T015 测试假绿/一致性加固 | `tests/upgrade/`（305 断言）+ `roles/upgrade/` 条件/任务名 + 两份 README + T015 §5 | **目标验收**：①D1 E7/E8 真实执行制品 sha256/版本断言（bin 目录放真实旧二进制）；②D2 回滚证据取任务结果行（不得被 `skipping:` 命中）；③D3/D4 恒真断言消除；④D5 `upgrade_needed=false` 不裁剪旧备份；⑤D6 无 `item` 模板告警；⑥D7 多成员回滚覆盖项文档化；⑦D8 PKI/kubeconfig 降为辅助证据；⑧计数只增不减且两次一致 [A15, C14]。**已验**：`make test-upgrade` **305/0/2** ×2（归一化 diff **0 行**）；E7/E8 日志含 `did not match`/`制品版本不符`/`upgrade:binaries`；D5 负例 `changed=0` 且不删备份、正例仍裁剪；`task_status` 合成日志自检；牙齿 5 变异家族全红（E7/E8 空 bin、去 `upgrade_needed`、`task_status` 回退 grep、跳过 etcd restore、任务名回 `item`）。**受限/未验证**：全量 `make test` 未跑（以 lint + control-plane 269/0 + node 291/0 替代）；多成员回滚、`manage_service=true`、kubepods 新建 slice 实测 0；D1 MINOR（`task_status` 依赖 default callback）与 D2/D3 并入 T016 | T015 | 负例最小复现 + 真实执行证据 + 幂等复跑 | normal |
 
 > 注：T013 与 T014 **可并行**（互不依赖）；T016 依赖 T013/T015 与 **T017** 完成，故为主线的终点。
+> 注（v1.12，2026-11-24）：**T016 build 完成**（`ready_for_eval`）。首跑 282/12/2 的 12 条已全部关闭：
+> ①node1 沙箱补真实 `kube-proxy`（升级组件清单含它；装配需显式 `kube_proxy_cluster_cidr`）；②空 `ports` 放行；
+> ③Cilium 断言按 `cilium_manifest_path`。另修 2 个测试自身缺陷（add-node `in argv`、upgrade `$1` 外层展开），
+> 产品代码零改动。下一步 **T016 r1 独立评估**（双跑 12–13 分钟/次 + 牙齿），通过后项目 DONE。
 > 注（v1.11，2026-11-23）：**T016 进行中**（`e90ba07` 已交付全流程脚本/文档/真实编排；`--static-only` **100/0**）。
 > 全流程首跑 **282/12/2**（rc=2）的 12 条失败已定位：①node1 沙箱从未装 `kube-proxy` → worker 升级备份首项成功后
 > 在第二项中止（连带 node 升级/回滚 9 条）；②`snapshot_problems` 把 `ports=` 空串判无效（3 条）；③Cilium 断言找

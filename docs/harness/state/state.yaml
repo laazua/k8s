@@ -4,9 +4,9 @@
 
 phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
 active_task: T016      # 例如 T001
-contract_status: proposed  # T016 契约仍为 proposed（A1–A17 未勾选，§8/§9 待写）
-eval_round: 1          # T016 尚未进入 eval
-next_action: "build T016 收尾：修 3 处 + 全流程双跑 + 契约 §8/§9"
+contract_status: ready_for_eval  # T016 build 完成（309/0/2 ×2、门禁全绿），待 eval r1
+eval_round: 1          # T016 待评（r1）
+next_action: "eval T016"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
@@ -32,7 +32,17 @@ defaults:
 
 blockers: []          # 无阻塞；T017/T018/T019 均已 accepted，T016 为最后一个任务
 notes: |
-  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：
+  **T016（端到端验收与使用文档）build 完成 → ready_for_eval（2026-11-24）**：
+  - `make test-e2e-full` **309/0/2 ×2**（rc=0 ×2，约 13m16s / 12m34s；归一化沙箱路径/磁盘余量/
+    kill PID 后 **diff = 0 行**）；断言总数 311（SKIP=2 单列不计 PASS）；首跑 282/12/2 → 修复后 309/0/2。
+  - 3 处修复：①node1 沙箱补真实 `kube-proxy`（worker 升级组件清单含它；装配显式
+    `kube_proxy_cluster_cidr=$POD_CIDR`，因 e2e inventory 无 `k8s_pod_cidr`）；②`snapshot_problems`
+    放行空 `ports`；③Cilium 断言改按 `cilium_manifest_path`。另加 `tail_log` 失败现场打印。
+  - 门禁：`make lint` rc=0；`test-e2e` **62/0**；`test-taints` **175/0**；`test-add-node` **277/0/2**；
+    `test-upgrade` **307/0/2**。中途修了 2 个**测试自身**缺陷（add-node 的 `in argv` 列表成员判定、
+    upgrade 的 `$1` 被外层展开），产品代码零改动；全量 `make test` 未跑（成本，契约 §9.3 声明）。
+  - 执行者：**主会话代做**（`harness-generator` 子代理两次 `Free usage limit reached`），契约 §8.1 已注明。
+  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：
   - 生成者交付已提交 `e90ba07`：`tests/e2e/full_flow.sh`（1296 行，含 `--static-only`/`--keep-sandbox`）、
     `full_inventory.ini`、`sandbox_*.yml`、Makefile `test-e2e-full`、`docs/usage.md`、`docs/variables.md`
     （`scripts/gen_vars_doc.py --check` 防漂移）、根 README「部署快速开始」、`playbooks/control-plane.yml`
@@ -236,4 +246,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-23T02:30:00Z"   # ISO8601
+updated: "2026-11-24T03:00:00Z"   # ISO8601

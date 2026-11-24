@@ -447,7 +447,7 @@ ok = False
 for t in tasks:
     cmd = t.get("ansible.builtin.command") or {}
     argv = [str(x) for x in (cmd.get("argv") or [])]
-    if "add_node_verify_kubectl" in argv and any("Ready" in x for x in argv):
+    if any("add_node_verify_kubectl" in x for x in argv) and any("Ready" in x for x in argv):
         ok = True
 sys.exit(0 if ok else 1)
 PY

@@ -47,6 +47,7 @@ check_not() { local d="$1"; shift; if "$@" >/dev/null 2>&1; then bad "$d"; else 
 check_eq() { local d="$1" want="$2" got="$3"; if [[ "$want" == "$got" ]]; then ok "$d"; else bad "$d [期望=$want 实际=${got:-<空>}]"; fi; }
 changed_of() { grep -oE 'changed=[0-9]+' "$1" 2>/dev/null | cut -d= -f2 | awk '{s+=$1} END{print s+0}'; }
 sha_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
+bin_version() { sudo -n "$1" --version 2>/dev/null | grep -oE 'v1\.[0-9]+\.[0-9]+' | head -1; }
 fhash() { local h; h="$(sudo -n sha256sum "$1" 2>/dev/null | awk '{print $1}')"; [[ -n "$h" ]] && printf '%s' "$h" || printf '__MISSING__'; }
 tree_hash() {
   local p="$1" h
@@ -100,6 +101,8 @@ for line in open(path, encoding="utf-8", errors="replace"):
         continue
     k, v = line.split("=", 1)
     seen.add(k)
+    if k == "ports" and v == "":
+        continue  # 基线无端口占用是合法的；__ERROR__/__EMPTY__ 仍判失败
     if v in ("", "__ERROR__", "__EMPTY__"):
         bad.append(f"{k}(空/错误)")
     elif v == "__MISSING__" and k not in allow:
@@ -117,6 +120,10 @@ snapshot_with_retry() {  # <file>：采集失败重试，避免一次抖动误�
     sleep 0.5
   done
   return 1
+}
+cilium_manifest_ok() {  # <sandbox_root>：真实渲染路径 = cilium_manifest_path
+  local f="$1/etc/kubernetes/cilium/cilium.yaml"
+  [[ -f "$f" ]] && grep -q 'kind: DaemonSet' "$f" && grep -q 'kind: ConfigMap' "$f"
 }
 
 PRE_KERNEL_PANIC="$(cat /proc/sys/kernel/panic 2>/dev/null)"
@@ -176,6 +183,7 @@ fi
 
 # --- 制品缓存（1.31.0 基线 + 1.32.13 升级目标）--------------------------------
 VERSION_OLD=1.31.0
+POD_CIDR="${T016_POD_CIDR:-10.88.0.0/16}"
 VERSION_NEW=1.32.13
 CONTAINERD_VERSION=2.0.0
 RUNC_VERSION=1.2.1
@@ -357,14 +365,64 @@ bad = []
 for i, line in enumerate(open("tests/e2e/full_flow.sh", encoding="utf-8"), 1):
     if line.lstrip().startswith("#") or "不写宿主" in line:
         continue
-    # 先剥掉 $SB/... 沙箱前缀，剩下的绝对宿主路径即违规
+    # 先剥掉 $SB/... 沙箱前缀，剩下的绝对宿主路径才可能违规
     rest = re.sub(r"\$(?:\{SB\}|SB)[^\s\"']*", "", line)
+    if "/etc/systemd/system" not in rest:
+        continue
+    # 只读命令与断言描述不算写入；写入动词或重定向才是违规
+    writes = re.search(r"\b(install|cp|mv|tee|rm|mkdir|touch|chmod|chown)\b", line) \
+        or re.search(r">\s*['\"]?/etc/systemd/system", rest)
+    if not writes:
+        continue
     if "/etc/systemd/system" in rest:
         bad.append(i)
 print("违规行:", bad, file=sys.stderr)
 sys.exit(0 if not bad else 1)
 PY
 check "tests/e2e/README.md 记录全流程入口" grep -q 'test-e2e-full' tests/e2e/README.md
+
+echo "-- A1b 快照/Cilium/kube-proxy 断言自检（合成载荷，防回归）"
+static_snap_ports() {  # 空 ports 合法；__ERROR__/__EMPTY__ 仍失败
+  local t rc=0
+  t="$(mktemp /tmp/opencode/t016_snap.XXXXXX)"
+  printf 'etc_kubernetes=ok\nports=\n' >"$t"
+  [[ -z "$(snapshot_problems "$t")" ]] || rc=1
+  for v in __ERROR__ __EMPTY__; do
+    printf 'ports=%s\n' "$v" >"$t"
+    [[ -n "$(snapshot_problems "$t")" ]] || rc=1
+  done
+  rm -f "$t"
+  return "$rc"
+}
+static_cilium_path() {  # 正例按 cilium_manifest_path；旧路径 $SB/etc/cilium 不算
+  local d rc=0
+  d="$(mktemp -d /tmp/opencode/t016_cil.XXXXXX)"
+  mkdir -p "$d/etc/kubernetes/cilium"
+  printf 'kind: DaemonSet\n---\nkind: ConfigMap\n' >"$d/etc/kubernetes/cilium/cilium.yaml"
+  cilium_manifest_ok "$d" || rc=1
+  mkdir -p "$d/etc/cilium"
+  cp "$d/etc/kubernetes/cilium/cilium.yaml" "$d/etc/cilium/x.yaml"
+  rm -f "$d/etc/kubernetes/cilium/cilium.yaml"
+  cilium_manifest_ok "$d" && rc=1
+  rm -rf "$d"
+  return "$rc"
+}
+check "snapshot_problems 放行空 ports，仍拒绝 __ERROR__/__EMPTY__" static_snap_ports
+check "Cilium 断言按 cilium_manifest_path（$SB/etc/kubernetes/cilium/cilium.yaml）" static_cilium_path
+check "node1 沙箱装配 kube-proxy（worker 升级组件清单 kubelet,kube-proxy）" python3 - <<'PY'
+import sys
+lines = open("tests/e2e/full_flow.sh", encoding="utf-8").read().splitlines()
+def first(pred):
+    return next((n for n, l in enumerate(lines) if pred(l)), None)
+start = first(lambda l: l.lstrip().startswith("if ap tests/add-node/sandbox_node1_kubelet.yml"))
+end = first(lambda l: l.lstrip().startswith("start_unit kl1"))
+kp = [n for n, l in enumerate(lines)
+      if l.lstrip().startswith("if ap tests/kube-proxy/sandbox_kube_proxy.yml")]
+ok = (start is not None and end is not None and kp
+      and start < kp[0] < end
+      and any("kube_proxy_root_prefix=$SB/node1" in lines[n + 1] for n in kp))
+sys.exit(0 if ok else 1)
+PY
 
 echo "-- A2 真实部署入口（不再是骨架占位）"
 for p in playbooks/site.yml playbooks/control-plane.yml playbooks/node.yml; do
@@ -409,7 +467,7 @@ for h in "前置条件" "inventory" "可配置项" "代理" "离线" "部署" "�
   check "usage.md 含章节：$h" grep -qE "^#{2,3} .*$h" docs/usage.md
 done
 check "usage.md 每节都有可复制命令块（12 个以上代码块）" \
-  bash -c '[[ $(grep -c "^```" docs/usage.md) -ge 24 ]]'
+  awk 'BEGIN{f=sprintf("%c%c%c",96,96,96)} $0 ~ "^"f {n++} END{exit !(n>=24)}' docs/usage.md
 check "usage.md 的一键部署命令指向 make deploy" grep -qE 'make deploy' docs/usage.md
 check "usage.md 的验证命令可执行（kubectl get nodes）" grep -q 'kubectl get nodes' docs/usage.md
 check "usage.md 的台账变量表链接到 docs/variables.md" grep -q 'variables\.md' docs/usage.md
@@ -672,8 +730,8 @@ if ap tests/cilium/sandbox_cilium.yml "$SB/logs/cilium.log"; then
 else
   bad "Cilium 渲染失败（见 $SB/logs/cilium.log）"
 fi
-check "Cilium 清单含 DaemonSet 与 ConfigMap" \
-  bash -c "f=\$(find '$SB/etc/cilium' -name '*.yaml' 2>/dev/null | head -1); [[ -n \"\$f\" ]] && grep -q 'kind: DaemonSet' \"\$f\" && grep -q 'kind: ConfigMap' \"\$f\""
+check "Cilium 清单含 DaemonSet 与 ConfigMap（cilium_manifest_path）" \
+  cilium_manifest_ok "$SB"
 
 if ap tests/add-node/sandbox_node1.yml "$SB/logs/node1_cd.log" -l node1; then
   ok "node1 containerd 装配 exit 0"
@@ -690,6 +748,17 @@ if ap tests/add-node/sandbox_node1_kubelet.yml "$SB/logs/node1_kl.log" -l node1;
 else
   bad "node1 kubelet 装配失败（见 $SB/logs/node1_kl.log）"
 fi
+# worker 升级组件清单 = kubelet,kube-proxy，缺 kube-proxy 会让升级备份第二项失败
+if ap tests/kube-proxy/sandbox_kube_proxy.yml "$SB/logs/node1_kp.log" -l node1 \
+  -e "kube_proxy_root_prefix=$SB/node1" \
+  -e "kube_proxy_cluster_cidr=$POD_CIDR"; then
+  ok "node1 kube-proxy 装配 exit 0"
+else
+  bad "node1 kube-proxy 装配失败（见 $SB/logs/node1_kp.log）"
+fi
+check "node1 kube-proxy 二进制已安装" test -x "$SB/node1/usr/local/bin/kube-proxy"
+check_eq "node1 kube-proxy 版本 = v$VERSION_OLD" "v$VERSION_OLD" \
+  "$(bin_version "$SB/node1/usr/local/bin/kube-proxy")"
 start_unit kl1 "$KL1_UNIT" "$SB/logs/kl1.log" && ok "已拉起 node1 真实 kubelet" || bad "无法解析 node1 kubelet ExecStart"
 wait_node() {
   local i
@@ -1097,12 +1166,17 @@ BACKUP_ROOT="$SB/var/backups/kubernetes/upgrade"
 NODE_BACKUP_ROOT="$SB/node1/var/backups/kubernetes/upgrade"
 ap_cp() { local log="$1"; shift; timeout 1800 "$ANSIBLE_PLAYBOOK" -i "$INV" playbooks/upgrade.yml --limit cp1 -e "@$SB/upg-cp.json" "$@" >"$log" 2>&1; }
 ap_node() { local log="$1"; shift; timeout 1800 "$ANSIBLE_PLAYBOOK" -i "$INV" playbooks/upgrade.yml --limit node1 -e "@$SB/upg-node.json" "$@" >"$log" 2>&1; }
-bin_version() { sudo -n "$1" --version 2>/dev/null | grep -oE 'v1\.[0-9]+\.[0-9]+' | head -1; }
+tail_log() {  # <log>：失败现场；剥掉 ok/changed/skipping 行，避免沙箱清理后无现场
+  [[ -f "$1" ]] || return 0
+  printf '  ---- %s 尾部 ----\n' "$1"
+  grep -vE '^(ok|changed|skipping):' "$1" | tail -25 | sed 's/^/  /'
+}
 
 if ap_cp "$SB/logs/upg_cp.log"; then
   ok "控制面升级 play exit 0（备份 → 安装 → 校验）"
 else
   bad "控制面升级失败（见 $SB/logs/upg_cp.log）"
+  tail_log "$SB/logs/upg_cp.log"
 fi
 check "控制面升级首跑 changed>0" test "$(changed_of "$SB/logs/upg_cp.log")" -gt 0
 BACKUP_CP="$(sudo -n find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | head -1)"
@@ -1135,6 +1209,7 @@ if ap_node "$SB/logs/upg_node.log"; then
   ok "工作节点升级 play exit 0"
 else
   bad "工作节点升级失败（见 $SB/logs/upg_node.log）"
+  tail_log "$SB/logs/upg_node.log"
 fi
 check "工作节点升级首跑 changed>0" test "$(changed_of "$SB/logs/upg_node.log")" -gt 0
 BACKUP_NODE="$(sudo -n find "$NODE_BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | head -1)"
@@ -1188,11 +1263,11 @@ check_not "回滚前 etcd 已停止" proc_alive_path "$SB/usr/local/bin/etcd"
 rc=0
 ap_cp "$SB/logs/rollback_cp.log" -e upgrade_action=rollback \
   -e "upgrade_rollback_dir=$BACKUP_CP" -e upgrade_rollback_etcd_offline_ack=true || rc=$?
-check "控制面回滚 exit 0" test "$rc" -eq 0
+if [[ $rc -eq 0 ]]; then ok "控制面回滚 exit 0"; else bad "控制面回滚 exit 0 [rc=$rc]"; tail_log "$SB/logs/rollback_cp.log"; fi
 rc=0
 ap_node "$SB/logs/rollback_node.log" -e upgrade_action=rollback \
   -e "upgrade_rollback_dir=$BACKUP_NODE" || rc=$?
-check "节点回滚 exit 0" test "$rc" -eq 0
+if [[ $rc -eq 0 ]]; then ok "节点回滚 exit 0"; else bad "节点回滚 exit 0 [rc=$rc]"; tail_log "$SB/logs/rollback_node.log"; fi
 check_eq "回滚后 kube-apiserver 二进制 = v$VERSION_OLD" "v$VERSION_OLD" \
   "$(bin_version "$SB/usr/local/bin/kube-apiserver")"
 check_eq "回滚后 kubelet 二进制 = v$VERSION_OLD" "v$VERSION_OLD" \
@@ -1217,6 +1292,7 @@ if ap_node "$SB/logs/rollback_node2.log" -e upgrade_action=rollback -e "upgrade_
   ok "节点回滚第二次运行 exit 0"
 else
   bad "节点回滚第二次运行失败（见 $SB/logs/rollback_node2.log）"
+  tail_log "$SB/logs/rollback_node2.log"
 fi
 check_eq "节点回滚第二次运行 changed=0（幂等）" 0 "$(changed_of "$SB/logs/rollback_node2.log")"
 skipped "系统 Pod Running（无镜像；真机用 tests/e2e/smoke.sh --mode real）"

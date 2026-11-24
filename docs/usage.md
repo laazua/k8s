@@ -49,7 +49,7 @@ k8s-node-01 ansible_host=10.0.0.21
 ## 可配置项
 
 所有可调参数集中在 `group_vars/` 与各 role 的 `defaults/main.yml`；
-**完整台账见自动生成的 [`variables.md`](variables.md)**（`make test-e2e-full` 会校验文档与 defaults 不漂移）。
+**完整台账见自动生成的 [`docs/variables.md`](variables.md)**（`make test-e2e-full` 会校验文档与 defaults 不漂移）。
 覆盖优先级：`-e` / host_vars > group_vars > role defaults。
 
 常用覆盖项：

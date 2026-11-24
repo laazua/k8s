@@ -368,7 +368,7 @@ _D1_LOG="$(mktemp /tmp/opencode/t019-d1.XXXXXX)"
 printf 'PLAY [synthetic] ****\n\nPLAY RECAP ****\n' >"$_D1_LOG"
 _D1_ERR="$(task_status "$_D1_LOG" 'synthetic' 2>&1 >/dev/null)"
 check "D1 自检：PLAY 有但 TASK 无 → 显式 TASK_PARSE_ERROR + 解析失败" \
-  bash -c "grep -q 'TASK_PARSE_ERROR' <<< '$1' && grep -q '解析失败' <<< '$1'" _ "$_D1_ERR"
+  bash -c "grep -q 'TASK_PARSE_ERROR' <<< \"\$1\" && grep -q '解析失败' <<< \"\$1\"" _ "$_D1_ERR"
 check_not "D1 自检：解析失败返回非 0（不被当作空结果吞掉）" \
   task_status "$_D1_LOG" 'synthetic'
 rm -f "$_D1_LOG"

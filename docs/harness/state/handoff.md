@@ -9,6 +9,29 @@
 
 ---
 
+## [2026-11-24] Generator（主会话代做）· T016 build 完成 → **ready_for_eval**
+
+- **额度降级声明**：`harness-generator` 子代理两次 `Free usage limit reached`，按既有授权由主会话接手；
+  契约 §8.1 与本节均已注明，命令与计数均为真实运行。
+- **全流程双跑**：`make test-e2e-full` **309/0/2，rc=0 ×2**（09:13:30→09:26:46 ≈13m16s；
+  09:26:56→09:39:30 ≈12m34s）；归一化沙箱路径/磁盘余量/kill PID 后 **diff = 0 行**；
+  断言 311（SKIP=2 单列）。首跑 282/12/2 → 298/11/2 → **309/0/2**。
+- **3 处修复**：①node1 沙箱补真实 `kube-proxy` 装配（worker 升级组件清单含它；`sandbox_kube_proxy.yml`
+  依赖 `k8s_pod_cidr`，e2e inventory 无此变量 → 显式 `-e kube_proxy_cluster_cidr=$POD_CIDR`）；
+  ②`snapshot_problems` 放行空 `ports`（`__ERROR__`/`__EMPTY__` 仍 FAIL）；③Cilium 断言改按
+  `cilium_manifest_path`（`$SB/etc/kubernetes/cilium/cilium.yaml`）；另加 `tail_log` 失败现场打印。
+- **门禁**：`make lint` rc=0；`test-e2e` **62/0**；`test-taints` **175/0**；
+  `test-add-node` **277/0/2**；`test-upgrade` **307/0/2**。全量 `make test` 未跑（成本，契约 §9.3）。
+- **同轮修掉的 2 个测试自身缺陷**（产品代码零改动）：add-node 的 `"…" in argv` 误用列表成员
+  （应 `any(x in argv)`）；upgrade 的 `bash -c "...'$1'..."` 被外层 `set -u` 提前展开（改 `\$1`）。
+- **契约**：A1–A17 全勾、§8.1/8.1b/8.2/8.3 填实、状态 `ready_for_eval`；`state.yaml`
+  `next_action: "eval T016"`；`roadmap.md` v1.12。
+- **下一步**：**T016 r1 独立评估**（优先子代理；额度不可用则由主会话代评并注明）——复跑双跑
+  （12–13 分钟/次）+ 牙齿（改坏 kube-proxy 装配 / 空 ports 判定 / Cilium 路径应红）+ 文档一致性；
+  PASS 后 Planner 收口，项目进入 DONE。
+
+---
+
 ## [2026-11-23] Planner · T016 build 收尾交接（根因已定位，待实现）
 
 > 本轮角色是 **Planner**（写入仅限 `state/` 四文件），代码修复**未执行**；下列 3 处为可直接照做的补丁。
