@@ -9,6 +9,28 @@
 
 ---
 
+## [2026-11-25] Planner · T016 r1 = PASS → **项目 DONE（19/19 accepted）**
+
+- **评估**：`reports/T016-r1.md`（首行注明「主会话代评，`harness-evaluator` 子代理免费额度受限」）。
+  被测 `0e99041`。
+- **双跑**：`full_flow.sh` **310/0/2 ×2**（12m24s / 12m16s，rc=0 ×2；各 335 行归一化后 **diff = 0 行**）。
+  **证据修正**：中途那份 224/86 / 47 分钟的记录是**两个实例并发写同一日志、共用固定端口并在 F 段
+  按进程名互杀**所致（前半段即一次完整 310/0/2）；独占重跑 B3 复现 310/0/2 → **非产品缺陷**。
+- **门禁**：`lint` rc=0、`test-e2e` 62/0、`test-taints` 175/0、`test-add-node` 277/0/2、
+  `test-upgrade` 307/0/2（与 build 基线一致）；静态段 103/0；`gen_vars_doc.py --check` 886 变量零漂移。
+- **牙齿 4 族**：移除 node1 kube-proxy 装配 → 102/1；去掉空 `ports` 放行 → 102/1；Cilium 路径回退 → 102/1；
+  移除 `control-plane.yml` taints role → 101/2（连带 role 集合一致性断言）。每族只翻红目标断言。
+- **宿主零污染**：无并发进程、16443/12379 等端口空闲、无 `/tmp/opencode/t016.*`、`git status` clean；
+  F 段自证 `/etc/kubernetes`、`/etc/systemd/system`、containerd 顶层、`/opt/cni/bin` 内容哈希未变，
+  `kernel.panic*` 与 `kubepods*.slice` 已恢复。
+- **收口**：`state.yaml` → `phase: DONE` / `active_task: null` / `contract_status: accepted` /
+  `done_tasks: 19`；`roadmap.md` v1.13（T016 → done）；契约状态 `accepted`。
+- **遗留非阻塞**：全量 `make test` 未跑（约 85 分钟，契约 §9.3）；T018 D1 负例、T019 D2/D3、T012 D8；
+  `repo-conventions.md` §8 与 README 的 docker/ansible-lint 描述过时；`make smoke` 空跑；
+  `full_flow.sh` 并发不安全（建议 `flock` 或 README 声明「同宿主只跑一个实例」）。
+
+---
+
 ## [2026-11-24] Generator（主会话代做）· T016 build 完成 → **ready_for_eval**
 
 - **额度降级声明**：`harness-generator` 子代理两次 `Free usage limit reached`，按既有授权由主会话接手；

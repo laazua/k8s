@@ -2,15 +2,15 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE
-active_task: T016      # 例如 T001
-contract_status: ready_for_eval  # T016 build 完成（309/0/2 ×2、门禁全绿），待 eval r1
-eval_round: 1          # T016 待评（r1）
-next_action: "eval T016"
+phase: DONE             # INIT | PLANNING | BUILDING | EVALUATING | DONE —— 19/19 任务 accepted
+active_task: null       # 无活动任务
+contract_status: accepted  # T016 r1 = PASS（reports/T016-r1.md）
+eval_round: 1          # T016 已评（r1 PASS）
+next_action: "项目完成：T001–T019 全部 accepted；剩余仅非阻塞项（见 roadmap 备注与各报告 §5）"
 
 # 计划摘要（planner 写）
 planned_tasks: 19
-done_tasks: 18
+done_tasks: 19
 critical_path: [T001, T002, T003, T004, T006, T007, T008, T009, T010, T011, T012, T014, T015, T016]
 
 # 冻结的默认决策（planner 写，供下游一致引用）
@@ -30,9 +30,18 @@ defaults:
   static_gate: "ansible-playbook --syntax-check + yamllint（ansible-lint 不可得；可安装时须恢复）"
   harness_scope_note: "README 的 harness 章节已由 AGENTS.md + docs/harness/ 交付，不在本 roadmap 范围"
 
-blockers: []          # 无阻塞；T017/T018/T019 均已 accepted，T016 为最后一个任务
+blockers: []          # 无阻塞；T001–T019 全部 accepted
 notes: |
-  **T016（端到端验收与使用文档）build 完成 → ready_for_eval（2026-11-24）**：
+  **项目完成（2026-11-25）**：T016 r1 = **PASS**，19/19 任务 accepted，`phase: DONE`。
+  - 独立复跑 `full_flow.sh` **310/0/2 ×2**（12m24s / 12m16s，归一化 **diff 0 行**），静态段 103/0；
+    门禁 `lint` rc=0、`test-e2e` 62/0、`test-taints` 175/0、`test-add-node` 277/0/2、`test-upgrade` 307/0/2；
+    牙齿 4 族全红（102/1 ×3、101/2）；`gen_vars_doc.py --check` 886 变量零漂移；宿主零污染。
+  - 报告 `reports/T016-r1.md`（首行注明：主会话代评，Evaluator 子代理免费额度受限）。
+  - 环境性发现（非产品缺陷）：`tests/e2e/full_flow.sh` 并发不安全——两实例共用固定端口且 F 段按进程名
+    清理，互杀 etcd/apiserver 产生一次 224/86 假红；独占重跑即 310/0/2。建议后续加 `flock` 或文档声明。
+  - 遗留非阻塞（已逐条在契约 §9 / 报告 §8 交代）：全量 `make test` 未跑；T018 D1 负例、T019 D2/D3、
+    T012 D8 未做；`repo-conventions.md` §8 docker 与 README 生命周期 `ansible-lint` 描述过时；`make smoke` 空跑。
+  **T016（端到端验收与使用文档）build 完成 → ready_for_eval（2026-11-24）**：  **T016（端到端验收与使用文档）build 完成 → ready_for_eval（2026-11-24）**：
   - `make test-e2e-full` **309/0/2 ×2**（rc=0 ×2，约 13m16s / 12m34s；归一化沙箱路径/磁盘余量/
     kill PID 后 **diff = 0 行**）；断言总数 311（SKIP=2 单列不计 PASS）；首跑 282/12/2 → 修复后 309/0/2。
   - 3 处修复：①node1 沙箱补真实 `kube-proxy`（worker 升级组件清单含它；装配显式
@@ -246,4 +255,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-24T03:00:00Z"   # ISO8601
+updated: "2026-11-25T01:20:00Z"   # ISO8601
