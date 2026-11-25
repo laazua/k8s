@@ -10,7 +10,7 @@
 > v1.12 变更：T016 **build 完成 → ready_for_eval**。`make test-e2e-full` **309/0/2 ×2**（归一化 diff 0 行，
 > 约 12–13 分钟/次）；门禁 `lint` rc=0、`test-e2e` 62/0、`test-taints` 175/0、`test-add-node` 277/0/2、
 > `test-upgrade` 307/0/2；新增第 17 个套件 `test-e2e-full`（311 条）。**验收摘要不变**；全量 `make test` 未跑。
-> v1.11 变更：T016 → **in-progress**（生成者交付 `e90ba07`；静态段 **100/0**；全流程首跑 **282/12/2**）。
+> v1.11 变更：T016 → **in-progress**（生成者交付 `1ea6f55`；静态段 **100/0**；全流程首跑 **282/12/2**）。
 > 12 条失败已定位为 **1 个根因 + 2 个测试缺陷**（node1 沙箱缺 `kube-proxy`、`ports` 空串误判、Cilium 断言路径），
 > 收尾清单见 `state.yaml:next_action` 与 `handoff.md` 顶部。**T016 验收摘要不变**。
 > v1.10 变更：T019 → done（r1 = PASS）；upgrade 268 → **305** 断言，全量预期 **16 套件 / 2583**（未重跑）；
@@ -65,7 +65,7 @@
 > ①node1 沙箱补真实 `kube-proxy`（升级组件清单含它；装配需显式 `kube_proxy_cluster_cidr`）；②空 `ports` 放行；
 > ③Cilium 断言按 `cilium_manifest_path`。另修 2 个测试自身缺陷（add-node `in argv`、upgrade `$1` 外层展开），
 > 产品代码零改动。下一步 **T016 r1 独立评估**（双跑 12–13 分钟/次 + 牙齿），通过后项目 DONE。
-> 注（v1.11，2026-11-23）：**T016 进行中**（`e90ba07` 已交付全流程脚本/文档/真实编排；`--static-only` **100/0**）。
+> 注（v1.11，2026-11-23）：**T016 进行中**（`1ea6f55` 已交付全流程脚本/文档/真实编排；`--static-only` **100/0**）。
 > 全流程首跑 **282/12/2**（rc=2）的 12 条失败已定位：①node1 沙箱从未装 `kube-proxy` → worker 升级备份首项成功后
 > 在第二项中止（连带 node 升级/回滚 9 条）；②`snapshot_problems` 把 `ports=` 空串判无效（3 条）；③Cilium 断言找
 > `$SB/etc/cilium/` 而真实路径是 `$SB/etc/kubernetes/cilium/cilium.yaml`（1 条）。修完需双跑一致 + 证据入契约 §8/§9。

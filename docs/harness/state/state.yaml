@@ -51,8 +51,8 @@ notes: |
     `test-upgrade` **307/0/2**。中途修了 2 个**测试自身**缺陷（add-node 的 `in argv` 列表成员判定、
     upgrade 的 `$1` 被外层展开），产品代码零改动；全量 `make test` 未跑（成本，契约 §9.3 声明）。
   - 执行者：**主会话代做**（`harness-generator` 子代理两次 `Free usage limit reached`），契约 §8.1 已注明。
-  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：
-  - 生成者交付已提交 `e90ba07`：`tests/e2e/full_flow.sh`（1296 行，含 `--static-only`/`--keep-sandbox`）、
+  **T016（端到端验收与使用文档）build 进行中（2026-11-23）**：
+  - 生成者交付已提交 `1ea6f55`：`tests/e2e/full_flow.sh`（1296 行，含 `--static-only`/`--keep-sandbox`）、
     `full_inventory.ini`、`sandbox_*.yml`、Makefile `test-e2e-full`、`docs/usage.md`、`docs/variables.md`
     （`scripts/gen_vars_doc.py --check` 防漂移）、根 README「部署快速开始」、`playbooks/control-plane.yml`
     与 `node.yml` 改为真实 role 编排。契约 `contracts/T016.md` 仍为 `proposed`。
