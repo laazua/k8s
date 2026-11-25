@@ -35,10 +35,10 @@ make test-e2e-full
 
 ---
 
-## [项目初始化](docs/init.md)
+## [项目初始化(参考这里)](docs/init.md)
 
 ---
 
-## [harness 使用说明](docs/harness-usage.md)
+## [harness 使用说明(参考这里)](docs/harness-usage.md)
 
 
