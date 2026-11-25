@@ -1,7 +1,5 @@
 # k8s
 
-## [项目初始化](docs/init.md)
-
 ---
 
 ## 部署快速开始
@@ -34,6 +32,10 @@ make test-e2e-full
 ```
 
 > 无镜像/离线/多节点等**已知限制**见 [`docs/usage.md`](docs/usage.md#已知限制)。
+
+---
+
+## [项目初始化](docs/init.md)
 
 ---
 
