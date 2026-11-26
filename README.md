@@ -41,4 +41,10 @@ make test-e2e-full
 
 ## [harness 使用说明(参考这里)](docs/harness-usage.md)
 
+---
+
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。
+
 
