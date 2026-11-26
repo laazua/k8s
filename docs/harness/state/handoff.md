@@ -9,6 +9,24 @@
 
 ---
 
+## [2026-11-26] Planner · 增量计划 v1.14：新增 **T020 执行身份（普通用户 + 免密 sudo）**
+
+- 用户补充：「用普通用户 `zhangsan` 免密 SSH + 免密 sudo 运维各节点，配进 inventory 后能否操作各 role」。
+  **答复：可以**——5 个入口 play 均为 play 级 `become: true`（默认 `become_user: root`），
+  仓库无 `/root` 硬编码、无显式 `sudo`/`su`、无 `ansible_user_id` 分支；只要 `NOPASSWD` sudo 可用即可。
+  两个必须注意的点：①`roles/add-node` 的 `delegate_to: localhost` verify 任务继承 become → **控制端也要 sudo**；
+  ②`inventory/hosts.ini` 是本地未跟踪文件（`hosts.example` 只给了注释形式的 `# ansible_user=root`）。
+- 计划变更：`spec.md` **v1.14** 新增 C15（执行身份）/ A17 / D4；`roadmap.md` **v1.14** 新增 **T020**
+  （deps T016，QAgate normal），计划任务数 19 → **20**；T001–T019 保持 done，不重置。
+- T020 验收要点：①5 个 play 均 `become: true`（静态）；②无 `/root` 硬编码与显式 sudo（静态）；
+  ③示例 inventory + `docs/usage.md` 的 `ansible_user`/`ansible_become_*` 与 delegated-sudo 说明；
+  ④沙箱以 `zhangsan`（`connection=local`）+ become 对 `roles/base` 实跑：首次 `changed>0` 且属主 root，
+  二次 `changed=0`；⑤缺免密 sudo 的负例给出可诊断提示；⑥`make lint` rc=0，套件计数不回退。
+- 状态：`phase: BUILDING`、`active_task: T020`、`next_action: "build T020"`、`planned_tasks: 20`、
+  `critical_path` 追加 T020、`defaults.exec_user_model` 已冻结。
+
+---
+
 ## [2026-11-25] Planner · 历史改写：`..` → `T016: 端到端验收与使用文档（生成者交付）`
 
 - 唯一一条消息为 `..` 的提交已改写：`e90ba07` → **`1ea6f55`**（17 文件 / +2966 行，内容零变化，

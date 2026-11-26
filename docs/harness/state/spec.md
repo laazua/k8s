@@ -1,10 +1,14 @@
 # 规格（spec.md）· k8s 二进制 Ansible 部署
 
-> 状态：**已定稿（v1.13，Planner，2026-11-25）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
-> 上游：根 `README.md`。下游：`roadmap.md`、`contracts/T00N.md`。
+> 状态：**已定稿（v1.14，Planner，2026-11-26）**。层级：产品 / 高层架构。**不含实现细节**（目录名、变量名、逐行任务由 Generator 决定）。
+> 上游：根 `README.md`（需求原文现归档于 `docs/init.md`）。下游：`roadmap.md`、`contracts/T00N.md`。
 > 覆盖标记：每条 README 要求后标注其落点任务（`→ T0NN`）。
 >
 > **变更记录**
+> - v1.14（2026-11-26）：新增「**执行身份模型**」需求（用户补充：以普通用户 `zhangsan` 免密 SSH +
+>   免密 sudo 运维各节点）。新增 C15 / A17 / D4，落点 **T020**；其余需求与已验收结论不变。
+>   **已核现状**：5 个入口 play 均为 play 级 `become: true`，无 `/root` 硬编码、无显式 `sudo`/`su`，
+>   故非 root 用户 + 免密 sudo 可直接工作；待补的是示例/文档、静态守卫与一次真实 become 实测。
 > - v1.13（2026-11-25）：T016 r1 = PASS（accepted），**19/19 任务完成，项目 DONE**，需求未变更。
 >   补录最终验收口径：①端到端全流程 `tests/e2e/full_flow.sh` 两次独立运行 **310/0/2**（归一化 diff 0 行），
 >   `--static-only` 103/0，SKIP=2 单列不计 PASS（C14 维持）；②「验证方式」再确认——受限项（系统 Pod
@@ -121,6 +125,15 @@
     不得因「查询结果为空」而让 `全部 Ready（0/0）` 之类断言成立；
     ③ 环境受限导致的降级（如镜像不可拉）必须与**功能故障**区分：可控的前置失败（如 Job 创建被拒）
     判 `FAIL`，只有环境确实不具备的能力才判 `SKIP` 并写入契约 §5。
+15. **执行身份（v1.14 新增，T020 起适用）**：运维入口必须支持「**非 root SSH 用户 + 免密 sudo**」
+    （`ansible_user=<普通用户>`，play 级 `become: true` → root），不得要求 root 直连 SSH、
+    不得硬编码 `/root` 路径或调用显式 `sudo`/`su`。
+    ① `delegate_to` 任务继承 play 级 `become` → **控制端也需 sudo**（或在 inventory 关闭该路径的 become），
+    必须在文档写明；
+    ② 首次运行以 root 落盘（`/etc/kubernetes`、`/usr/local/bin` 等）后，后续以同一普通用户 +
+    `become` 重跑必须 `changed=0`；
+    ③ 免密 sudo 不可用时应给出可诊断失败（`ansible_become_password`/`--ask-become-pass` 提示），
+    不得静默降级为普通用户执行。
 
 ## 4. 组件清单（Component Inventory）
 
@@ -168,6 +181,7 @@
 | A14 | 加节点 | 对新 node 执行剧本后由**真实 kubelet** 注册且 Ready 条件存在；**重复执行 `changed=0`**；既有控制面/节点**零影响**（PID/启动时间/内容哈希/Node UID 不变，且快照**逐键有载荷**：空值/哨兵/缺键显式 FAIL）；**证书幂等为内容级**（sha256 基线；leaf 篡改自愈、CA 被替换显式失败）；`--check` 零写入；系统 Pod 按无镜像范式受限声明 |
 | A15 | 升级与回滚 | 升级前自动备份（etcd 快照可 `snapshot status` 校验 + PKI/kubeconfig + sha256）；升级一个 minor 版本后运行中 apiserver `/version` 与 kubelet 版本已变更、节点 Ready 条件存在；按文档回滚（`snapshot restore` + 旧二进制）后版本回旧、`/healthz` ok；已在目标版本重跑 `changed=0`（不得裁剪旧备份）；**测试证据口径**：sha256/版本断言须真实执行、回滚证据取任务结果行 `changed:`（不得被 `skipping:` 命中） |
 | A16 | 端到端 | 从干净 inventory 一条命令得到可用 HA 集群，全流程文档可复现 |
+| A17 | 执行身份（v1.14 新增） | 普通用户 SSH + 免密 sudo 下可用：5 个入口 play 均 `become: true`；无 `/root` 硬编码、无显式 `sudo`/`su`；`inventory/hosts.example` 与 `docs/usage.md` 给出 `ansible_user`/`ansible_become_*` 配置与「控制端 delegated 任务也需 sudo」说明；沙箱内以该用户对 base role 实跑，首次 `changed>0` 且落盘属主为 root，二次 `changed=0`；缺免密 sudo 时失败信息可诊断（C15） |
 
 ## 7. 风险与开放问题（Risks & Open Questions）
 
@@ -247,6 +261,13 @@
 
 > 其余可配置面（CIDR、端口、路径、镜像仓库、CNI 参数）一律变量化并给默认值（见 `repo-conventions.md` §3）。
 
+**D4 · 执行身份（v1.14）**
+- 决策：默认 **普通用户 SSH + 免密 sudo**（`ansible_user=<user>`，play 级 `become: true` → root）。
+  不使用 root 直连；不引入 `become_user` 细分（全部需 root 落盘/启停）。
+- 假设：目标主机已为运维用户配置 `NOPASSWD` sudo，且控制端（`delegate_to: localhost` 的 verify 任务）
+  同样具备 sudo。若环境无免密 sudo，用户须提供 `ansible_become_password` 或 `-K`。
+- 理由：最小权限；与 `repo-conventions.md` §6 一致；避免把 root 凭据散落到 inventory。
+
 ## 9. 需求 → 落点对照（覆盖自检）
 
 | README 要求 | 覆盖 |
@@ -264,3 +285,4 @@
 | 任意版本 | G2 / C1 / D3 |
 | 任意发行版 | G3 / C2 / R2 |
 | harness 系统 | G13（已满足，非本 roadmap 范围） |
+| 执行身份：普通用户 + 免密 sudo（用户补充，v1.14） | C15 / A17 / D4 / T020 |
