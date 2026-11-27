@@ -46,8 +46,12 @@ for play in playbooks/add-node.yml playbooks/control-plane.yml playbooks/node.ym
             playbooks/taints.yml playbooks/upgrade.yml; do
   check "A1 ${play} 含 become: true" grep -q "become: true" "$play"
 done
-# site.yml 通过 import_playbook 引入，不需要自己设 become
+# site.yml 通过 import_playbook 引入 control-plane.yml 与 node.yml
 check "A1 playbooks/site.yml 存在（入口）" test -f playbooks/site.yml
+check "A1 site.yml 引入 control-plane.yml（含 become: true）" \
+  bash -c "grep -q 'control-plane.yml' playbooks/site.yml && grep -q 'become: true' playbooks/control-plane.yml"
+check "A1 site.yml 引入 node.yml（含 become: true）" \
+  bash -c "grep -q 'node.yml' playbooks/site.yml && grep -q 'become: true' playbooks/node.yml"
 
 # ---------------------------------------------------------------------------
 echo "-- A2 仓库无 /root 硬编码（排除注释行/文档/tests 目录）"
@@ -149,7 +153,7 @@ YAML
   LOG1="$SB/run1.log"
   LOG2="$SB/run2.log"
 
-  # 第一跑：期望 changed>=1
+  # 第一跑：期望 changed>=1 且落盘文件属主为 root
   if "$ANSIBLE_PLAYBOOK" -i "$INV" "$PLAY" > "$LOG1" 2>&1; then
     changed1=$(grep -oE 'changed=[0-9]+' "$LOG1" | tail -1 | grep -oE '[0-9]+' || echo 0)
     if [[ "$changed1" -ge 1 ]]; then
@@ -157,8 +161,17 @@ YAML
     else
       bad "A6 沙箱 become 实测首跑 rc=0 但 changed=0（期望 ≥1）"
     fi
+    # 校验落盘文件属主确实为 root（证明 become 真正生效）
+    owner_hosts=$(stat -c '%U' "$SB/etc/hosts" 2>/dev/null || echo "missing")
+    owner_sysctl=$(stat -c '%U' "$SB/etc/sysctl.d/99-kubernetes.conf" 2>/dev/null || echo "missing")
+    if [[ "$owner_hosts" == "root" && "$owner_sysctl" == "root" ]]; then
+      ok "A6 沙箱落盘文件属主均为 root（etc/hosts=${owner_hosts}, sysctl=${owner_sysctl}）"
+    else
+      bad "A6 沙箱落盘文件属主非 root（etc/hosts=${owner_hosts}, sysctl=${owner_sysctl}）"
+    fi
   else
     bad "A6 沙箱 become 实测首跑 rc≠0（见 $LOG1）"
+    bad "A6 沙箱落盘文件属主校验跳过（因首跑失败）"
   fi
 
   # 第二跑：期望 changed=0（幂等）
@@ -177,42 +190,56 @@ YAML
 fi
 
 # ---------------------------------------------------------------------------
-echo "-- A8 负例：缺免密 sudo 时输出含 become 相关提示"
+echo "-- A8 负例：缺免密 sudo 时必须非零退出且错误输出含提示"
 # ---------------------------------------------------------------------------
 if ! have_ansible; then
   skip "A8 负例测试（找不到 ansible-playbook，置 SKIP）"
 else
   SB_NEG="/tmp/opencode/t020_neg"
-  rm -rf "$SB_NEG"; mkdir -p "$SB_NEG"
+  rm -rf "$SB_NEG"; mkdir -p "$SB_NEG/bin"
   NEG_INV="$SB_NEG/inv"
   NEG_PLAY="$SB_NEG/play.yml"
+
+  # 构造 mock sudo：模拟未配置 NOPASSWD 时非交互 sudo 失败
+  cat > "$SB_NEG/bin/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "sudo: a password is required" >&2
+exit 1
+SH
+  chmod +x "$SB_NEG/bin/sudo"
 
   cat > "$NEG_INV" <<'INI'
 [k8s_master]
 localhost ansible_connection=local ansible_user=zhangsan
 INI
 
-  # 以 become_method=sudo 且强制失败 sudo（通过 ansible_become_pass 置错误值触发 sudo 失败）
-  cat > "$NEG_PLAY" <<'YAML'
+  # 标题刻意不含 sudo/become/password 等关键词，避免日志自匹配
+  cat > "$NEG_PLAY" <<YAML
 ---
-- name: T020 负例：become 失败
+- name: T020 neg_case_check
   hosts: k8s_master
   become: true
   become_method: sudo
   vars:
-    ansible_become_pass: "__WRONG_PASS__"
+    ansible_become_exe: "${SB_NEG}/bin/sudo"
   tasks:
-    - name: 触发 become 失败
+    - name: run_id_check
       command: id
       changed_when: false
 YAML
 
   NEG_LOG="$SB_NEG/run.log"
-  "$ANSIBLE_PLAYBOOK" -i "$NEG_INV" "$NEG_PLAY" > "$NEG_LOG" 2>&1 || true
-  if grep -qiE "sudo|become|password|NOPASSWD|-K|incorrect password|Sorry|Authentication failure|Missing sudo|sudo: a terminal is required|sudo: no tty present" "$NEG_LOG"; then
-    ok "A8 缺免密 sudo 时输出含 become 相关提示"
+  neg_rc=0
+  "$ANSIBLE_PLAYBOOK" -i "$NEG_INV" "$NEG_PLAY" > "$NEG_LOG" 2>&1 || neg_rc=$?
+  if [[ "$neg_rc" -ne 0 ]]; then
+    ok "A8 缺免密 sudo 时非零退出（rc=$neg_rc）"
   else
-    bad "A8 缺免密 sudo 时输出未含预期提示（见 $NEG_LOG）"
+    bad "A8 缺免密 sudo 时意外成功（rc=0，见 $NEG_LOG）"
+  fi
+  if grep -qiE "(fatal:|FAILED!|Missing sudo|a password is required|incorrect password|NOPASSWD)" "$NEG_LOG"; then
+    ok "A8 缺免密 sudo 时错误输出含可诊断提示"
+  else
+    bad "A8 缺免密 sudo 时错误输出未含预期提示（见 $NEG_LOG）"
   fi
   rm -rf "$SB_NEG"
 fi
