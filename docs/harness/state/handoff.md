@@ -9,6 +9,23 @@
 
 ---
 
+## [2026-11-27] Generator · **T020（执行身份：普通用户 + 免密 sudo）build 完成 → ready_for_eval**
+
+- 本次做了什么：
+  1. 新建契约 [T020.md](file:///opt/codes/k8s/docs/harness/state/contracts/T020.md)（A1–A10 可判定验收项）。
+  2. 更新 [hosts.example](file:///opt/codes/k8s/inventory/hosts.example)：补充 `ansible_user=zhangsan`、`ansible_become_method=sudo`、`NOPASSWD` 与 `-K` 注释，保留旧 `root` 配置作反面注释。
+  3. 更新 [usage.md](file:///opt/codes/k8s/docs/usage.md)：新增「执行身份（ansible_user 与 become）」小节，覆盖 `ansible_user`、`ansible_become_method`、`ansible_become_password`/`-K` 与 `delegate_to` 继承 become（控制端亦需 sudo）。
+  4. 新建测试 [test_t020.sh](file:///opt/codes/k8s/tests/t020/test_t020.sh) 并接入 [Makefile](file:///opt/codes/k8s/Makefile)（`test-t020` 及 `make test`）。
+- 怎么验证（给 Evaluator）：
+  ```bash
+  ANSIBLE_PLAYBOOK="$HOME/ansible/bin/ansible-playbook" tests/t020/test_t020.sh
+  ```
+- 测试/幂等结果：TDD 红（`--static-only` PASS=8 / FAIL=6）→ 绿（全量 **PASS=20 / FAIL=0 / SKIP=0**，rc=0）；沙箱 become 首跑 `changed=4`，二跑 `changed=0`；`make lint` rc=0；`test_skeleton.sh` `PASS=27 FAIL=0`。
+- 遗留问题 / 风险 / 待办：仅剩 `T020` 独立评估（`eval`）；全量 `make test` 约 85 分钟未整体重跑。
+- 下一步建议（`state.yaml.next_action`）：`"eval T020"`
+
+---
+
 ## [2026-11-26] Planner · 增量计划 v1.14：新增 **T020 执行身份（普通用户 + 免密 sudo）**
 
 - 用户补充：「用普通用户 `zhangsan` 免密 SSH + 免密 sudo 运维各节点，配进 inventory 后能否操作各 role」。

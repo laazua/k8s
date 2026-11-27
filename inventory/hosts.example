@@ -26,5 +26,12 @@ k8s_master
 k8s_node
 
 [k8s_cluster:vars]
+# 执行身份：推荐以普通用户免密 SSH + 免密 sudo（NOPASSWD）运维节点。
+# 示例：
+#   ansible_user=zhangsan
+#   ansible_become_method=sudo          # 默认即为 sudo，可省略
+# 若未配置 NOPASSWD，部署时需加 -K（交互输入 sudo 密码）：
+#   ansible-playbook ... -K
+# 旧配置（不推荐直接使用 root）：
 # ansible_user=root
 # ansible_ssh_private_key_file=~/.ssh/id_rsa

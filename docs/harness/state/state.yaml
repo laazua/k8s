@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE —— 增量：T020（T001–T019 保持 done）
+phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE —— 增量：T020（T001–T019 保持 done）
 active_task: T020       # 执行身份：普通用户 + 免密 sudo
-contract_status: none   # T020 尚未建契约
+contract_status: ready_for_eval
 eval_round: 0           # T020 未进入 eval
-next_action: "build T020"
+next_action: "eval T020"
 
 # 计划摘要（planner 写）
 planned_tasks: 20
@@ -33,6 +33,11 @@ defaults:
 
 blockers: []          # 无阻塞；T001–T019 全部 accepted
 notes: |
+  **T020（执行身份：普通用户 + 免密 sudo）build 完成 → ready_for_eval（2026-11-27）**：
+  - 交付：`inventory/hosts.example` 非 root 示例与 NOPASSWD 注释、`docs/usage.md`「执行身份（ansible_user 与 become）」
+    章节（含 `delegate_to` 继承 become 说明）、`tests/t020/test_t020.sh`（20 断言）、`Makefile` `test-t020`（并挂入 `make test`）。
+  - TDD：红（`--static-only` 8/6）→ 绿（全量 **20/0/0**，rc=0）：A6 首跑 `changed=4`、A7 二跑 `changed=0`、
+    A8 负例命中提示、A9 `make lint` rc=0、A10 骨架 `27/0`。
   **增量计划（2026-11-26，Planner）**：用户补充「以普通用户 zhangsan 免密 SSH + 免密 sudo 运维节点」，
   新增 **T020**（spec v1.14：C15 / A17 / D4）。T001–T019 保持 accepted，不重置。
   - 现状核查（代码层无需改造）：`playbooks/{control-plane,node,add-node,taints,upgrade}.yml` 均 play 级
@@ -264,4 +269,4 @@ notes: |
   **T009 r2 = PASS（accepted）**，被测 `741464d`：`test-kube-proxy` 5/5 208/0、
   全量 1404、牙齿 3/3；T008 r1 PASS（1096、291/0、牙齿 5/5）。
   报告：`docs/harness/state/reports/T010-r1.md`（T009 全文在 `handoff.md` 顶部）。
-updated: "2026-11-26T01:30:00Z"   # ISO8601
+updated: "2026-11-27T10:20:00Z"   # ISO8601

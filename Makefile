@@ -17,7 +17,7 @@ PLAYBOOKS ?= $(wildcard playbooks/*.yml)
 YAMLLINT  ?= yamllint
 
 .DEFAULT_GOAL := help
-.PHONY: help syntax yamllint smoke deploy lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-add-node test-upgrade test-e2e test-e2e-full smoke-e2e clean
+.PHONY: help syntax yamllint smoke deploy lint test test-download test-pki test-etcd test-ha test-control-plane test-node test-kube-proxy test-cilium test-cluster-addons test-taints test-add-node test-upgrade test-e2e test-e2e-full test-t020 smoke-e2e clean
 
 help: ## 显示可用目标
 	@echo "可用目标:"
@@ -58,6 +58,7 @@ test: lint smoke ## 运行测试套件（含真实执行冒烟）
 	tests/add-node/test_add_node_flow.sh
 	tests/upgrade/test_upgrade_flow.sh
 	tests/e2e/test_smoke_contract.sh
+	tests/t020/test_t020.sh
 
 test-download: ## 运行 download role 测试套件（全离线 mock 源/代理）
 	tests/download/test_download_role.sh
@@ -100,6 +101,9 @@ test-e2e: ## 运行 e2e 冒烟脚本契约验收（静态 + 沙箱全链路，�
 
 test-e2e-full: ## 运行端到端全流程验收（干净 inventory → 集群 → 调度/加节点/升级/回滚，约 30 分钟）
 	tests/e2e/full_flow.sh
+
+test-t020: ## 运行 T020 执行身份验收测试（静态守卫 + 沙箱 become 实测）
+	tests/t020/test_t020.sh
 
 smoke-e2e: ## 对当前集群执行冒烟（需 KUBECONFIG；无镜像环境用 --mode sandbox 见 tests/e2e/README.md）
 	tests/e2e/smoke.sh --mode real --kubeconfig "$${KUBECONFIG:-/etc/kubernetes/admin.conf}"

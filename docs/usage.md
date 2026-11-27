@@ -21,6 +21,35 @@ make syntax
 ansible --version
 ```
 
+## 执行身份（ansible_user 与 become）
+
+本仓库所有入口 playbook（`control-plane.yml`、`node.yml`、`add-node.yml`、`taints.yml`、`upgrade.yml`）
+均在 play 级设置 `become: true`，以 `sudo` 切换到 root 执行需要特权的任务。
+**推荐以普通用户免密 SSH + 免密 sudo（NOPASSWD）** 运维节点，不直接使用 root 账户：
+
+```ini
+# inventory/hosts.ini 示例
+[k8s_cluster:vars]
+ansible_user=zhangsan               # 以普通用户 SSH 登录
+ansible_become_method=sudo          # 默认即为 sudo，可省略
+```
+
+如果节点尚未配置 `NOPASSWD`，部署时需加 `-K` 参数，Ansible 会交互询问 sudo 密码：
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml -K
+```
+
+也可通过变量 `ansible_become_password` 传入（不推荐明文写入 inventory，建议结合 ansible-vault）：
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml \
+  -e ansible_become_password='your_sudo_pass'
+```
+
+> [!NOTE]
+> `add-node.yml` 中的 `verify` 和 `validate` 任务通过 `delegate_to: "{{ add_node_verify_delegate }}"` 在控制节点上执行 kubectl，该任务**同样继承 play 级 become: true**，因此控制端也需要 sudo 权限（或配置 NOPASSWD）。
+
 ## inventory
 
 从示例复制后按真实拓扑填写。`[k8s_master]` 是控制面，`[k8s_node]` 是业务节点，
