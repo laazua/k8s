@@ -9,6 +9,15 @@
 
 ---
 
+## [2026-11-27] Evaluator · **T020 r1 = FAIL（D1 BLOCKER + D2 MAJOR）**
+
+- 结论：**FAIL**（报告 [T020-r1.md](file:///opt/codes/k8s/docs/harness/state/reports/T020-r1.md)）。独立复现 `test_t020.sh` 虽显示 `20/0/0`，但核查发现 2 个阻塞/严重测试缺陷：
+  1. **D1 [BLOCKER]**：A8 负例实测 `ok=2 failed=0 RC=0`（本机有 NOPASSWD sudo），脚本用 `|| true` 吞掉退出码且 `grep -qiE "become"` 命中 `PLAY [T020 负例：become 失败]` 标题导致恒真假绿。
+  2. **D2 [MAJOR]**：A6 未断言沙箱落盘文件属主为 `root`（`stat -c '%U'`）。
+- 下一步（`next_action: "build T020 (fix r1)"`）：用 mock `sudo` 真实触发 become 失败（断言 `rc != 0` 且错误行含提示），并在 A6 增加 `root` 属主校验后重跑提交 r2 评估。
+
+---
+
 ## [2026-11-27] Generator · **T020（执行身份：普通用户 + 免密 sudo）build 完成 → ready_for_eval**
 
 - 本次做了什么：

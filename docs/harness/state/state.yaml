@@ -2,11 +2,11 @@
 # 规则：每次会话开始先读本文件；结束时必须更新。字段保持机器可读、简短。
 # 角色可写字段见 docs/harness/roles/*.md。禁止手工随意改语义。
 
-phase: EVALUATING       # INIT | PLANNING | BUILDING | EVALUATING | DONE —— 增量：T020（T001–T019 保持 done）
+phase: BUILDING         # INIT | PLANNING | BUILDING | EVALUATING | DONE —— 增量：T020（T001–T019 保持 done）
 active_task: T020       # 执行身份：普通用户 + 免密 sudo
-contract_status: ready_for_eval
-eval_round: 0           # T020 未进入 eval
-next_action: "eval T020"
+contract_status: changes_requested
+eval_round: 1           # r1 FAIL（D1 BLOCKER + D2 MAJOR）
+next_action: "build T020 (fix r1)"
 
 # 计划摘要（planner 写）
 planned_tasks: 20
@@ -33,6 +33,9 @@ defaults:
 
 blockers: []          # 无阻塞；T001–T019 全部 accepted
 notes: |
+  **T020 r1 = FAIL（2026-11-27，Evaluator）**：测试质量 = 2（低于阈值 4），报告 `reports/T020-r1.md`：
+  - D1 BLOCKER：A8 负例因本机 NOPASSWD sudo 实际 `RC=0` 成功，且 `grep -qiE "become"` 命中了 PLAY 标题导致恒真假绿。
+  - D2 MAJOR：A6 未校验 `$SB` 下落盘文件 `stat -c '%U' == root`（去掉 `become: true` 仍 PASS）。
   **T020（执行身份：普通用户 + 免密 sudo）build 完成 → ready_for_eval（2026-11-27）**：
   - 交付：`inventory/hosts.example` 非 root 示例与 NOPASSWD 注释、`docs/usage.md`「执行身份（ansible_user 与 become）」
     章节（含 `delegate_to` 继承 become 说明）、`tests/t020/test_t020.sh`（20 断言）、`Makefile` `test-t020`（并挂入 `make test`）。
