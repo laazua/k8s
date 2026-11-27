@@ -9,6 +9,17 @@
 
 ---
 
+## [2026-11-27] Generator · **T020 r1 修复完成 → ready_for_eval（r2）**
+
+- 修复内容（[test_t020.sh](file:///opt/codes/k8s/tests/t020/test_t020.sh)）：
+  1. **D1**：A8 改用 mock `sudo`（`$SB_NEG/bin/sudo`）真实触发 become 失败，断言 `rc != 0`（实测 `rc=2`）及错误提示，标题不含敏感词。
+  2. **D2**：A6 首跑后用 `stat -c '%U'` 校验 `$SB/etc/hosts` 与 `$SB/etc/sysctl.d/99-kubernetes.conf` 属主均为 `root`。
+  3. **D3**：A1 增加 `site.yml` 引入 `control-plane.yml` / `node.yml` 的校验。
+- 验证：`ANSIBLE_PLAYBOOK="$HOME/ansible/bin/ansible-playbook" tests/t020/test_t020.sh` → **`PASS=24 / FAIL=0 / SKIP=0`**（`changed=4` → `changed=0`）。
+- 下一步（`state.yaml.next_action`）：`"eval T020 (r2)"`
+
+---
+
 ## [2026-11-27] Evaluator · **T020 r1 = FAIL（D1 BLOCKER + D2 MAJOR）**
 
 - 结论：**FAIL**（报告 [T020-r1.md](file:///opt/codes/k8s/docs/harness/state/reports/T020-r1.md)）。独立复现 `test_t020.sh` 虽显示 `20/0/0`，但核查发现 2 个阻塞/严重测试缺陷：
